@@ -1,0 +1,371 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 20 14.3% 4.1%;
+  --muted: 60 4.8% 95.9%;
+  --muted-foreground: 25 5.3% 44.7%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 20 14.3% 4.1%;
+  --card: 0 0% 100%;
+  --card-foreground: 20 14.3% 4.1%;
+  --border: 20 5.9% 90%;
+  --input: 20 5.9% 90%;
+  --primary: 225 73% 57%;
+  --primary-foreground: 0 0% 100%;
+  --primary-light: 223 100% 98%;
+  --secondary: 60 4.8% 95.9%;
+  --secondary-foreground: 24 9.8% 10%;
+  --accent: 60 4.8% 95.9%;
+  --accent-foreground: 24 9.8% 10%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 60 9.1% 97.8%;
+  --ring: 225 73% 57%;
+  --radius: 0.25rem;
+  --success: 142 76% 36%;
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 50%;
+  --warning-foreground: 0 0% 0%;
+  --danger: 0 84% 60%;
+  --danger-foreground: 0 0% 100%;
+  --sidebar-background: 222 47% 11%;
+  --sidebar-foreground: 0 0% 100%;
+  --sidebar-primary: 225 73% 57%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 222 47% 15%;
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-border: 222 47% 15%;
+  --sidebar-ring: 225 73% 57%;
+  --chart-1: 225 73% 57%;
+  --chart-2: 142 76% 36%;
+  --chart-3: 38 92% 50%;
+  --chart-4: 326 100% 60%;
+  --chart-5: 241 90% 65%;
+  --header-height: 3.5rem;
+  --top-nav-height: 2.5rem;
+  --salesforce-blue: 225 73% 57%;
+  --page-padding: 1rem;
+  --container-max-width: 100%;
+}
+
+/* Custom scrollbar styles for dual scrolling Master Data page */
+.dual-scroll-external::-webkit-scrollbar {
+  width: 12px;
+}
+
+.dual-scroll-external::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 6px;
+}
+
+.dual-scroll-external::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 6px;
+  border: 2px solid #f1f1f1;
+}
+
+.dual-scroll-external::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+.dual-scroll-internal::-webkit-scrollbar {
+  width: 10px;
+}
+
+.dual-scroll-internal::-webkit-scrollbar-track {
+  background: #e1e1e1;
+  border-radius: 5px;
+}
+
+.dual-scroll-internal::-webkit-scrollbar-thumb {
+  background: #666;
+  border-radius: 5px;
+  border: 1px solid #e1e1e1;
+}
+
+.dual-scroll-internal::-webkit-scrollbar-thumb:hover {
+  background: #333;
+}
+
+.dark {
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+  --popover: 240 10% 3.9%;
+  --popover-foreground: 0 0% 98%;
+  --card: 240 10% 3.9%;
+  --card-foreground: 0 0% 98%;
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --primary: 207 90% 54%;
+  --primary-foreground: 211 100% 99%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0% 98%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 0 0% 98%;
+  --ring: 240 4.9% 83.9%;
+  --radius: 0.5rem;
+  --success: 142 76% 36%;
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 50%;
+  --warning-foreground: 0 0% 0%;
+  --danger: 0 84% 60%;
+  --danger-foreground: 0 0% 100%;
+  --sidebar-background: 240 10% 3.9%;
+  --sidebar-foreground: 0 0% 98%;
+  --sidebar-primary: 207 90% 54%;
+  --sidebar-primary-foreground: 211 100% 99%;
+  --sidebar-accent: 207 90% 14%;
+  --sidebar-accent-foreground: 207 90% 54%;
+  --sidebar-border: 240 3.7% 15.9%;
+  --sidebar-ring: 207 90% 54%;
+  --chart-1: 207 90% 54%;
+  --chart-2: 142 76% 40%;
+  --chart-3: 38 92% 55%;
+  --chart-4: 326 100% 60%;
+  --chart-5: 241 90% 65%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+
+  }
+
+  body {
+    @apply font-sans antialiased bg-white text-foreground;
+  }
+
+  .text-foreground {}
+
+  .salesforce-layout {
+    display: grid;
+    grid-template-areas:
+      "sidebar header"
+      "sidebar nav"
+      "sidebar main";
+    grid-template-columns: auto 1fr;
+    grid-template-rows: var(--header-height) var(--top-nav-height) 1fr;
+    min-height: 100vh;
+  }
+
+  .salesforce-header {
+    grid-area: header;
+    background-color: #0070d2;
+    /* Salesforce exact blue */
+    height: var(--header-height);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    z-index: 20;
+  }
+
+  .salesforce-nav {
+    grid-area: nav;
+    background-color: #0070d2;
+    /* Salesforce exact blue */
+    height: var(--top-nav-height);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    z-index: 19;
+  }
+
+  .salesforce-sidebar {
+    grid-area: sidebar;
+    background-color: #16325c;
+    /* Salesforce dark blue */
+    width: 4.5rem;
+    z-index: 30;
+    box-shadow: 2px 0 4px rgba(0, 0, 0, 0.1);
+    overflow-y: auto;
+    overflow-x: hidden;
+    height: 100vh;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) rgba(0, 0, 0, 0.1);
+  }
+
+  .salesforce-main {
+    grid-area: main;
+    background-color: #f3f3f3;
+    /* Light gray background */
+    min-height: calc(100vh - var(--header-height) - var(--top-nav-height));
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 1.5rem;
+    height: calc(100vh - var(--header-height) - var(--top-nav-height));
+    scrollbar-width: thin;
+    scrollbar-color: #9ca3af #e5e7eb;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .salesforce-main>* {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .sf-tab {
+    @apply text-white opacity-80 hover:opacity-100 px-4 py-2 text-sm font-medium border-b-2 border-transparent;
+  }
+
+  .sf-tab-active {
+    @apply text-white opacity-100 border-white;
+  }
+
+  /* Better page layout and fitting utility classes */
+  .page-container {
+    @apply w-full max-w-none px-4 py-4;
+  }
+
+  .page-content {
+    @apply w-full max-w-none;
+  }
+
+  .card-grid {
+    @apply grid gap-4 w-full;
+  }
+
+  .card-grid-auto {
+    @apply grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 w-full;
+  }
+
+  .chat-minimize-animation {
+    @apply transition-all duration-300 ease-in-out;
+  }
+
+  .responsive-padding {
+    @apply px-2 sm:px-4 md:px-6 py-2 sm:py-4;
+  }
+
+  .responsive-text {
+    @apply text-sm sm:text-base;
+  }
+
+  .max-viewport {
+    @apply max-w-[calc(100vw-2rem)];
+  }
+
+  /* Prevent overflow issues on zoom */
+  * {
+    box-sizing: border-box;
+  }
+
+  /* Ensure grid items don't overflow */
+  .grid>* {
+    min-width: 0;
+  }
+
+  /* Ensure flex items don't overflow */
+  .flex>* {
+    min-width: 0;
+  }
+
+  /* Ensure tables don't overflow */
+  table {
+    width: 100%;
+    table-layout: auto;
+  }
+
+  /* Ensure TabsContent doesn't overflow */
+  [role="tabpanel"] {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+}
+
+@layer components {
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .fade-in {
+    animation: fadeIn 0.2s ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* Custom scrollbar styles for Development Status tables */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 #f1f5f9;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 4px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-corner {
+    background: #f1f5f9;
+  }
+
+  /* Professional scrollbar styles for sidebar (dark theme) */
+  .salesforce-sidebar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .salesforce-sidebar::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 3px;
+  }
+
+  .salesforce-sidebar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+    transition: background 0.2s ease;
+  }
+
+  .salesforce-sidebar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+
+  /* Professional scrollbar styles for main content area (light theme) */
+  .salesforce-main::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .salesforce-main::-webkit-scrollbar-track {
+    background: #e5e7eb;
+    border-radius: 4px;
+  }
+
+  .salesforce-main::-webkit-scrollbar-thumb {
+    background: #9ca3af;
+    border-radius: 4px;
+    border: 2px solid #e5e7eb;
+    transition: background 0.2s ease;
+  }
+
+  .salesforce-main::-webkit-scrollbar-thumb:hover {
+    background: #6b7280;
+  }
+}

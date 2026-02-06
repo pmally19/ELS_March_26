@@ -1,0 +1,198 @@
+import React, { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useToast } from '@/hooks/use-toast';
+import { Loader2 } from 'lucide-react';
+
+
+interface AssetAcquisitionDialogProps {
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    assetId?: number;
+}
+
+export function AssetAcquisitionDialog({ open, onOpenChange, assetId }: AssetAcquisitionDialogProps) {
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+
+    const [formData, setFormData] = useState({
+        asset_id: assetId || '',
+        acquisition_date: new Date().toISOString().split('T')[0],
+        acquisition_cost: '',
+        vendor_id: '',
+        invoice_number: '',
+    });
+
+    // Fetch assets
+    const { data: assets = [] } = useQuery({
+        queryKey: ['/api/master-data/assets'],
+        queryFn: async () => {
+            const response = await apiClient.get('/api/master-data/assets');
+            return response.data;
+        },
+        enabled: !assetId,
+    });
+
+    // Fetch vendors
+    const { data: vendors = [] } = useQuery({
+        queryKey: ['/api/master-data/vendors'],
+        queryFn: async () => {
+            const response = await apiClient.get('/api/master-data/vendors');
+            return response.data;
+        },
+    });
+
+    const mutation = useMutation({
+        mutationFn: async (data: typeof formData) => {
+            const response = await apiClient.post('/api/asset-management/acquisition', {
+                asset_id: parseInt(data.asset_id as string),
+                acquisition_date: data.acquisition_date,
+                acquisition_cost: parseFloat(data.acquisition_cost),
+                vendor_id: data.vendor_id ? parseInt(data.vendor_id) : undefined,
+                invoice_number: data.invoice_number || undefined,
+            });
+            return response.data;
+        },
+        onSuccess: (data) => {
+            toast({
+                title: 'Asset Acquired',
+                description: `Transaction ID: ${data.transaction_id}${data.gl_document_id ? `, GL Doc: ${data.gl_document_id}` : ''}`,
+            });
+            queryClient.invalidateQueries({ queryKey: ['/api/master-data/assets'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/asset-management/transactions'] });
+            onOpenChange(false);
+            setFormData({
+                asset_id: '',
+                acquisition_date: new Date().toISOString().split('T')[0],
+                acquisition_cost: '',
+                vendor_id: '',
+                invoice_number: '',
+            });
+        },
+        onError: (error: any) => {
+            toast({
+                title: 'Acquisition Failed',
+                description: error.response?.data?.error || error.message,
+                variant: 'destructive',
+            });
+        },
+    });
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        mutation.mutate(formData);
+    };
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="sm:max-w-[500px]">
+                <form onSubmit={handleSubmit}>
+                    <DialogHeader>
+                        <DialogTitle>Record Asset Acquisition</DialogTitle>
+                        <DialogDescription>
+                            Record the acquisition of an asset with cost and vendor details
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="grid gap-4 py-4">
+                        {!assetId && (
+                            <div className="grid gap-2">
+                                <Label htmlFor="asset">Asset *</Label>
+                                <Select
+                                    value={formData.asset_id.toString()}
+                                    onValueChange={(value) => setFormData({ ...formData, asset_id: value })}
+                                    required
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select asset" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {assets.map((asset: any) => (
+                                            <SelectItem key={asset.id} value={asset.id.toString()}>
+                                                {asset.asset_code || asset.asset_number} - {asset.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        )}
+
+                        <div className="grid gap-2">
+                            <Label htmlFor="acquisition_date">Acquisition Date *</Label>
+                            <Input
+                                id="acquisition_date"
+                                type="date"
+                                value={formData.acquisition_date}
+                                onChange={(e) => setFormData({ ...formData, acquisition_date: e.target.value })}
+                                required
+                            />
+                        </div>
+
+                        <div className="grid gap-2">
+                            <Label htmlFor="acquisition_cost">Acquisition Cost *</Label>
+                            <Input
+                                id="acquisition_cost"
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder="0.00"
+                                value={formData.acquisition_cost}
+                                onChange={(e) => setFormData({ ...formData, acquisition_cost: e.target.value })}
+                                required
+                            />
+                        </div>
+
+                        <div className="grid gap-2">
+                            <Label htmlFor="vendor">Vendor (Optional)</Label>
+                            <Select
+                                value={formData.vendor_id}
+                                onValueChange={(value) => setFormData({ ...formData, vendor_id: value })}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select vendor" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="">None</SelectItem>
+                                    {vendors.map((vendor: any) => (
+                                        <SelectItem key={vendor.id} value={vendor.id.toString()}>
+                                            {vendor.name}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <div className="grid gap-2">
+                            <Label htmlFor="invoice_number">Invoice Number (Optional)</Label>
+                            <Input
+                                id="invoice_number"
+                                placeholder="INV-12345"
+                                value={formData.invoice_number}
+                                onChange={(e) => setFormData({ ...formData, invoice_number: e.target.value })}
+                            />
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => onOpenChange(false)}
+                            disabled={mutation.isPending}
+                        >
+                            Cancel
+                        </Button>
+                        <Button type="submit" disabled={mutation.isPending}>
+                            {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Record Acquisition
+                        </Button>
+                    </DialogFooter>
+                </form>
+            </DialogContent>
+        </Dialog>
+    );
+}

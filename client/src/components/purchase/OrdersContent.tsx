@@ -1,0 +1,333 @@
+import { useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Search, Filter, Download, Plus, Edit, Trash2, CreditCard, Eye, MoreHorizontal } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import PODetailDialog from './PODetailDialog';
+import { useToast } from "@/hooks/use-toast";
+import CreateOrderDialog from "./CreateOrderDialog";
+
+interface PurchaseOrder {
+  id: number;
+  order_number: string;
+  vendor_id: number;
+  vendor_name: string;
+  order_date: string;
+  delivery_date: string;
+  status: string;
+  total_amount: number;
+  currency: string;
+}
+
+export default function OrdersContent() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [showNewOrderForm, setShowNewOrderForm] = useState(false);
+  const [newOrder, setNewOrder] = useState({
+    vendor_name: "",
+    total_amount: "",
+    delivery_date: "",
+    items: ""
+  });
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editingOrder, setEditingOrder] = useState<PurchaseOrder | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [orderToDelete, setOrderToDelete] = useState<PurchaseOrder | null>(null);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [viewingOrder, setViewingOrder] = useState<PurchaseOrder | null>(null);
+  
+  const { data: orders, isLoading, isError } = useQuery<PurchaseOrder[]>({
+    queryKey: ['/api/purchase/orders'],
+    queryFn: async () => {
+      const response = await fetch('/api/purchase/orders');
+      if (!response.ok) {
+        throw new Error('Failed to fetch purchase orders');
+      }
+      return response.json();
+    },
+  });
+
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const response = await fetch(`/api/purchase/orders/${id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Failed to delete purchase order');
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Purchase Order Deleted",
+        description: "Purchase order has been deleted successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/purchase/orders'] });
+      setDeleteDialogOpen(false);
+      setOrderToDelete(null);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Delete Failed",
+        description: error.message || "Failed to delete purchase order. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const filteredOrders = orders?.filter(order => {
+    const matchesSearch = order.order_number.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      order.vendor_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      order.status?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesStatus = statusFilter === "all" || order.status?.toLowerCase() === statusFilter.toLowerCase();
+    
+    return matchesSearch && matchesStatus;
+  });
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString();
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case 'pending':
+        return <Badge className="bg-yellow-500 text-white">Pending</Badge>;
+      case 'approved':
+        return <Badge className="bg-blue-500 text-white">Approved</Badge>;
+      case 'received':
+        return <Badge className="bg-green-500 text-white">Received</Badge>;
+      case 'cancelled':
+        return <Badge variant="destructive">Cancelled</Badge>;
+      case 'draft':
+        return <Badge variant="outline">Draft</Badge>;
+      default:
+        return <Badge variant="outline">{status}</Badge>;
+    }
+  };
+
+    const handleView = (order: PurchaseOrder) => {
+    setViewingOrder(order);
+    setViewDialogOpen(true);
+  };
+const handleEdit = (order: PurchaseOrder) => {
+    setEditingOrder(order);
+    setIsEditDialogOpen(true);
+  };
+
+  const handleDelete = (order: PurchaseOrder) => {
+    setOrderToDelete(order);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (orderToDelete) {
+      deleteMutation.mutate(orderToDelete.id);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Search & Filter Bar */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center mb-6">
+        <div className="relative flex-1">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input 
+            placeholder="Search purchase orders..." 
+            className="pl-8 rounded-md border border-input bg-white"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-32">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="approved">Approved</SelectItem>
+              <SelectItem value="received">Received</SelectItem>
+              <SelectItem value="cancelled">Cancelled</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => {
+              console.log('Export orders clicked');
+              // Add export functionality
+            }}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Export
+          </Button>
+          <Button size="sm" onClick={() => setIsCreateDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            New Order
+          </Button>
+        </div>
+      </div>
+      
+      {/* Orders Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Purchase Orders</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="text-center py-8">Loading purchase orders...</div>
+          ) : isError ? (
+            <div className="text-center py-8 text-red-500">Error loading purchase orders. Please try again.</div>
+          ) : filteredOrders && filteredOrders.length > 0 ? (
+            <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Order Number</TableHead>
+                    <TableHead>Vendor</TableHead>
+                    <TableHead>Order Date</TableHead>
+                    <TableHead>Delivery Date</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredOrders.map((order) => (
+                    <TableRow key={order.id}>
+                      <TableCell className="font-medium">{order.order_number}</TableCell>
+                      <TableCell>{order.vendor_name}</TableCell>
+                      <TableCell>{formatDate(order.order_date)}</TableCell>
+                      <TableCell>{formatDate(order.delivery_date)}</TableCell>
+                      <TableCell className="text-right">
+                        {order.currency} {Number(order.total_amount).toFixed(2)}
+                      </TableCell>
+                      <TableCell>{getStatusBadge(order.status)}</TableCell>
+                                            <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => handleView(order)}>
+                              <Eye className="mr-2 h-4 w-4" />
+                              View Details
+                            </DropdownMenuItem>
+                            {(order.status === 'OPEN' || order.status === 'open' || order.status === 'APPROVED' || order.status === 'approved' || order.status === 'RECEIVED' || order.status === 'received') && (
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  window.location.href = '/purchase?tab=payments&poId=' + order.id;
+                                }}
+                                className="text-green-600">
+                                <CreditCard className="mr-2 h-4 w-4" />
+                                Pay Order
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem onClick={() => handleEdit(order)}>
+                              <Edit className="mr-2 h-4 w-4" />
+                              Edit
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              {searchTerm ? 'No purchase orders match your search.' : 'No purchase orders found.'}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <CreateOrderDialog 
+        isOpen={isCreateDialogOpen} 
+        onClose={() => setIsCreateDialogOpen(false)} 
+      />
+
+      <CreateOrderDialog 
+        isOpen={isEditDialogOpen} 
+        onClose={() => {
+          setIsEditDialogOpen(false);
+          setEditingOrder(null);
+        }}
+        orderId={editingOrder?.id}
+      />
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will delete the purchase order{" "}
+              <strong>{orderToDelete?.order_number}</strong>.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDelete}
+              className="bg-red-600 hover:bg-red-700"
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* PO Detail Dialog */}
+      {viewingOrder && (
+        <PODetailDialog
+          isOpen={viewDialogOpen}
+          onClose={() => setViewDialogOpen(false)}
+          orderId={viewingOrder.id}
+        />
+      )}
+    </div>
+  );
+}

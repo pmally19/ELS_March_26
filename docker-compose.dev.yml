@@ -1,0 +1,35 @@
+# JuneERP Development Docker Setup
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: juneerp_dev
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev_password
+    volumes:
+      - ./database/01-complete-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./database/02-complete-data.sql:/docker-entrypoint-initdb.d/02-data.sql
+      - dev_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  juneerp-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    environment:
+      DATABASE_URL: postgresql://dev:dev_password@postgres:5432/juneerp_dev
+      NODE_ENV: development
+    ports:
+      - "5000:5000"
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      - postgres
+
+volumes:
+  dev_postgres_data:
