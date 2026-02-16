@@ -48,6 +48,22 @@ export default function CreateReceiptDialog({ isOpen, onClose }: CreateReceiptDi
   const [deliveryNoteFile, setDeliveryNoteFile] = useState<File | null>(null);
   const [billOfLadingFile, setBillOfLadingFile] = useState<File | null>(null);
   const [inspectionReportFile, setInspectionReportFile] = useState<File | null>(null);
+  const [movementType, setMovementType] = useState<string>("101");
+
+  // Fetch movement types
+  const { data: movementTypes = [], isLoading: isLoadingMovementTypes } = useQuery<any[]>({
+    queryKey: ['/api/master-data/movement-types'],
+    queryFn: async () => {
+      const response = await fetch('/api/master-data/movement-types');
+      if (!response.ok) return [];
+      const data = await response.json();
+      // Return all active movement types, sorted by code
+      return data
+        .filter((mt: any) => (mt.code || mt.movement_type_code) && mt.is_active !== false)
+        .sort((a: any, b: any) => String(a.code || a.movement_type_code).localeCompare(String(b.code || b.movement_type_code)));
+    },
+    enabled: isOpen,
+  });
 
   // Fetch purchase orders that are not closed or cancelled
   const { data: purchaseOrders = [], isLoading: isLoadingPOs } = useQuery<PurchaseOrder[]>({
@@ -115,6 +131,7 @@ export default function CreateReceiptDialog({ isOpen, onClose }: CreateReceiptDi
       received_by?: string;
       delivery_note?: string;
       bill_of_lading?: string;
+      movement_type?: string;
     }) => {
       const response = await fetch('/api/purchase/copy-po-to-goods-receipt', {
         method: 'POST',
@@ -240,6 +257,7 @@ export default function CreateReceiptDialog({ isOpen, onClose }: CreateReceiptDi
     setDeliveryNoteFile(null);
     setBillOfLadingFile(null);
     setInspectionReportFile(null);
+    setMovementType("101");
     onClose();
   };
 
@@ -266,6 +284,7 @@ export default function CreateReceiptDialog({ isOpen, onClose }: CreateReceiptDi
       received_by: receivedBy || undefined,
       delivery_note: deliveryNote || undefined,
       bill_of_lading: billOfLading || undefined,
+      movement_type: movementType || undefined,
     });
   };
 
@@ -359,6 +378,34 @@ export default function CreateReceiptDialog({ isOpen, onClose }: CreateReceiptDi
               </div>
             </div>
           )}
+
+          <div className="space-y-2">
+            <Label htmlFor="movement-type">Movement Type *</Label>
+            <Select value={movementType} onValueChange={setMovementType}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select movement type" />
+              </SelectTrigger>
+              <SelectContent>
+                {isLoadingMovementTypes ? (
+                  <SelectItem value="loading" disabled>Loading movement types...</SelectItem>
+                ) : movementTypes.length > 0 ? (
+                  movementTypes.map((mt: any) => (
+                    <SelectItem key={mt.id} value={mt.code || mt.movement_type_code}>
+                      {mt.code || mt.movement_type_code} - {mt.description || mt.name}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <>
+                    <SelectItem value="101">101 - Goods Receipt for Purchase Order</SelectItem>
+                    <SelectItem value="103">103 - GR into GR Blocked Stock</SelectItem>
+                  </>
+                )}
+              </SelectContent>
+            </Select>
+            <p className="text-sm text-muted-foreground">
+              Default: 101 - Goods Receipt for Purchase Order
+            </p>
+          </div>
 
           <div className="space-y-2">
             <Label htmlFor="received-by">Received By</Label>

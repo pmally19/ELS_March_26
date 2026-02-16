@@ -36,6 +36,7 @@ interface SDDocumentType {
   salesDocumentCategoryCode?: string | null;
   salesDocumentCategoryName?: string | null;
   numberRange?: string | null;
+  documentPricingProcedure?: string | null; // For SAP-standard pricing determination
   defaultShippingCondition?: string | null;
   documentFlow?: any;
   isActive: boolean;
@@ -56,6 +57,7 @@ export default function SDDocumentTypes() {
     name: '',
     salesDocumentCategoryId: '',
     numberRange: '',
+    documentPricingProcedure: '',
     defaultShippingCondition: '',
     documentFlow: '',
     isActive: true,
@@ -139,6 +141,23 @@ export default function SDDocumentTypes() {
     }
   });
 
+  // Fetch document pricing procedures (for SAP-standard pricing determination)
+  const { data: documentPricingProcedures = [] } = useQuery({
+    queryKey: ['/api/master-data/document-pricing-procedures'],
+    queryFn: async () => {
+      try {
+        const res = await fetch('/api/master-data/document-pricing-procedures');
+        if (!res.ok) return [];
+        const data = await res.json();
+        return Array.isArray(data) ? data : [];
+      } catch (error) {
+        console.error('Error fetching document pricing procedures:', error);
+        return [];
+      }
+    }
+  });
+
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -146,22 +165,23 @@ export default function SDDocumentTypes() {
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
       // Normalize data to handle field name variations
-      const normalized = Array.isArray(data) 
+      const normalized = Array.isArray(data)
         ? data.map((item: any) => ({
-            id: item.id,
-            code: item.code || '',
-            name: item.name || '',
-            category: item.category || '', // Legacy field
-            salesDocumentCategoryId: item.salesDocumentCategoryId || item.sales_document_category_id || null,
-            salesDocumentCategoryCode: item.salesDocumentCategoryCode || item.sales_document_category_code || null,
-            salesDocumentCategoryName: item.salesDocumentCategoryName || item.sales_document_category_name || null,
-            numberRange: item.numberRange || item.number_range || null,
-            defaultShippingCondition: item.defaultShippingCondition || item.default_shipping_condition || null,
-            documentFlow: item.documentFlow || item.document_flow || null,
-            isActive: item.isActive !== undefined ? item.isActive : (item.is_active !== undefined ? item.is_active : true),
-            createdAt: item.createdAt || item.created_at || null,
-            updatedAt: item.updatedAt || item.updated_at || null
-          }))
+          id: item.id,
+          code: item.code || '',
+          name: item.name || '',
+          category: item.category || '', // Legacy field
+          salesDocumentCategoryId: item.salesDocumentCategoryId || item.sales_document_category_id || null,
+          salesDocumentCategoryCode: item.salesDocumentCategoryCode || item.sales_document_category_code || null,
+          salesDocumentCategoryName: item.salesDocumentCategoryName || item.sales_document_category_name || null,
+          numberRange: item.numberRange || item.number_range || null,
+          documentPricingProcedure: item.documentPricingProcedure || item.document_pricing_procedure || null,
+          defaultShippingCondition: item.defaultShippingCondition || item.default_shipping_condition || null,
+          documentFlow: item.documentFlow || item.document_flow || null,
+          isActive: item.isActive !== undefined ? item.isActive : (item.is_active !== undefined ? item.is_active : true),
+          createdAt: item.createdAt || item.created_at || null,
+          updatedAt: item.updatedAt || item.updated_at || null
+        }))
         : [];
       setItems(normalized);
     } catch (e: any) {
@@ -210,6 +230,7 @@ export default function SDDocumentTypes() {
       name: '',
       salesDocumentCategoryId: '',
       numberRange: '',
+      documentPricingProcedure: '',
       defaultShippingCondition: '',
       documentFlow: '',
       isActive: true,
@@ -224,6 +245,7 @@ export default function SDDocumentTypes() {
       name: item.name || '',
       salesDocumentCategoryId: item.salesDocumentCategoryId?.toString() || '',
       numberRange: item.numberRange || '',
+      documentPricingProcedure: item.documentPricingProcedure || '',
       defaultShippingCondition: item.defaultShippingCondition || '',
       documentFlow: item.documentFlow ? JSON.stringify(item.documentFlow, null, 2) : '',
       isActive: item.isActive !== undefined ? item.isActive : true,
@@ -244,6 +266,9 @@ export default function SDDocumentTypes() {
       // Only include optional fields if they have values
       if (formData.numberRange?.trim()) {
         payload.numberRange = formData.numberRange.trim();
+      }
+      if (formData.documentPricingProcedure?.trim()) {
+        payload.documentPricingProcedure = formData.documentPricingProcedure.trim();
       }
       // Note: defaultShippingCondition is not stored in database currently
       // The dropdown is shown for reference but the value is not saved
@@ -613,6 +638,33 @@ export default function SDDocumentTypes() {
                   </Select>
                   <p className="text-xs text-gray-500 mt-1">Optional: Select a number range for document numbering</p>
                 </div>
+                <div>
+                  <Label htmlFor="documentPricingProcedure">Document Pricing Procedure</Label>
+                  <Select
+                    value={formData.documentPricingProcedure || undefined}
+                    onValueChange={(value) => setFormData({ ...formData, documentPricingProcedure: value || '' })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select document pricing procedure" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {documentPricingProcedures.length > 0 ? (
+                        documentPricingProcedures.map((dpp: any) => (
+                          <SelectItem key={dpp.id || dpp.procedure_code} value={dpp.procedure_code}>
+                            {dpp.procedure_code} - {dpp.description || ''}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                          No document pricing procedures available
+                        </div>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-gray-500 mt-1">For SAP-standard pricing determination</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="defaultShippingCondition">Default Shipping Condition</Label>
                   <Select

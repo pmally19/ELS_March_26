@@ -69,6 +69,9 @@ type Plant = {
   description: string | null;
   companyCodeId: number;
   companyCodeName?: string;
+  valuationGroupingCodeId?: number | null;
+  valuationGroupingCode?: string | null;
+  valuationGroupingName?: string | null;
   type: string;
   category: string | null;
   address: string | null;
@@ -129,6 +132,7 @@ const plantSchema = z.object({
   name: z.string().min(1, "Name is required").max(100, "Name must be at most 100 characters"),
   description: z.string().optional(),
   companyCodeId: z.coerce.number().min(1, "Company Code is required"),
+  valuationGroupingCodeId: z.coerce.number().optional().nullable(),
   type: z.string().min(1, "Plant Type is required"),
   category: z.string().optional(),
   address: z.string().optional(),
@@ -185,6 +189,16 @@ export default function PlantPage() {
     retry: 1,
   });
 
+  // Fetch valuation grouping codes for dropdown selection
+  const { data: valuationGroupingCodes = [] } = useQuery<any[]>({
+    queryKey: ['/api/master-data/valuation-grouping-codes'],
+    queryFn: async () => {
+      const response = await apiRequest('/api/master-data/valuation-grouping-codes?is_active=true');
+      return await response.json();
+    },
+    retry: 1,
+  });
+
   // Fetch data function - extracted for reuse
   const fetchData = async () => {
     try {
@@ -210,6 +224,9 @@ export default function PlantPage() {
           description: p.description || null,
           companyCodeId: p.companyCodeId || p.company_code_id || null,
           companyCodeName: p.companyCodeName || null,
+          valuationGroupingCodeId: p.valuationGroupingCodeId || p.valuation_grouping_code_id || null,
+          valuationGroupingCode: p.valuationGroupingCode || p.valuation_grouping_code || null,
+          valuationGroupingName: p.valuationGroupingName || p.valuation_grouping_name || null,
           type: p.type || null,
           category: p.category || null,
           address: p.address || null,
@@ -283,6 +300,7 @@ export default function PlantPage() {
       name: "",
       description: "",
       companyCodeId: 0,
+      valuationGroupingCodeId: null,
       type: "",
       category: "",
       address: "",
@@ -310,6 +328,7 @@ export default function PlantPage() {
         name: editingPlant.name,
         description: editingPlant.description || "",
         companyCodeId: editingPlant.companyCodeId,
+        valuationGroupingCodeId: editingPlant.valuationGroupingCodeId || null,
         type: editingPlant.type,
         category: editingPlant.category || "",
         address: editingPlant.address || "",
@@ -333,6 +352,7 @@ export default function PlantPage() {
         name: "",
         description: "",
         companyCodeId: 0,
+        valuationGroupingCodeId: null,
         type: "",
         category: "",
         address: "",
@@ -484,6 +504,7 @@ export default function PlantPage() {
       type: values.type?.trim() || null,
       status: values.status?.trim() || 'active', // Use form value or database default
       companyCodeId: Number(values.companyCodeId || 0),
+      valuationGroupingCodeId: values.valuationGroupingCodeId || null, // Include valuation grouping code
       isActive: values.isActive !== undefined ? values.isActive : true, // Use form value or database default
     };
 
@@ -512,6 +533,7 @@ export default function PlantPage() {
       name: plant.name || "",
       description: plant.description || "",
       companyCodeId: plant.companyCodeId || 0,
+      valuationGroupingCodeId: plant.valuationGroupingCodeId || null,
       type: plant.type || "",
       category: plant.category || "",
       address: plant.address || "",
@@ -780,6 +802,7 @@ export default function PlantPage() {
                     <TableHead className="w-[100px]">Code</TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead className="hidden md:table-cell">Company Code</TableHead>
+                    <TableHead className="hidden xl:table-cell">Valuation Grouping</TableHead>
                     <TableHead className="hidden sm:table-cell">Type</TableHead>
                     <TableHead className="hidden lg:table-cell">Location</TableHead>
                     <TableHead className="w-[100px] text-center">Status</TableHead>
@@ -789,13 +812,13 @@ export default function PlantPage() {
                 <TableBody>
                   {plantsLoading ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center h-24">
+                      <TableCell colSpan={8} className="text-center h-24">
                         Loading...
                       </TableCell>
                     </TableRow>
                   ) : filteredPlants.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center h-24">
+                      <TableCell colSpan={8} className="text-center h-24">
                         No plants found. {searchQuery ? "Try a different search." : "Create your first plant."}
                       </TableCell>
                     </TableRow>
@@ -809,6 +832,11 @@ export default function PlantPage() {
                         <TableCell className="font-medium">{plant.code}</TableCell>
                         <TableCell>{plant.name}</TableCell>
                         <TableCell className="hidden md:table-cell">{getCompanyCodeName(plant.companyCodeId)}</TableCell>
+                        <TableCell className="hidden xl:table-cell">
+                          {plant.valuationGroupingCode
+                            ? `${plant.valuationGroupingCode}${plant.valuationGroupingName ? ` - ${plant.valuationGroupingName}` : ''}`
+                            : "-"}
+                        </TableCell>
                         <TableCell className="hidden sm:table-cell">{plant.type}</TableCell>
                         <TableCell className="hidden lg:table-cell">
                           {plant.city && plant.country ? `${plant.city}, ${plant.country}` :
@@ -1077,6 +1105,47 @@ export default function PlantPage() {
                         )}
                       />
 
+                      <FormField
+                        control={form.control}
+                        name="valuationGroupingCodeId"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Valuation Grouping Code</FormLabel>
+                            <Select
+                              onValueChange={(value) => field.onChange(value === "none" ? null : parseInt(value))}
+                              value={field.value?.toString() || "none"}
+                            >
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select valuation grouping code (optional)" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="none">None</SelectItem>
+                                {valuationGroupingCodes.length === 0 ? (
+                                  <SelectItem value="no-codes" disabled>No valuation grouping codes available</SelectItem>
+                                ) : (
+                                  valuationGroupingCodes.map((vgc: any) => (
+                                    <SelectItem
+                                      key={vgc.id}
+                                      value={vgc.id.toString()}
+                                    >
+                                      {vgc.code} - {vgc.name}
+                                    </SelectItem>
+                                  ))
+                                )}
+                              </SelectContent>
+                            </Select>
+                            <FormDescription>
+                              Valuation grouping code for material valuation at this plant
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
                         name="category"
@@ -1546,6 +1615,16 @@ export default function PlantPage() {
                     <div>
                       <Label className="text-gray-500">Factory Calendar</Label>
                       <p className="text-gray-700">{viewingPlant.factoryCalendar}</p>
+                    </div>
+                  )}
+                  {(viewingPlant.valuationGroupingCode || viewingPlant.valuationGroupingName) && (
+                    <div>
+                      <Label className="text-gray-500">Valuation Grouping Code</Label>
+                      <p className="text-gray-700">
+                        {viewingPlant.valuationGroupingCode && viewingPlant.valuationGroupingName
+                          ? `${viewingPlant.valuationGroupingCode} - ${viewingPlant.valuationGroupingName}`
+                          : viewingPlant.valuationGroupingCode || viewingPlant.valuationGroupingName || "-"}
+                      </p>
                     </div>
                   )}
                   {viewingPlant.category && (

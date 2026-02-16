@@ -275,10 +275,7 @@ export class SalesDistributionService {
   // Shipping Conditions
   async createShippingCondition(data: {
     conditionCode: string;
-    description: string;
-    loadingGroup?: string;
-    plantCode?: string;
-    proposedShippingPoint?: string;
+    conditionCode: string;
     manualShippingPointAllowed?: boolean;
     countryOfDeparture?: string;
     departureZone?: string;
@@ -345,10 +342,7 @@ export class SalesDistributionService {
   }
 
   async updateShippingCondition(id: number, data: Partial<{
-    description: string;
-    loadingGroup: string;
-    plantCode: string;
-    proposedShippingPoint: string;
+
     manualShippingPointAllowed: boolean;
     countryOfDeparture: string;
     departureZone: string;

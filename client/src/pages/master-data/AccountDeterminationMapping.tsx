@@ -207,20 +207,29 @@ export default function AccountDeterminationMapping() {
         enabled: true,
     });
 
-    // Fetch condition types from SD
+    // Fetch condition types filtered by selected sales area's company code
     const { data: conditionTypes = [] } = useQuery<ConditionType[]>({
-        queryKey: ["/api/sales-distribution/condition-types"],
+        queryKey: ["/api/master-data/sales-areas/condition-types", selectedSalesAreaId],
         queryFn: async () => {
-            const response = await apiRequest("/api/sales-distribution/condition-types");
+            if (!selectedSalesAreaId) {
+                // Return all condition types if no sales area selected
+                const response = await apiRequest("/api/sales-distribution/condition-types");
+                const data = await response.json();
+                console.log("Condition types API response (all):", data); // Debug log
+                // Handle both snake_case and camelCase from API
+                const filtered = Array.isArray(data)
+                    ? data.filter((ct: any) => ct.is_active !== false && ct.isActive !== false)
+                    : [];
+                console.log("Filtered condition types (all):", filtered); // Debug log
+                return filtered;
+            }
+            // Fetch condition types filtered by sales area's company code
+            const response = await apiRequest(`/api/master-data/sales-areas/condition-types/${selectedSalesAreaId}`);
             const data = await response.json();
-            console.log("Condition types API response:", data); // Debug log
-            // Handle both snake_case and camelCase from API
-            const filtered = Array.isArray(data)
-                ? data.filter((ct: any) => ct.is_active !== false && ct.isActive !== false)
-                : [];
-            console.log("Filtered condition types:", filtered); // Debug log
-            return filtered;
+            console.log("Condition types API response (filtered):", data); // Debug log
+            return data;
         },
+        enabled: true,
     });
 
     const form = useForm<MappingFormValues>({

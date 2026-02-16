@@ -40,26 +40,48 @@ export function PeriodEndClosing() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const [selectedPeriod, setSelectedPeriod] = useState<FiscalPeriod | null>(null);
+    const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
 
-    // Fetch fiscal periods
-    const { data: periods = [], isLoading: periodsLoading } = useQuery<FiscalPeriod[]>({
-        queryKey: ['fiscal-period'],
+    // Fetch Company Codes
+    const { data: companyCodes = [] } = useQuery<any[]>({
+        queryKey: ['company-codes'],
         queryFn: async () => {
-            const response = await fetch('/api/master-data/fiscal-period');
-            if (!response.ok) throw new Error('Failed to fetch periods');
+            const response = await fetch('/api/master-data/company-code');
+            if (!response.ok) throw new Error('Failed to fetch company codes');
             return response.json();
         },
     });
 
+    // Set default company when loaded
+    React.useEffect(() => {
+        if (companyCodes.length > 0 && !selectedCompanyId) {
+            setSelectedCompanyId(companyCodes[0].id);
+        }
+    }, [companyCodes, selectedCompanyId]);
+
+    // Fetch fiscal periods (dependent on selected company)
+    const { data: periods = [], isLoading: periodsLoading } = useQuery<FiscalPeriod[]>({
+        queryKey: ['fiscal-period', selectedCompanyId],
+        queryFn: async () => {
+            if (!selectedCompanyId) return [];
+            const response = await fetch(`/api/master-data/fiscal-period?companyCodeId=${selectedCompanyId}`);
+            if (!response.ok) throw new Error('Failed to fetch periods');
+            return response.json();
+        },
+        enabled: !!selectedCompanyId,
+    });
+
     // Fetch period closings
     const { data: closings = [] } = useQuery<PeriodClosing[]>({
-        queryKey: ['period-closings'],
+        queryKey: ['period-closings', selectedCompanyId],
         queryFn: async () => {
-            const response = await fetch('/api/period-end-closing');
+            if (!selectedCompanyId) return [];
+            const response = await fetch(`/api/period-end-closing?companyCodeId=${selectedCompanyId}`);
             if (!response.ok) throw new Error('Failed to fetch closings');
             const data = await response.json();
             return data.records || [];
         },
+        enabled: !!selectedCompanyId
     });
 
     // Create period closing
@@ -190,6 +212,29 @@ export function PeriodEndClosing() {
                 <div>
                     <h1 className="text-3xl font-bold">Period End Closing</h1>
                     <p className="text-sm text-muted-foreground">Manage fiscal period closing and validation</p>
+                </div>
+            </div>
+
+            {/* Company Code Selector */}
+            <div className="flex items-center space-x-4 bg-muted/30 p-4 rounded-lg border">
+                <div className="flex-1">
+                    <label className="text-sm font-medium mb-1 block">Company Code</label>
+                    <select
+                        className="w-full max-w-sm border rounded-md p-2 bg-background"
+                        value={selectedCompanyId || ''}
+                        onChange={(e) => setSelectedCompanyId(parseInt(e.target.value))}
+                    >
+                        {companyCodes.map((company) => (
+                            <option key={company.id} value={company.id}>
+                                {company.code} - {company.name}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+                <div className="flex-none pt-6">
+                    <p className="text-sm text-muted-foreground">
+                        Viewing data for: <strong>{companyCodes.find(c => c.id === selectedCompanyId)?.name}</strong>
+                    </p>
                 </div>
             </div>
 
@@ -377,6 +422,7 @@ export function PeriodEndClosing() {
                         periods={periods}
                         selectedPeriod={selectedPeriod}
                         setSelectedPeriod={setSelectedPeriod}
+                        selectedCompanyId={selectedCompanyId}
                     />
                 </TabsContent>
 
@@ -896,20 +942,21 @@ function TaxProvisionsTab({ periods, selectedPeriod, setSelectedPeriod }: {
 }
 
 // Daily Validation Tab Component
-function DailyValidationTab({ periods, selectedPeriod, setSelectedPeriod }: {
+function DailyValidationTab({ periods, selectedPeriod, setSelectedPeriod, selectedCompanyId }: {
     periods: FiscalPeriod[];
     selectedPeriod: FiscalPeriod | null;
     setSelectedPeriod: (period: FiscalPeriod | null) => void;
+    selectedCompanyId: number;
 }) {
     const { toast } = useToast();
     const [showDetails, setShowDetails] = useState(false);
 
     // Fetch validation summary
     const { data: validationSummary, isLoading: summaryLoading, refetch: runValidation } = useQuery({
-        queryKey: ['daily-validation-summary', selectedPeriod?.id],
+        queryKey: ['daily-validation-summary', selectedPeriod?.id, selectedCompanyId],
         queryFn: async () => {
             if (!selectedPeriod) return null;
-            const response = await fetch(`/api/finance/daily-validation/summary?fiscalPeriodId=${selectedPeriod.id}`);
+            const response = await fetch(`/api/finance/daily-validation/summary?fiscalPeriodId=${selectedPeriod.id}&companyCodeId=${selectedCompanyId}`);
             if (!response.ok) throw new Error('Failed to fetch validation summary');
             const data = await response.json();
             return data.data;
@@ -919,10 +966,10 @@ function DailyValidationTab({ periods, selectedPeriod, setSelectedPeriod }: {
 
     // Fetch unbalanced entries
     const { data: unbalancedEntries = [] } = useQuery({
-        queryKey: ['unbalanced-entries', selectedPeriod?.id],
+        queryKey: ['unbalanced-entries', selectedPeriod?.id, selectedCompanyId],
         queryFn: async () => {
             if (!selectedPeriod) return [];
-            const response = await fetch(`/api/finance/daily-validation/unbalanced-entries?fiscalPeriodId=${selectedPeriod.id}`);
+            const response = await fetch(`/api/finance/daily-validation/unbalanced-entries?fiscalPeriodId=${selectedPeriod.id}&companyCodeId=${selectedCompanyId}`);
             if (!response.ok) throw new Error('Failed to fetch unbalanced entries');
             const data = await response.json();
             return data.data;
@@ -932,10 +979,10 @@ function DailyValidationTab({ periods, selectedPeriod, setSelectedPeriod }: {
 
     // Fetch account balances
     const { data: accountBalances = [] } = useQuery({
-        queryKey: ['account-balances', selectedPeriod?.id],
+        queryKey: ['account-balances', selectedPeriod?.id, selectedCompanyId],
         queryFn: async () => {
             if (!selectedPeriod) return [];
-            const response = await fetch(`/api/finance/daily-validation/account-balances?fiscalPeriodId=${selectedPeriod.id}`);
+            const response = await fetch(`/api/finance/daily-validation/account-balances?fiscalPeriodId=${selectedPeriod.id}&companyCodeId=${selectedCompanyId}`);
             if (!response.ok) throw new Error('Failed to fetch account balances');
             const data = await response.json();
             return data.data;

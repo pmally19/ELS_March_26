@@ -689,6 +689,7 @@ export default function PurchaseRequisition() {
                     <TableRow className="border-b-2">
                       <TableHead className="w-[80px] font-bold text-gray-900 bg-slate-50 border-r">Itm Cat</TableHead>
                       <TableHead className="w-[180px] font-bold text-gray-900 bg-slate-50 border-r">Material</TableHead>
+                      <TableHead className="w-[150px] font-bold text-gray-900 bg-slate-50 border-r">Plant</TableHead>
                       <TableHead className="w-[200px] font-bold text-gray-900 bg-slate-50 border-r">Description</TableHead>
                       <TableHead className="w-[90px] text-right font-bold text-gray-900 bg-blue-50 border-r">Qty</TableHead>
                       <TableHead className="w-[90px] font-bold text-gray-900 bg-blue-50 border-r">UoM</TableHead>

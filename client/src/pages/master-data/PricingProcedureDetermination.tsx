@@ -108,7 +108,7 @@ export default function PricingProcedureDetermination() {
 
             return apiRequest('/api/master-data/pricing-procedure-determination', {
                 method: 'POST',
-                body: JSON.stringify(payload),
+                body: payload,
             });
         },
         onSuccess: () => {
@@ -226,7 +226,7 @@ export default function PricingProcedureDetermination() {
                                                 <SelectContent>
                                                     {salesOrgs.map((org: any) => (
                                                         <SelectItem key={org.id} value={org.id.toString()}>
-                                                            {org.sales_org_code} - {org.name}
+                                                            {org.code} - {org.name}
                                                         </SelectItem>
                                                     ))}
                                                 </SelectContent>
@@ -252,7 +252,7 @@ export default function PricingProcedureDetermination() {
                                                 <SelectContent>
                                                     {distChannels.map((dc: any) => (
                                                         <SelectItem key={dc.id} value={dc.id.toString()}>
-                                                            {dc.distribution_channel_code} - {dc.name}
+                                                            {dc.code} - {dc.name}
                                                         </SelectItem>
                                                     ))}
                                                 </SelectContent>
@@ -278,7 +278,7 @@ export default function PricingProcedureDetermination() {
                                                 <SelectContent>
                                                     {divisions.map((div: any) => (
                                                         <SelectItem key={div.id} value={div.id.toString()}>
-                                                            {div.division_code} - {div.name}
+                                                            {div.code} - {div.name}
                                                         </SelectItem>
                                                     ))}
                                                 </SelectContent>

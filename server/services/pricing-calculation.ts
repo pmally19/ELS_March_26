@@ -212,8 +212,19 @@ class PricingCalculationService {
                 conditionValue = await this.findConditionRecord(step.condition_type_code, context) || 0;
 
                 // Determine base value for calculation
-                // Defaulting to Net/Running Total logic as specific calculation_base is removed
-                baseForCalculation = runningTotal || baseValue;
+                if (step.from_step) {
+                    if (step.to_step && step.to_step > step.from_step) {
+                        // If range provided, sum the calculated values in that range
+                        baseForCalculation = this.calculateSubtotal(step.from_step, step.to_step, processedSteps);
+                    } else {
+                        // If specific step provided (e.g. from 200 to 200), use that step's value
+                        const sourceStep = processedSteps.get(step.from_step);
+                        baseForCalculation = sourceStep ? sourceStep.calculatedValue : 0;
+                    }
+                } else {
+                    // Default to Running Total or Item Base Value
+                    baseForCalculation = runningTotal || baseValue;
+                }
 
                 // Calculate step value
                 calculatedValue = conditionValue;

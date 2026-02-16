@@ -469,10 +469,7 @@ router.post("/shipping-conditions/seed-basic", async (_req: Request, res: Respon
     const seeds = [
       {
         conditionCode: 'STND',
-        description: 'Standard Shipping',
-        loadingGroup: '0001',
-        plantCode: '1001',
-        proposedShippingPoint: 'SP01',
+        conditionCode: 'STND',
         manualShippingPointAllowed: true,
         countryOfDeparture: 'US',
         transportationGroup: '0001',
@@ -482,10 +479,7 @@ router.post("/shipping-conditions/seed-basic", async (_req: Request, res: Respon
       },
       {
         conditionCode: 'EXPR',
-        description: 'Express Shipping',
-        loadingGroup: '0002',
-        plantCode: '1001',
-        proposedShippingPoint: 'SP02',
+        conditionCode: 'EXPR',
         manualShippingPointAllowed: true,
         countryOfDeparture: 'US',
         transportationGroup: '0002',
@@ -495,10 +489,7 @@ router.post("/shipping-conditions/seed-basic", async (_req: Request, res: Respon
       },
       {
         conditionCode: 'PICK',
-        description: 'Customer Pickup',
-        loadingGroup: '0003',
-        plantCode: '1001',
-        proposedShippingPoint: 'SPPU',
+        conditionCode: 'PICK',
         manualShippingPointAllowed: true,
         countryOfDeparture: 'US',
         transportationGroup: '0003',

@@ -24,6 +24,8 @@ interface PRDetail {
     requisition_number: string;
     requisition_date: string;
     requested_by: string;
+    document_type: string;
+    document_type_code: string;
     cost_center: string;
     cost_center_description: string;
     total_value: number;
@@ -282,6 +284,10 @@ export default function PRDetailDialog({
                                             ? new Date(prDetail.requisition_date).toLocaleDateString()
                                             : '—'}
                                     </div>
+                                </div>
+                                <div>
+                                    <div className="text-sm text-muted-foreground">PR Document Type</div>
+                                    <div>{prDetail.document_type || prDetail.document_type_code || '—'}</div>
                                 </div>
                                 <div>
                                     <div className="text-sm text-muted-foreground">Department</div>

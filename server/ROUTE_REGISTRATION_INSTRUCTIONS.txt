@@ -1,0 +1,7 @@
+// Add this line to server/routes/master-data/index.ts
+
+// After the imports section (around line 100), add:
+import materialAccountDeterminationRouter from "./material-account-determination";
+
+// In the registerMasterDataRoutes function (around line 225), add:
+app.use('/api/master-data/material-account-determination', materialAccountDeterminationRouter);

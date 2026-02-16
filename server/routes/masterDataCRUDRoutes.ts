@@ -83,6 +83,12 @@ async function ensureMovementTypesColumns(pool: any) {
       console.log('✅ Added gl_account_determination column');
     }
 
+    // Add transaction_key column if it doesn't exist
+    if (!availableColumns.includes('transaction_key')) {
+      await pool.query('ALTER TABLE movement_types ADD COLUMN transaction_key character varying(3)');
+      console.log('✅ Added transaction_key column');
+    }
+
     // Add company_code_id column if it doesn't exist
     if (!availableColumns.includes('company_code_id')) {
       await pool.query('ALTER TABLE movement_types ADD COLUMN company_code_id integer DEFAULT 1');
@@ -137,7 +143,9 @@ router.get('/movement-types', async (req, res) => {
         COALESCE(special_stock_indicator, '') as special_stock_indicator,
         COALESCE(valuation_impact, value_update, true) as valuation_impact,
         COALESCE(quantity_impact, quantity_update, true) as quantity_impact,
+        COALESCE(quantity_impact, quantity_update, true) as quantity_impact,
         COALESCE(gl_account_determination, '') as gl_account_determination,
+        COALESCE(transaction_key, '') as transaction_key,
         COALESCE(company_code_id, 1) as company_code_id,
         COALESCE(is_active, active, true) as is_active,
         created_at,
@@ -170,7 +178,9 @@ router.post('/movement-types', async (req, res) => {
       specialStockIndicator,
       valuationImpact,
       quantityImpact,
+
       glAccountDetermination,
+      transactionKey,
       companyCodeId
     } = req.body;
 
@@ -191,11 +201,11 @@ router.post('/movement-types', async (req, res) => {
       INSERT INTO movement_types (
         movement_type_code, description, movement_class, transaction_type,
         inventory_direction, special_stock_indicator, valuation_impact,
-        quantity_impact, gl_account_determination, company_code_id, is_active,
+        quantity_impact, gl_account_determination, transaction_key, company_code_id, is_active,
         movement_code, movement_name, movement_category, debit_credit_indicator,
         quantity_update, value_update, reversal_allowed, active
       ) VALUES (
-        $1::varchar, $2::text, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::boolean, $8::boolean, $9::varchar, $10::integer, $11::boolean,
+        $1::varchar, $2::text, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::boolean, $8::boolean, $9::varchar, $14::varchar, $10::integer, $11::boolean,
         $1::varchar, $2::varchar, $3::varchar, $12::varchar, $8::boolean, $7::boolean, $13::boolean, $11::boolean
       ) 
       RETURNING *
@@ -207,7 +217,7 @@ router.post('/movement-types', async (req, res) => {
       valuationImpact !== undefined ? valuationImpact : true,
       quantityImpact !== undefined ? quantityImpact : true,
       glAccountDetermination || '', companyCodeId || 1, true,
-      debitCreditIndicator, false
+      debitCreditIndicator, false, transactionKey || null
     ]);
 
     res.status(201).json(records.rows[0]);
@@ -248,7 +258,9 @@ router.put('/movement-types/:id', async (req, res) => {
       specialStockIndicator,
       valuationImpact,
       quantityImpact,
+
       glAccountDetermination,
+      transactionKey,
       companyCodeId,
       isActive
     } = req.body;
@@ -269,6 +281,7 @@ router.put('/movement-types/:id', async (req, res) => {
         valuation_impact = COALESCE($7, valuation_impact),
         quantity_impact = COALESCE($8, quantity_impact),
         gl_account_determination = COALESCE($9, gl_account_determination),
+        transaction_key = COALESCE($14, transaction_key),
         company_code_id = COALESCE($10, company_code_id),
         is_active = COALESCE($11, is_active),
         movement_code = COALESCE($1, movement_code),
@@ -287,7 +300,7 @@ router.put('/movement-types/:id', async (req, res) => {
       movementTypeCode, description, movementClass, transactionType,
       inventoryDirection, specialStockIndicator, valuationImpact,
       quantityImpact, glAccountDetermination, companyCodeId, isActive,
-      debitCreditIndicator, id
+      debitCreditIndicator, id, transactionKey || null
     ]);
 
     if (records.rows.length === 0) {

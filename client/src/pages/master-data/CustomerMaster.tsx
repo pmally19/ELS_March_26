@@ -444,7 +444,7 @@ export default function CustomerMaster() {
           // Financial Posting Controls
           deletion_flag: r.deletion_flag ?? undefined,
           authorization_group: r.authorization_group ?? undefined,
-          customer_pricing_procedure: r.customer_pricing_procedure ?? r.customerPricingProcedure ?? undefined,
+          customer_pricing_procedure: r.customer_pricing_procedure ?? r.customerPricingProcedure,
 
           // Address management fields (populated from API)
           sold_to_addresses: r.sold_to_addresses ?? [],
@@ -573,7 +573,15 @@ export default function CustomerMaster() {
       try {
         const response = await apiRequest('/api/master-data/customer-pricing-procedures');
         const data = await response.json();
-        return Array.isArray(data) ? data.filter((cpp: any) => cpp.isActive !== false) : [];
+        // Map procedure_code to code and procedure_name to name for consistency
+        return Array.isArray(data) ? data
+          .filter((cpp: any) => cpp.is_active !== false)
+          .map((cpp: any) => ({
+            ...cpp,
+            code: cpp.procedure_code,
+            name: cpp.procedure_name,
+            description: cpp.description || cpp.procedure_name
+          })) : [];
       } catch {
         return [];
       }
@@ -1064,9 +1072,20 @@ export default function CustomerMaster() {
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, ...data }: { id: number } & Partial<Customer>) => {
+      console.log('🔍 UPDATE MUTATION - Customer ID:', id);
+      console.log('🔍 UPDATE MUTATION - Data to send:', data);
+      console.log('🔍 UPDATE MUTATION - Data keys:', Object.keys(data));
+      console.log('🔍 UPDATE MUTATION - Sample fields:', {
+        name: data.name,
+        email: data.email,
+        phone: data.phone,
+        city: data.city,
+        country: data.country
+      });
+
       const response = await apiRequest(`/api/master-data/customer/${id}`, {
         method: "PATCH",
-        body: JSON.stringify(data)
+        body: data
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: "Failed to update customer" }));
@@ -1294,7 +1313,7 @@ export default function CustomerMaster() {
 
     // Customer number is auto-generated, so no need to validate range manually
 
-    // Transform form data to match server expectations (all fields - no hardcoded defaults)
+    // Transform form data to match server expectations (using snake_case field names)
     const apiData = {
       code: formData.customer_number,
       name: formData.customer_name,
@@ -1307,20 +1326,20 @@ export default function CustomerMaster() {
       city: formData.city || null,
       state: formData.state || null,
       country: formData.country || null,
-      postalCode: formData.postal_code || null,
+      postal_code: formData.postal_code || null, // Fixed: was postalCode
       region: formData.region || null,
       email: formData.email || null,
       phone: formData.phone || null,
       alt_phone: formData.alt_phone || null,
       website: formData.website || null,
-      taxId: formData.tax_id || null,
-      status: null,
+      tax_id: formData.tax_id || null, // Fixed: was taxId
+      status: formData.status || 'Active',
       notes: formData.description || null,
-      isActive: formData.is_active,
-      paymentTerms: formData.payment_terms || null,
+      is_active: formData.is_active, // Fixed: was isActive
+      payment_terms: formData.payment_terms || null, // Fixed: was paymentTerms
       payment_method: formData.payment_method || null,
-      creditLimit: formData.credit_limit || null,
-      creditLimitGroupId: formData.credit_limit_group_id || null,
+      credit_limit: formData.credit_limit || null, // Fixed: was creditLimit
+      credit_limit_group_id: formData.credit_limit_group_id || null, // Fixed: was creditLimitGroupId
       credit_rating: formData.credit_rating || null,
       currency: formData.currency || null,
       discount_group: formData.discount_group || null,
@@ -1329,7 +1348,7 @@ export default function CustomerMaster() {
       shipping_method: formData.shipping_method || null,
       delivery_terms: formData.delivery_terms || null,
       delivery_route: formData.delivery_route || null,
-      companyCodeId: formData.company_code_id || null,
+      company_code_id: formData.company_code_id || null, // Fixed: was companyCodeId
       account_group_id: formData.account_group_id || null, // Account Group - REQUIRED
       tax_profile_id: formData.tax_profile_id || null,
       tax_rule_id: formData.tax_rule_id || null,
@@ -1364,6 +1383,11 @@ export default function CustomerMaster() {
       deletion_flag: formData.deletion_flag || false,
       authorization_group: formData.authorization_group || null,
       customer_pricing_procedure: formData.customer_pricing_procedure || null,
+      // Address Management - include all address arrays
+      sold_to_addresses: formData.sold_to_addresses || [],
+      bill_to_addresses: formData.bill_to_addresses || [],
+      ship_to_addresses: formData.ship_to_addresses || [],
+      payer_to_addresses: formData.payer_to_addresses || [],
     } as any;
 
     if (editingCustomer) {
@@ -1373,7 +1397,7 @@ export default function CustomerMaster() {
     }
   };
 
-  const handleEdit = (customer: Customer) => {
+  const handleEdit = async (customer: Customer) => {
     setEditingCustomer(customer);
     setIsDialogOpen(true);
 
@@ -1389,6 +1413,33 @@ export default function CustomerMaster() {
       }
     } else {
       setSelectedCountryId(undefined);
+    }
+
+    // Fetch addresses from the API (they're not included in the customer list)
+    let addressesData = {
+      sold_to_addresses: [],
+      bill_to_addresses: [],
+      ship_to_addresses: [],
+      payer_to_addresses: []
+    };
+
+    try {
+      const addressResponse = await fetch(`/api/customers/${customer.id}/addresses`);
+      if (addressResponse.ok) {
+        const addressResult = await addressResponse.json();
+        if (addressResult.success && Array.isArray(addressResult.data)) {
+          // Group addresses by type
+          addressesData = {
+            sold_to_addresses: addressResult.data.filter((addr: any) => addr.address_type === 'sold_to'),
+            bill_to_addresses: addressResult.data.filter((addr: any) => addr.address_type === 'bill_to'),
+            ship_to_addresses: addressResult.data.filter((addr: any) => addr.address_type === 'ship_to'),
+            payer_to_addresses: addressResult.data.filter((addr: any) => addr.address_type === 'payer_to')
+          };
+          console.log('✅ Loaded addresses for customer', customer.id, addressesData);
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to load addresses:', error);
     }
 
     setFormData({
@@ -1414,11 +1465,11 @@ export default function CustomerMaster() {
       payment_terms: customer.payment_terms || "",
       language_code: customer.language_code || "",
 
-      // Multiple address management fields
-      sold_to_addresses: customer.sold_to_addresses || [],
-      bill_to_addresses: customer.bill_to_addresses || [],
-      ship_to_addresses: customer.ship_to_addresses || [],
-      payer_to_addresses: customer.payer_to_addresses || [],
+      // Multiple address management fields - NOW LOADED FROM API
+      sold_to_addresses: addressesData.sold_to_addresses,
+      bill_to_addresses: addressesData.bill_to_addresses,
+      ship_to_addresses: addressesData.ship_to_addresses,
+      payer_to_addresses: addressesData.payer_to_addresses,
 
       default_address_setup: customer.default_address_setup || "",
       address_notes: customer.address_notes || "",
@@ -2521,30 +2572,6 @@ export default function CustomerMaster() {
                           </SelectContent>
                         </Select>
                       </div>
-                      <div>
-                        <label className="text-sm font-medium">Reconciliation Account</label>
-                        <Select
-                          value={formData.reconciliation_account_code || ""}
-                          onValueChange={(value) => setFormData({ ...formData, reconciliation_account_code: value })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select reconciliation account" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {reconciliationAccounts.length > 0 ? (
-                              reconciliationAccounts.map((account: any) => (
-                                <SelectItem key={account.id} value={account.code}>
-                                  {account.code} - {account.name}
-                                </SelectItem>
-                              ))
-                            ) : (
-                              <SelectItem value="__none__" disabled>
-                                {reconciliationAccountsLoading ? "Loading accounts..." : "No reconciliation accounts available"}
-                              </SelectItem>
-                            )}
-                          </SelectContent>
-                        </Select>
-                      </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -2785,7 +2812,14 @@ export default function CustomerMaster() {
                           onValueChange={(value) => setFormData({ ...formData, customer_pricing_procedure: value })}
                         >
                           <SelectTrigger>
-                            <SelectValue placeholder="Select pricing procedure" />
+                            <SelectValue placeholder="Select pricing procedure">
+                              {formData.customer_pricing_procedure && customerPricingProcedures.length > 0
+                                ? (() => {
+                                  const selected = customerPricingProcedures.find((pp: any) => pp.code === formData.customer_pricing_procedure);
+                                  return selected ? `${selected.code} - ${selected.description || selected.name}` : formData.customer_pricing_procedure;
+                                })()
+                                : undefined}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
                             {customerPricingProcedures.length > 0 ? (
@@ -3220,6 +3254,54 @@ export default function CustomerMaster() {
                         <div className="flex justify-between">
                           <dt className="text-sm font-medium text-gray-500">Shipping Method:</dt>
                           <dd className="text-sm text-gray-900">{viewingCustomerDetails.shipping_method || "—"}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Sales Group:</dt>
+                          <dd className="text-sm text-gray-900">{viewingCustomerDetails.sales_group_code || "—"}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Sales District:</dt>
+                          <dd className="text-sm text-gray-900">{viewingCustomerDetails.sales_district_code || "—"}</dd>
+                        </div>
+                      </dl>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg">Pricing Information</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <dl className="space-y-2">
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Customer Pricing Procedure:</dt>
+                          <dd className="text-sm text-gray-900">
+                            {viewingCustomerDetails.customer_pricing_procedure ? (() => {
+                              const procedure = customerPricingProcedures.find((pp: any) =>
+                                String(pp.id) === String(viewingCustomerDetails.customer_pricing_procedure) ||
+                                String(pp.code) === String(viewingCustomerDetails.customer_pricing_procedure)
+                              );
+                              return procedure
+                                ? `${procedure.code} - ${procedure.description || procedure.name}`
+                                : viewingCustomerDetails.customer_pricing_procedure;
+                            })() : "—"}
+                          </dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Price List:</dt>
+                          <dd className="text-sm text-gray-900">{viewingCustomerDetails.price_list || "—"}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Price Group:</dt>
+                          <dd className="text-sm text-gray-900">{viewingCustomerDetails.price_group || "—"}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Discount Group:</dt>
+                          <dd className="text-sm text-gray-900">{viewingCustomerDetails.discount_group || "—"}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Delivered at Place:</dt>
+                          <dd className="text-sm text-gray-900">{viewingCustomerDetails.delivered_at_place ? "Yes" : "No"}</dd>
                         </div>
                       </dl>
                     </CardContent>

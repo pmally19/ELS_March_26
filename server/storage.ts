@@ -40,6 +40,7 @@ export interface IStorage {
   createMaterial(material: InsertMaterial): Promise<Material>;
   updateMaterial(id: number, material: Partial<InsertMaterial>): Promise<Material>;
   deleteMaterial(id: number): Promise<boolean>;
+  getProducts(): Promise<Material[]>; // Alias for getMaterials (products = materials)
 
   // Order operations
   getOrders(): Promise<any[]>;
@@ -204,6 +205,11 @@ export class DatabaseStorage implements IStorage {
       .delete(materials)
       .where(eq(materials.id, id));
     return true;
+  }
+
+  // Products are just materials in this system
+  async getProducts(): Promise<Material[]> {
+    return this.getMaterials();
   }
 
   async getLowStockProducts(): Promise<any[]> {
@@ -614,12 +620,12 @@ export class DatabaseStorage implements IStorage {
     // Inventory value (from materials + stock_balances logic)
     // Approximate: sum(stock_balances.quantity * materials.basePrice)
     const inventoryResult = await db.execute(sql`
-        SELECT SUM(sb.quantity * COALESCE(m.base_price, 0)) as value
+        SELECT SUM(sb.quantity * COALESCE(m.base_unit_price, 0)) as value
         FROM stock_balances sb
         JOIN materials m ON sb.material_code = m.code
     `);
 
-    const inventoryValue = parseFloat(inventoryResult.rows[0].value?.toString() || "0");
+    const inventoryValue = parseFloat(inventoryResult.rows[0]?.value?.toString() || "0");
 
     // Low stock items
     const lowStockItems = 0; // Placeholder
@@ -679,12 +685,12 @@ export class DatabaseStorage implements IStorage {
 
     // Inventory value
     const inventoryResult = await db.execute(sql`
-        SELECT SUM(sb.quantity * COALESCE(m.base_price, 0)) as value
+        SELECT SUM(sb.quantity * COALESCE(m.base_unit_price, 0)) as value
         FROM stock_balances sb
         JOIN materials m ON sb.material_code = m.code
     `);
 
-    const inventoryValue = parseFloat(inventoryResult.rows[0].value?.toString() || "0");
+    const inventoryValue = parseFloat(inventoryResult.rows[0]?.value?.toString() || "0");
 
     // Low stock items
     const lowStockItems = 0; // Placeholder

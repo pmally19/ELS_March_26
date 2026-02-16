@@ -19,8 +19,8 @@ router.get('/', async (req, res) => {
         ppd.pricing_procedure_id, pp.procedure_code as pricing_procedure_code, pp.procedure_name as pricing_procedure_name
       FROM pricing_procedure_determinations ppd
       JOIN sd_sales_organizations so ON ppd.sales_organization_id = so.id
-      JOIN distribution_channels dc ON ppd.distribution_channel_id = dc.id
-      JOIN divisions dv ON ppd.division_id = dv.id
+      JOIN sd_distribution_channels dc ON ppd.distribution_channel_id = dc.id
+      JOIN sd_divisions dv ON ppd.division_id = dv.id
       JOIN customer_pricing_procedures cpp ON ppd.customer_pricing_procedure_id = cpp.id
       JOIN document_pricing_procedures dpp ON ppd.document_pricing_procedure_id = dpp.id
       JOIN pricing_procedures pp ON ppd.pricing_procedure_id = pp.id

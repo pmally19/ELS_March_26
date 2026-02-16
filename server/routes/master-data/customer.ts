@@ -62,7 +62,7 @@ router.get("/", async (req: Request, res: Response) => {
         const customers = result.rows.map(row => ({
             ...row,
             // Ensure specific fields are present even if null
-            customer_pricing_procedure: row.customer_pricing_procedure || null,
+            customer_pricing_procedure: row.customer_pricing_procedure,
             // Map 'code' to 'customer_number' if frontend expects it, or keep both
             customer_number: row.customer_code,
             customer_name: row.name,
@@ -423,7 +423,14 @@ router.patch("/:id", async (req: Request, res: Response) => {
         // Debug logging to track update issues
         console.log('📝 Customer PATCH request received:');
         console.log('  Customer ID:', id);
-        console.log('  Request body keys:', Object.keys(req.body).length);
+        console.log('  Request body keys:', Object.keys(req.body));
+        console.log('  Sample request body values:', {
+            name: req.body.name,
+            email: req.body.email,
+            phone: req.body.phone,
+            city: req.body.city,
+            country: req.body.country
+        });
         console.log('  Non-undefined fields in fieldMap:', Object.entries(fieldMap).filter(([k, v]) => v !== undefined).length);
 
         const updates: string[] = [];
@@ -439,7 +446,8 @@ router.patch("/:id", async (req: Request, res: Response) => {
 
         if (updates.length === 0) {
             console.error('❌ No fields to update - all values are undefined');
-            return res.status(400).json({ message: "No validation fields to update" });
+            console.error('  fieldMap entries:', Object.entries(fieldMap).slice(0, 10));
+            return res.status(400).json({ message: "No valid fields to update" });
         }
 
         console.log('✅ Updating fields:', updates.slice(0, 10).join(', '), '...', `(${updates.length} total)`);
@@ -461,6 +469,8 @@ router.patch("/:id", async (req: Request, res: Response) => {
         }
 
         console.log('✅ Customer updated successfully:', result.rows[0].customer_code);
+
+        // Note: Addresses are managed separately through /api/customers/:customerId/addresses endpoint
         return res.json(result.rows[0]);
 
     } catch (error: any) {

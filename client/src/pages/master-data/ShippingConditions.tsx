@@ -20,10 +20,6 @@ import { Trash2, ArrowLeft } from "lucide-react";
 type ShippingCondition = {
   id: number;
   conditionCode: string;
-  description: string;
-  loadingGroup?: string;
-  plantCode?: string;
-  proposedShippingPoint?: string;
   manualShippingPointAllowed?: boolean;
   countryOfDeparture?: string;
   departureZone?: string;
@@ -48,19 +44,60 @@ export default function ShippingConditions() {
     }
   });
 
-  // Fetch shipping points for dropdown
-  const { data: shippingPoints = [] } = useQuery({
-    queryKey: ["/api/sales-distribution/shipping-points"],
+
+
+  // Fetch shipping condition keys for dropdown
+  const { data: conditionKeys = [] } = useQuery({
+    queryKey: ["/api/master-data/shipping-condition-keys"],
     queryFn: async () => {
-      const res = await apiRequest("/api/sales-distribution/shipping-points");
+      const res = await apiRequest("/api/master-data/shipping-condition-keys");
       const data = await res.json();
-      return Array.isArray(data) ? data : [];
+      return Array.isArray(data) ? data.filter((k: any) => k.isActive) : [];
+    }
+  });
+
+  // Fetch weight groups for dropdown
+  const { data: weightGroups = [] } = useQuery({
+    queryKey: ["/api/master-data/weight-groups"],
+    queryFn: async () => {
+      const res = await apiRequest("/api/master-data/weight-groups");
+      const data = await res.json();
+      return Array.isArray(data) ? data.filter((g: any) => g.isActive) : [];
+    }
+  });
+
+  // Fetch countries for dropdown
+  const { data: countries = [] } = useQuery({
+    queryKey: ["/api/master-data/countries"],
+    queryFn: async () => {
+      const res = await apiRequest("/api/master-data/countries");
+      const data = await res.json();
+      return Array.isArray(data) ? data.filter((c: any) => c.isActive !== false && c.is_active !== false) : [];
+    }
+  });
+
+  // Fetch routes for dropdown
+  const { data: routes = [] } = useQuery({
+    queryKey: ["/api/master-data/routes"],
+    queryFn: async () => {
+      const res = await apiRequest("/api/master-data/routes");
+      const data = await res.json();
+      return Array.isArray(data) ? data.filter((r: any) => r.isActive !== false) : [];
+    }
+  });
+
+  // Fetch transportation groups for dropdown
+  const { data: transportationGroups = [] } = useQuery({
+    queryKey: ["/api/master-data/transportation-groups"],
+    queryFn: async () => {
+      const res = await apiRequest("/api/master-data/transportation-groups");
+      const data = await res.json();
+      return Array.isArray(data) ? data.filter((g: any) => g.isActive) : [];
     }
   });
 
   const [form, setForm] = useState<Partial<ShippingCondition>>({
     conditionCode: "",
-    description: "",
     isActive: true,
   });
 
@@ -75,7 +112,7 @@ export default function ShippingConditions() {
     onSuccess: () => {
       toast({ title: "Saved", description: "Shipping condition created" });
       queryClient.invalidateQueries({ queryKey: ["/api/sales-distribution/shipping-conditions"] });
-      setForm({ conditionCode: "", description: "", isActive: true });
+      setForm({ conditionCode: "", isActive: true });
     },
     onError: (e: any) => {
       toast({ title: "Error", description: e?.message || "Failed to save", variant: "destructive" });
@@ -101,8 +138,8 @@ export default function ShippingConditions() {
   };
 
   const handleCreate = () => {
-    if (!form.conditionCode || !form.description) {
-      toast({ title: "Validation", description: "Condition Code and Description are required", variant: "destructive" });
+    if (!form.conditionCode) {
+      toast({ title: "Validation", description: "Condition Code is required", variant: "destructive" });
       return;
     }
     createMutation.mutate(form);
@@ -141,33 +178,17 @@ export default function ShippingConditions() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label>Condition Code *</Label>
-              <Input value={form.conditionCode || ""} onChange={(e) => handleChange("conditionCode", e.target.value)} placeholder="STND / EXPR / PICK" />
-            </div>
-            <div className="space-y-2">
-              <Label>Description *</Label>
-              <Input value={form.description || ""} onChange={(e) => handleChange("description", e.target.value)} placeholder="Standard Shipping" />
-            </div>
-            <div className="space-y-2">
-              <Label>Loading Group</Label>
-              <Input value={form.loadingGroup || ""} onChange={(e) => handleChange("loadingGroup", e.target.value)} placeholder="0001" />
-            </div>
-            <div className="space-y-2">
-              <Label>Plant (Delivering)</Label>
-              <Input value={form.plantCode || ""} onChange={(e) => handleChange("plantCode", e.target.value)} placeholder="1001" />
-            </div>
-            <div className="space-y-2">
-              <Label>Proposed Shipping Point</Label>
               <Select
-                value={form.proposedShippingPoint || ""}
-                onValueChange={(value) => handleChange("proposedShippingPoint", value)}
+                value={form.conditionCode || ""}
+                onValueChange={(value) => handleChange("conditionCode", value)}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select shipping point" />
+                  <SelectValue placeholder="Select condition key" />
                 </SelectTrigger>
                 <SelectContent>
-                  {shippingPoints.map((point: any) => (
-                    <SelectItem key={point.id} value={point.code || point.shipping_point_code || String(point.id)}>
-                      {point.code || point.shipping_point_code} - {point.name || point.description || 'Unnamed'}
+                  {conditionKeys.map((key: any) => (
+                    <SelectItem key={key.id} value={key.keyCode}>
+                      {key.keyCode} - {key.description}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -175,19 +196,93 @@ export default function ShippingConditions() {
             </div>
             <div className="space-y-2">
               <Label>Proposed Route</Label>
-              <Input value={form.proposedRoute || ""} onChange={(e) => handleChange("proposedRoute", e.target.value)} placeholder="R001" />
+              <Select
+                value={form.proposedRoute || ""}
+                onValueChange={(value) => handleChange("proposedRoute", value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select route" />
+                </SelectTrigger>
+                <SelectContent>
+                  {routes.map((route: any) => (
+                    <SelectItem key={route.id} value={route.routeCode}>
+                      {route.routeCode} - {route.description}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>Country of Departure</Label>
-              <Input value={form.countryOfDeparture || ""} onChange={(e) => handleChange("countryOfDeparture", e.target.value)} placeholder="US" />
+              <Select
+                value={form.countryOfDeparture || ""}
+                onValueChange={(value) => handleChange("countryOfDeparture", value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select country" />
+                </SelectTrigger>
+                <SelectContent>
+                  {countries.map((country: any) => (
+                    <SelectItem key={country.id} value={country.code}>
+                      {country.code} - {country.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>Transportation Group</Label>
-              <Input value={form.transportationGroup || ""} onChange={(e) => handleChange("transportationGroup", e.target.value)} placeholder="0001" />
+              <Select
+                value={form.transportationGroup || ""}
+                onValueChange={(value) => handleChange("transportationGroup", value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select transportation group" />
+                </SelectTrigger>
+                <SelectContent>
+                  {transportationGroups.map((group: any) => (
+                    <SelectItem key={group.id} value={group.code}>
+                      {group.code} - {group.description}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Weight Group</Label>
+              <Select
+                value={form.weightGroup || ""}
+                onValueChange={(value) => handleChange("weightGroup", value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select weight group" />
+                </SelectTrigger>
+                <SelectContent>
+                  {weightGroups.map((group: any) => (
+                    <SelectItem key={group.id} value={group.code}>
+                      {group.code} - {group.description}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>Country of Destination</Label>
-              <Input value={form.countryOfDestination || ""} onChange={(e) => handleChange("countryOfDestination", e.target.value)} placeholder="US" />
+              <Select
+                value={form.countryOfDestination || ""}
+                onValueChange={(value) => handleChange("countryOfDestination", value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select country" />
+                </SelectTrigger>
+                <SelectContent>
+                  {countries.map((country: any) => (
+                    <SelectItem key={country.id} value={country.code}>
+                      {country.code} - {country.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div className="mt-4">
@@ -206,10 +301,8 @@ export default function ShippingConditions() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Code</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Plant</TableHead>
-                  <TableHead>Ship Point</TableHead>
                   <TableHead>Route</TableHead>
+                  <TableHead>Weight Grp</TableHead>
                   <TableHead>Manual</TableHead>
                   <TableHead>Active</TableHead>
                   <TableHead>From</TableHead>
@@ -221,10 +314,8 @@ export default function ShippingConditions() {
                 {conditions.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="font-medium">{c.conditionCode}</TableCell>
-                    <TableCell>{c.description}</TableCell>
-                    <TableCell>{c.plantCode || "-"}</TableCell>
-                    <TableCell>{c.proposedShippingPoint || "-"}</TableCell>
                     <TableCell>{c.proposedRoute || "-"}</TableCell>
+                    <TableCell>{c.weightGroup || "-"}</TableCell>
                     <TableCell>
                       <Switch
                         checked={!!c.manualShippingPointAllowed}

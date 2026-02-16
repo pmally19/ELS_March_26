@@ -613,7 +613,7 @@ function ManageRulesTab() {
                 calculation_method: rule.calculation_method,
                 gl_expense_account_id: rule.gl_expense_account_id?.toString() || '',
                 gl_accrual_account_id: rule.gl_accrual_account_id?.toString() || '',
-                company_code_id: rule.company_code_id?.toString() || '',
+                company_code_id: rule.company_code_id?.toString() || 'ALL',
                 is_active: rule.is_active
             });
         } else {
@@ -625,7 +625,7 @@ function ManageRulesTab() {
                 calculation_method: 'manual',
                 gl_expense_account_id: '',
                 gl_accrual_account_id: '',
-                company_code_id: '',
+                company_code_id: 'ALL',
                 is_active: true
             });
         }
@@ -642,7 +642,7 @@ function ManageRulesTab() {
             ...formData,
             gl_expense_account_id: formData.gl_expense_account_id ? parseInt(formData.gl_expense_account_id) : undefined,
             gl_accrual_account_id: formData.gl_accrual_account_id ? parseInt(formData.gl_accrual_account_id) : undefined,
-            company_code_id: formData.company_code_id ? parseInt(formData.company_code_id) : undefined
+            company_code_id: (formData.company_code_id && formData.company_code_id !== 'ALL') ? parseInt(formData.company_code_id) : undefined
         };
 
         saveMutation.mutate(payload);
@@ -861,7 +861,7 @@ function ManageRulesTab() {
                                     <SelectValue placeholder="All companies" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="">All Companies</SelectItem>
+                                    <SelectItem value="ALL">All Companies</SelectItem>
                                     {companyCodes.map((company) => (
                                         <SelectItem key={company.id} value={company.id.toString()}>
                                             {company.company_code} - {company.company_name}

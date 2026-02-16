@@ -16,6 +16,7 @@ export async function getSDDocumentTypes(req: Request, res: Response) {
         sdc.category_code as "salesDocumentCategoryCode",
         sdc.category_name as "salesDocumentCategoryName",
         dt.number_range as "numberRange",
+        dt.document_pricing_procedure as "documentPricingProcedure",
         dt.is_active as "isActive",
         dt.created_at as "createdAt",
         dt.updated_at as "updatedAt"
@@ -57,6 +58,7 @@ export async function getSDDocumentTypeById(req: Request, res: Response) {
         sdc.category_code as "salesDocumentCategoryCode",
         sdc.category_name as "salesDocumentCategoryName",
         dt.number_range as "numberRange",
+        dt.document_pricing_procedure as "documentPricingProcedure",
         dt.is_active as "isActive",
         dt.created_at as "createdAt",
         dt.updated_at as "updatedAt"
@@ -79,7 +81,7 @@ export async function getSDDocumentTypeById(req: Request, res: Response) {
 // POST /api/master-data/sd-document-types - Create a new SD document type
 export async function createSDDocumentType(req: Request, res: Response) {
   try {
-    const { code, name, salesDocumentCategoryId, numberRange, isActive } = req.body;
+    const { code, name, salesDocumentCategoryId, numberRange, documentPricingProcedure, isActive } = req.body;
 
     // Validation
     if (!code || !name || !salesDocumentCategoryId) {
@@ -132,9 +134,9 @@ export async function createSDDocumentType(req: Request, res: Response) {
 
     const result = await pool.query(`
       INSERT INTO sd_document_types (
-        code, name, category, sales_document_category_id, number_range, is_active
+        code, name, category, sales_document_category_id, number_range, document_pricing_procedure, is_active
       ) VALUES (
-        $1, $2, $3, $4, $5, $6
+        $1, $2, $3, $4, $5, $6, $7
       ) RETURNING 
         id,
         code,
@@ -142,6 +144,7 @@ export async function createSDDocumentType(req: Request, res: Response) {
         category,
         sales_document_category_id as "salesDocumentCategoryId",
         number_range as "numberRange",
+        document_pricing_procedure as "documentPricingProcedure",
         is_active as "isActive",
         created_at as "createdAt",
         updated_at as "updatedAt"
@@ -151,6 +154,7 @@ export async function createSDDocumentType(req: Request, res: Response) {
       category,
       salesDocumentCategoryId,
       numberRange?.trim() || null,
+      documentPricingProcedure?.trim() || null,
       activeStatus
     ]);
 
@@ -165,6 +169,7 @@ export async function createSDDocumentType(req: Request, res: Response) {
         sdc.category_code as "salesDocumentCategoryCode",
         sdc.category_name as "salesDocumentCategoryName",
         dt.number_range as "numberRange",
+        dt.document_pricing_procedure as "documentPricingProcedure",
         dt.is_active as "isActive",
         dt.created_at as "createdAt",
         dt.updated_at as "updatedAt"
@@ -188,7 +193,7 @@ export async function updateSDDocumentType(req: Request, res: Response) {
       return res.status(400).json({ error: "Invalid ID format" });
     }
 
-    const { code, name, salesDocumentCategoryId, numberRange, isActive } = req.body;
+    const { code, name, salesDocumentCategoryId, numberRange, documentPricingProcedure, isActive } = req.body;
 
     // Check if document type exists
     const existingResult = await pool.query(`
@@ -250,6 +255,10 @@ export async function updateSDDocumentType(req: Request, res: Response) {
       updates.push(`number_range = $${paramIndex++}`);
       values.push(numberRange?.trim() || null);
     }
+    if (documentPricingProcedure !== undefined) {
+      updates.push(`document_pricing_procedure = $${paramIndex++}`);
+      values.push(documentPricingProcedure?.trim() || null);
+    }
     if (isActive !== undefined) {
       updates.push(`is_active = $${paramIndex++}`);
       values.push(isActive);
@@ -277,6 +286,7 @@ export async function updateSDDocumentType(req: Request, res: Response) {
         sdc.category_code as "salesDocumentCategoryCode",
         sdc.category_name as "salesDocumentCategoryName",
         dt.number_range as "numberRange",
+        dt.document_pricing_procedure as "documentPricingProcedure",
         dt.is_active as "isActive",
         dt.created_at as "createdAt",
         dt.updated_at as "updatedAt"
@@ -378,6 +388,7 @@ export async function deactivateSDDocumentType(req: Request, res: Response) {
         sdc.category_code as "salesDocumentCategoryCode",
         sdc.category_name as "salesDocumentCategoryName",
         dt.number_range as "numberRange",
+        dt.document_pricing_procedure as "documentPricingProcedure",
         dt.is_active as "isActive",
         dt.created_at as "createdAt",
         dt.updated_at as "updatedAt"

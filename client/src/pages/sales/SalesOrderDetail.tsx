@@ -254,7 +254,7 @@ export default function SalesOrderDetail() {
                                                         {sl.confirmation_status}
                                                     </Badge>
                                                 </TableCell>
-                                                <TableCell>{sl.delivery_date ? format(new Date(sl.delivery_date), "PP") : "N/A"}</TableCell>
+                                                <TableCell>{sl.requested_delivery_date || sl.delivery_date ? format(new Date(sl.requested_delivery_date || sl.delivery_date), "PP") : "N/A"}</TableCell>
                                                 <TableCell className="text-right">{sl.schedule_quantity}</TableCell>
                                                 <TableCell className="text-right">{sl.confirmed_quantity}</TableCell>
                                             </TableRow>

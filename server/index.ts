@@ -37,10 +37,10 @@ app.use(express.text({ type: 'text/plain', limit: '5mb' }));
 // This must come AFTER express.text() so the body is already a string
 // Force parse JSON for ANY api route if body is string (e.g. text/plain from some clients)
 app.use('/api', (req: Request, res: Response, next: NextFunction) => {
-  if (req.method === 'POST' && typeof req.body === 'string') {
+  if ((req.method === 'POST' || req.method === 'PATCH' || req.method === 'PUT') && typeof req.body === 'string') {
     try {
       req.body = JSON.parse(req.body);
-      console.log('✅ Force-parsed JSON (global) from text/plain Content-Type for', req.url);
+      console.log(`✅ Force-parsed JSON (global) from text/plain Content-Type for ${req.method} ${req.url}`);
     } catch (e) {
       console.error('❌ Failed to parse JSON from string body:', e);
     }

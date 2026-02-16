@@ -58,10 +58,10 @@ export default function PODetailDialog({ orderId, isOpen, onClose }: PODetailDia
 
     // Fetch related invoices
     const { data: invoices, isLoading: isLoadingInvoices } = useQuery({
-        queryKey: ['/api/vendor-invoices', { purchase_order: order?.order_number }],
+        queryKey: ['/api/purchase/vendor-invoices', { purchase_order: order?.order_number }],
         queryFn: async () => {
             if (!order?.order_number) return [];
-            const response = await fetch(`/api/vendor-invoices?purchase_order=${encodeURIComponent(order.order_number)}`);
+            const response = await fetch(`/api/purchase/vendor-invoices?purchase_order=${encodeURIComponent(order.order_number)}`);
             if (!response.ok) return [];
             const data = await response.json();
             return Array.isArray(data) ? data : [];

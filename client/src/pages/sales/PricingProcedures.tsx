@@ -414,19 +414,16 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
     accrual_key: z.string().optional()
   }).refine(
     (data) => {
-      // If is_subtotal is true, from_step and to_step are required
-      if (data.is_subtotal) {
-        return data.from_step !== undefined && data.to_step !== undefined;
-      }
-      // If is_subtotal is false, condition_type_code is required
+      // If is_subtotal is false, condition_type_code is required (Standard Step)
       if (!data.is_subtotal) {
-        return data.condition_type_code && data.condition_type_code.length > 0;
+        return !!data.condition_type_code && data.condition_type_code.length > 0;
       }
+      // If is_subtotal is true, we allow empty condition type and empty From/To (implies sum all above)
       return true;
     },
     {
-      message: "Subtotal steps require From/To steps; Regular steps require Condition Type",
-      path: ["is_subtotal"]
+      message: "Regular steps require a Condition Type",
+      path: ["condition_type_code"]
     }
   );
 
@@ -604,14 +601,15 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
                         <FormLabel className="text-xs">Condtion Type</FormLabel>
                         <Select
                           onValueChange={(val) => {
-                            field.onChange(val);
-                            const selectedType = conditionTypes.find((ct: any) => ct.condition_code === val);
+                            const value = val === "none" ? "" : val;
+                            field.onChange(value);
+                            const selectedType = conditionTypes.find((ct: any) => ct.condition_code === value);
                             const currentDesc = stepForm.getValues("description");
                             if (selectedType && !currentDesc) {
                               stepForm.setValue("description", selectedType.condition_name);
                             }
                           }}
-                          value={field.value}
+                          value={field.value || "none"} // Bind to 'none' if empty
                           disabled={!!editingStep}
                         >
                           <FormControl>
@@ -620,6 +618,7 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
+                            <SelectItem value="none">_None_</SelectItem>
                             {conditionTypes.map((ct: any) => (
                               <SelectItem key={ct.condition_code} value={ct.condition_code}>
                                 {ct.condition_code} - {ct.condition_name}
@@ -691,13 +690,17 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel className="text-xs">Account Key</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value || ''}>
+                        <Select
+                          onValueChange={(val) => field.onChange(val === "none" ? "" : val)}
+                          value={field.value || "none"}
+                        >
                           <FormControl>
                             <SelectTrigger className="h-9">
                               <SelectValue placeholder="Key" />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
+                            <SelectItem value="none">_None_</SelectItem> {/* Special value to clear selection */}
                             {accountKeys?.map((ak: any) => (
                               <SelectItem key={ak.code} value={ak.code}>
                                 {ak.code}

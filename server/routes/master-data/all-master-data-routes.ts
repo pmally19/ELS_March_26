@@ -73,8 +73,18 @@ router.get('/valuation-classes', async (req, res) => {
           COALESCE(vc.moving_price, false)::boolean as moving_price,
           COALESCE(vc.standard_price, false)::boolean as standard_price,
           COALESCE(vc.active, true)::boolean as is_active,
+          vc.account_category_reference_id,
           vc.created_at,
           vc.updated_at,
+          CASE 
+            WHEN acr.id IS NOT NULL THEN
+              json_build_object(
+                'id', acr.id,
+                'code', acr.code,
+                'name', acr.name
+              )
+            ELSE NULL
+          END as account_category_reference,
           COALESCE(
             json_agg(
               json_build_object(
@@ -86,31 +96,43 @@ router.get('/valuation-classes', async (req, res) => {
             '[]'::json
           ) as allowed_material_types
         FROM valuation_classes vc
+        LEFT JOIN account_category_references acr ON vc.account_category_reference_id = acr.id
         LEFT JOIN valuation_class_material_types vcmt ON vc.id = vcmt.valuation_class_id
         LEFT JOIN material_types mt ON vcmt.material_type_id = mt.id
         GROUP BY vc.id, vc.class_code, vc.class_name, vc.description, vc.valuation_method, 
                  vc.price_control, vc.moving_price, vc.standard_price, vc.active, 
-                 vc.created_at, vc.updated_at
+                 vc.account_category_reference_id, vc.created_at, vc.updated_at, acr.id, acr.code, acr.name
         ORDER BY vc.class_code ASC
       `);
     } else {
       // Query without material types join (table doesn't exist)
       result = await getPool().query(`
         SELECT 
-          id,
-          class_code,
-          class_name,
-          description,
-          valuation_method,
-          price_control,
-          COALESCE(moving_price, false)::boolean as moving_price,
-          COALESCE(standard_price, false)::boolean as standard_price,
-          COALESCE(active, true)::boolean as is_active,
-          created_at,
-          updated_at,
+          vc.id,
+          vc.class_code,
+          vc.class_name,
+          vc.description,
+          vc.valuation_method,
+          vc.price_control,
+          COALESCE(vc.moving_price, false)::boolean as moving_price,
+          COALESCE(vc.standard_price, false)::boolean as standard_price,
+          COALESCE(vc.active, true)::boolean as is_active,
+          vc.account_category_reference_id,
+          vc.created_at,
+          vc.updated_at,
+          CASE 
+            WHEN acr.id IS NOT NULL THEN
+              json_build_object(
+                'id', acr.id,
+                'code', acr.code,
+                'name', acr.name
+              )
+            ELSE NULL
+          END as account_category_reference,
           '[]'::json as allowed_material_types
-        FROM valuation_classes
-        ORDER BY class_code ASC
+        FROM valuation_classes vc
+        LEFT JOIN account_category_references acr ON vc.account_category_reference_id = acr.id
+        ORDER BY vc.class_code ASC
       `);
     }
 
@@ -174,6 +196,7 @@ router.post('/valuation-classes', async (req, res) => {
       moving_price = false,
       standard_price = false,
       allowed_material_types = [],
+      account_category_reference_id = null,
       is_active = true
     } = req.body;
 
@@ -185,8 +208,8 @@ router.post('/valuation-classes', async (req, res) => {
     // Insert valuation class
     const result = await client.query(`
       INSERT INTO valuation_classes 
-      (class_code, class_name, description, valuation_method, price_control, moving_price, standard_price, active)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      (class_code, class_name, description, valuation_method, price_control, moving_price, standard_price, account_category_reference_id, active)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *
     `, [
       class_code,
@@ -196,6 +219,7 @@ router.post('/valuation-classes', async (req, res) => {
       price_control || null,
       moving_price,
       standard_price,
+      account_category_reference_id,
       is_active
     ]);
 
@@ -224,8 +248,18 @@ router.post('/valuation-classes', async (req, res) => {
         COALESCE(vc.moving_price, false)::boolean as moving_price,
         COALESCE(vc.standard_price, false)::boolean as standard_price,
         COALESCE(vc.active, true)::boolean as is_active,
+        vc.account_category_reference_id,
         vc.created_at,
         vc.updated_at,
+        CASE 
+          WHEN acr.id IS NOT NULL THEN
+            json_build_object(
+              'id', acr.id,
+              'code', acr.code,
+              'name', acr.name
+            )
+          ELSE NULL
+        END as account_category_reference,
         COALESCE(
           json_agg(
             json_build_object(
@@ -237,12 +271,13 @@ router.post('/valuation-classes', async (req, res) => {
           '[]'::json
         ) as allowed_material_types
       FROM valuation_classes vc
+      LEFT JOIN account_category_references acr ON vc.account_category_reference_id = acr.id
       LEFT JOIN valuation_class_material_types vcmt ON vc.id = vcmt.valuation_class_id
       LEFT JOIN material_types mt ON vcmt.material_type_id = mt.id
       WHERE vc.id = $1
       GROUP BY vc.id, vc.class_code, vc.class_name, vc.description, vc.valuation_method, 
                vc.price_control, vc.moving_price, vc.standard_price, vc.active, 
-               vc.created_at, vc.updated_at
+               vc.account_category_reference_id, vc.created_at, vc.updated_at, acr.id, acr.code, acr.name
     `, [valuationClass.id]);
 
     await client.query('COMMIT');
@@ -271,6 +306,7 @@ router.patch('/valuation-classes/:id', async (req, res) => {
       moving_price,
       standard_price,
       allowed_material_types,
+      account_category_reference_id,
       is_active
     } = req.body;
 
@@ -315,6 +351,10 @@ router.patch('/valuation-classes/:id', async (req, res) => {
     if (is_active !== undefined) {
       updates.push(`active = $${paramCount++}`);
       values.push(is_active);
+    }
+    if (account_category_reference_id !== undefined) {
+      updates.push(`account_category_reference_id = $${paramCount++}`);
+      values.push(account_category_reference_id);
     }
     updates.push(`updated_at = CURRENT_TIMESTAMP`);
 
@@ -362,8 +402,18 @@ router.patch('/valuation-classes/:id', async (req, res) => {
         COALESCE(vc.moving_price, false)::boolean as moving_price,
         COALESCE(vc.standard_price, false)::boolean as standard_price,
         COALESCE(vc.active, true)::boolean as is_active,
+        vc.account_category_reference_id,
         vc.created_at,
         vc.updated_at,
+        CASE 
+          WHEN acr.id IS NOT NULL THEN
+            json_build_object(
+              'id', acr.id,
+              'code', acr.code,
+              'name', acr.name
+            )
+          ELSE NULL
+        END as account_category_reference,
         COALESCE(
           json_agg(
             json_build_object(
@@ -375,12 +425,13 @@ router.patch('/valuation-classes/:id', async (req, res) => {
           '[]'::json
         ) as allowed_material_types
       FROM valuation_classes vc
+      LEFT JOIN account_category_references acr ON vc.account_category_reference_id = acr.id
       LEFT JOIN valuation_class_material_types vcmt ON vc.id = vcmt.valuation_class_id
       LEFT JOIN material_types mt ON vcmt.material_type_id = mt.id
       WHERE vc.id = $1
       GROUP BY vc.id, vc.class_code, vc.class_name, vc.description, vc.valuation_method, 
                vc.price_control, vc.moving_price, vc.standard_price, vc.active, 
-               vc.created_at, vc.updated_at
+               vc.account_category_reference_id, vc.created_at, vc.updated_at, acr.id, acr.code, acr.name
     `, [id]);
 
     await client.query('COMMIT');
@@ -1433,6 +1484,9 @@ router.get('/material-types', async (req, res) => {
         pt.valuation_class_id,
         vc.class_code as valuation_class_code,
         vc.description as valuation_class_description,
+        pt.account_category_reference_id,
+        acr.code as account_category_reference_code,
+        acr.name as account_category_reference_name,
         pt.inventory_management_enabled,
         pt.quantity_update_enabled,
         pt.value_update_enabled,
@@ -1453,6 +1507,7 @@ router.get('/material-types', async (req, res) => {
         pt.updated_at
       FROM product_types pt
       LEFT JOIN valuation_classes vc ON pt.valuation_class_id = vc.id
+      LEFT JOIN account_category_references acr ON pt.account_category_reference_id = acr.id
       WHERE pt.is_active = true
       ORDER BY pt.sort_order, pt.name
     `);
@@ -1473,6 +1528,7 @@ router.post('/material-types', async (req, res) => {
       sort_order,
       number_range_code,
       valuation_class_id,
+      account_category_reference_id,
       inventory_management_enabled,
       quantity_update_enabled,
       value_update_enabled,
@@ -1486,13 +1542,13 @@ router.post('/material-types', async (req, res) => {
     const result = await pool.query(`
       INSERT INTO product_types (
         code, name, description, sort_order, is_active, 
-        number_range_code, valuation_class_id,
+        number_range_code, valuation_class_id, account_category_reference_id,
         inventory_management_enabled, quantity_update_enabled, value_update_enabled,
         price_control, material_category,
         allow_batch_management, allow_serial_number, allow_negative_stock,
         created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, true, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, true, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
       RETURNING *
     `, [
       code,
@@ -1501,6 +1557,7 @@ router.post('/material-types', async (req, res) => {
       sort_order || 0,
       number_range_code || null,
       valuation_class_id || null,
+      account_category_reference_id || null,
       inventory_management_enabled !== false,
       quantity_update_enabled !== false,
       value_update_enabled !== false,
@@ -1530,6 +1587,7 @@ router.put('/material-types/:id', async (req, res) => {
       is_active,
       number_range_code,
       valuation_class_id,
+      account_category_reference_id,
       inventory_management_enabled,
       quantity_update_enabled,
       value_update_enabled,
@@ -1550,16 +1608,17 @@ router.put('/material-types/:id', async (req, res) => {
         is_active = $5,
         number_range_code = $6,
         valuation_class_id = $7,
-        inventory_management_enabled = $8,
-        quantity_update_enabled = $9,
-        value_update_enabled = $10,
-        price_control = $11,
-        material_category = $12,
-        allow_batch_management = $13,
-        allow_serial_number = $14,
-        allow_negative_stock = $15,
+        account_category_reference_id = $8,
+        inventory_management_enabled = $9,
+        quantity_update_enabled = $10,
+        value_update_enabled = $11,
+        price_control = $12,
+        material_category = $13,
+        allow_batch_management = $14,
+        allow_serial_number = $15,
+        allow_negative_stock = $16,
         updated_at = NOW()
-      WHERE id = $16
+      WHERE id = $17
       RETURNING *
     `, [
       code,
@@ -1569,6 +1628,7 @@ router.put('/material-types/:id', async (req, res) => {
       is_active !== false,
       number_range_code || null,
       valuation_class_id || null,
+      account_category_reference_id || null,
       inventory_management_enabled !== false,
       quantity_update_enabled !== false,
       value_update_enabled !== false,

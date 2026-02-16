@@ -133,6 +133,23 @@ docker-data/
 !setup.sh
 !setup.bat
 
+# Temporary .mjs script files
+*.mjs
+/check-*.mjs
+/test-*.mjs
+/verify-*.mjs
+/debug-*.mjs
+/analyze-*.mjs
+
+# Diagnostic and analysis output files
+*-REPORT.txt
+*-REPORT.json
+*-ANALYSIS.txt
+*-DIAGNOSTIC*.txt
+*-SUMMARY.md
+tsc_output.txt
+cleanup-backup-log.txt
+
 # Backup folders
 backup*/
 backup folder/

@@ -18,19 +18,20 @@ import CreateMovementDialog from "./CreateMovementDialog";
 
 interface StockMovement {
   id: number;
-  product_id: number;
-  product_name: string;
-  sku: string;
+  document_number?: string;
+  material_code: string;
+  product_code?: string;  // from JOIN with materials table
+  product_name: string;   // from JOIN with materials table
   quantity: number;
   movement_type: string;
-  reference: string;
-  movement_date: string;
-  user_name: string;
-  // Additional fields from API
-  unit_of_measure?: string;
-  from_location?: string | null;
-  to_location?: string | null;
-  plant_id?: number | null;
+  reference_document?: string;
+  posting_date: string;
+  created_at: string;
+  created_by?: string;
+  // Database fields
+  unit?: string;
+  storage_location?: string;
+  plant_code?: string;
   delivery_order_id?: number | null;
   purchase_order_id?: number | null;
   production_order_id?: number | null;
@@ -50,8 +51,10 @@ export default function MovementsContent() {
 
   const filteredMovements = movements?.filter(movement => {
     const matchesSearch = movement.product_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      movement.sku?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      movement.reference?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      movement.material_code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      movement.product_code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      movement.reference_document?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      movement.document_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       movement.movement_type?.toLowerCase().includes(searchTerm.toLowerCase());
 
     // Filter by movement type - match exact codes or show all
@@ -61,9 +64,15 @@ export default function MovementsContent() {
     return matchesSearch && matchesType;
   });
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const formatDate = (dateString: string | null | undefined) => {
+    if (!dateString) return '-';
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return '-';
+      return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '-';
+    }
   };
 
   // Get unique movement types for filter dropdown
@@ -120,26 +129,25 @@ export default function MovementsContent() {
                 size="sm"
                 onClick={() => {
                   // Export to CSV
-                  const headers = ['Date', 'SKU', 'Product', 'Movement Type', 'Quantity', 'Unit', 'Plant', 'From', 'To', 'Status', 'Reference', 'Source Docs', 'User', 'Notes'];
+                  const headers = ['Date', 'Doc Number', 'Material Code', 'Product', 'Movement Type', 'Quantity', 'Unit', 'Plant', 'Storage Loc', 'Status', 'Reference', 'Source Docs', 'Notes'];
                   const rows = (filteredMovements || []).map(m => [
-                    formatDate(m.movement_date),
-                    m.sku,
+                    formatDate(m.posting_date || m.created_at),
+                    m.document_number || '',
+                    m.material_code || m.product_code,
                     m.product_name,
                     m.movement_type,
                     m.quantity,
-                    m.unit_of_measure || '',
-                    m.plant_id || '',
-                    m.from_location || '',
-                    m.to_location || '',
+                    m.unit || '',
+                    m.plant_code || '',
+                    m.storage_location || '',
                     m.status || '',
-                    m.reference || '',
+                    m.reference_document || '',
                     [
                       m.delivery_order_id ? `DO-${m.delivery_order_id}` : '',
                       m.purchase_order_id ? `PO-${m.purchase_order_id}` : '',
                       m.sales_order_id ? `SO-${m.sales_order_id}` : '',
                       m.production_order_id ? `PR-${m.production_order_id}` : ''
                     ].filter(Boolean).join('; '),
-                    m.user_name,
                     m.notes || ''
                   ]);
 
@@ -172,18 +180,17 @@ export default function MovementsContent() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Date</TableHead>
-                  <TableHead>SKU</TableHead>
+                  <TableHead>Doc Number</TableHead>
+                  <TableHead>Material Code</TableHead>
                   <TableHead>Product</TableHead>
                   <TableHead>Movement Type</TableHead>
                   <TableHead className="text-right">Quantity</TableHead>
                   <TableHead>Unit</TableHead>
                   <TableHead>Plant</TableHead>
-                  <TableHead>From</TableHead>
-                  <TableHead>To</TableHead>
+                  <TableHead>Storage Loc</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Reference</TableHead>
                   <TableHead>Source Doc</TableHead>
-                  <TableHead>User</TableHead>
                   <TableHead className="text-center">Notes</TableHead>
                 </TableRow>
               </TableHeader>
@@ -191,21 +198,21 @@ export default function MovementsContent() {
                 {filteredMovements.map((movement) => (
                   <TableRow key={movement.id}>
                     <TableCell className="font-medium">
-                      {formatDate(movement.movement_date)}
+                      {formatDate(movement.posting_date || movement.created_at)}
                     </TableCell>
-                    <TableCell>{movement.sku}</TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {movement.document_number || '-'}
+                    </TableCell>
+                    <TableCell>{movement.material_code || movement.product_code}</TableCell>
                     <TableCell>{movement.product_name}</TableCell>
                     <TableCell className="text-sm">
                       {movement.movement_type || '-'}
                     </TableCell>
                     <TableCell className="text-right">{movement.quantity}</TableCell>
-                    <TableCell>{movement.unit_of_measure || '-'}</TableCell>
-                    <TableCell>{movement.plant_id || '-'}</TableCell>
+                    <TableCell>{movement.unit || '-'}</TableCell>
+                    <TableCell>{movement.plant_code || '-'}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {movement.from_location || '-'}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {movement.to_location || '-'}
+                      {movement.storage_location || '-'}
                     </TableCell>
                     <TableCell>
                       {movement.status ? (
@@ -214,7 +221,7 @@ export default function MovementsContent() {
                         </Badge>
                       ) : '-'}
                     </TableCell>
-                    <TableCell>{movement.reference || '-'}</TableCell>
+                    <TableCell>{movement.reference_document || '-'}</TableCell>
                     <TableCell>
                       <div className="flex gap-1 flex-wrap">
                         {movement.delivery_order_id && (
@@ -241,7 +248,6 @@ export default function MovementsContent() {
                           !movement.sales_order_id && !movement.production_order_id && '-'}
                       </div>
                     </TableCell>
-                    <TableCell>{movement.user_name}</TableCell>
                     <TableCell className="text-center">
                       {movement.notes ? (
                         <span title={movement.notes} className="cursor-help">

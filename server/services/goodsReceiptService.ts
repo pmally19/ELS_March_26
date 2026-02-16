@@ -64,6 +64,7 @@ export class GoodsReceiptService {
 
       deliveryNote?: string;
       billOfLading?: string;
+      movementType?: string; // Movement type for goods receipt (default: 101)
     },
     receivedBy: string | null = null,
     providedClient?: any
@@ -339,7 +340,8 @@ export class GoodsReceiptService {
             itemPlantCode,
             itemStorageLocationCode,
             item.receivedQuantity,
-            item.unitPrice
+            item.unitPrice,
+            receiptData.movementType || '101' // Pass movement type or default to 101
           );
         } else {
           await this.createQualityInspection(grId, item.materialCode, item.receivedQuantity);
@@ -1300,10 +1302,11 @@ export class GoodsReceiptService {
     plantCode: string,
     storageLocationCode: string,
     quantity: number,
-    unitPrice: number
+    unitPrice: number,
+    movementType: string = '101' // Movement type parameter with default value
   ): Promise<void> {
     try {
-      console.log(`📦 Posting goods receipt: ${materialCode} qty ${quantity} to plant ${plantCode}, storage ${storageLocationCode}`);
+      console.log(`📦 Posting goods receipt: ${materialCode} qty ${quantity} to plant ${plantCode}, storage ${storageLocationCode}, MovementType: ${movementType}`);
 
       // Create Stock Movement Record (Fix for missing history)
       // Get/Generate GRN Number for reference
@@ -1340,7 +1343,7 @@ export class GoodsReceiptService {
         materialCode,
         plantCode,
         storageLocationCode,
-        '101', // Goods Receipt movement type
+        movementType, // Use the provided movement type instead of hardcoded '101'
         quantity,
         unitPrice,
         (quantity * unitPrice),

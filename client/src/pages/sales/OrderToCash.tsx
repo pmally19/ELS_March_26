@@ -68,6 +68,7 @@ import ScheduleLinesTable from "@/components/delivery/ScheduleLinesTable";
 import EnhancedDeliveryDialog from "@/components/delivery/EnhancedDeliveryDialog";
 import DeliveryBlockPanel from "@/components/delivery/DeliveryBlockPanel";
 import SplitScheduleLineDialog from "@/components/delivery/SplitScheduleLineDialog";
+import DeliveryDetailDialog from "@/components/delivery/DeliveryDetailDialog";
 import BillingDocumentsTab from "@/components/order-to-cash/BillingDocumentsTab";
 import FinancialPostingTab from "@/components/order-to-cash/FinancialPostingTab";
 
@@ -214,6 +215,10 @@ export default function OrderToCash() {
   const [showBlockPanel, setShowBlockPanel] = useState(false);
   const [showSplitDialog, setShowSplitDialog] = useState(false);
   const [selectedScheduleLineForSplit, setSelectedScheduleLineForSplit] = useState<any>(null);
+
+  // Delivery Detail View state
+  const [showDeliveryDetailDialog, setShowDeliveryDetailDialog] = useState(false);
+  const [selectedDeliveryIdForView, setSelectedDeliveryIdForView] = useState<number | null>(null);
 
   // Inventory check tab state
   const [inventoryMaterialCode, setInventoryMaterialCode] = useState<string>("");
@@ -2660,6 +2665,20 @@ export default function OrderToCash() {
                                 {item.item_count || item.itemCount || 0} {item.item_count === 1 || item.itemCount === 1 ? 'item' : 'items'}
                               </div>
                             </div>
+                            {item.type === 'delivery' && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setSelectedDeliveryIdForView(item.id);
+                                  setShowDeliveryDetailDialog(true);
+                                }}
+                                className="text-xs"
+                              >
+                                <Eye className="h-3 w-3 mr-1" />
+                                View
+                              </Button>
+                            )}
                             {item.type === 'delivery' && item.status_display === 'Pending' && (
                               <div className="flex space-x-2">
                                 <Button
@@ -4126,6 +4145,17 @@ export default function OrderToCash() {
         onSplit={handleConfirmSplit}
       />
 
+      {/* Delivery Detail View Dialog */}
+      <DeliveryDetailDialog
+        deliveryId={selectedDeliveryIdForView}
+        isOpen={showDeliveryDetailDialog}
+        onClose={() => {
+          setShowDeliveryDetailDialog(false);
+          setSelectedDeliveryIdForView(null);
+        }}
+      />
+
+
       {/* Background Processes Modal */}
       <Dialog open={showBackgroundProcessModal} onOpenChange={setShowBackgroundProcessModal}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
@@ -4372,6 +4402,20 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
     },
   });
 
+  const { data: pricingProcedures = [] } = useQuery({
+    queryKey: ['/api/pricing-procedures'],
+    queryFn: async () => {
+      try {
+        const response = await apiRequest('/api/pricing-procedures');
+        const data = await response.json();
+        return Array.isArray(data) ? data : [];
+      } catch (error) {
+        console.error('Error fetching pricing procedures:', error);
+        return [];
+      }
+    },
+  });
+
   const { data: salesOrganizations = [] } = useQuery({
     queryKey: ['/api/master-data/sales-organization'],
     queryFn: async () => {
@@ -4498,6 +4542,7 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
             name: String(dt.name || '').trim(),
             category: String(dt.category || 'ORDER').toUpperCase().trim(),
             numberRange: dt.numberRange || dt.number_range || null,
+            document_pricing_procedure: dt.documentPricingProcedure || dt.document_pricing_procedure || null,
             isActive: dt.isActive !== undefined ? dt.isActive : (dt.is_active !== undefined ? dt.is_active : true)
           };
           return normalized;
@@ -4970,6 +5015,19 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
       return;
     }
 
+    // Validate that the selected pricing procedure actually exists in master data
+    if (pricingProcedures.length > 0) {
+      const isValidProcedure = pricingProcedures.some((pp: any) =>
+        String(pp.procedure_code) === String(orderData.pricing_procedure) ||
+        String(pp.id) === String(orderData.pricing_procedure)
+      );
+
+      if (!isValidProcedure) {
+        alert(`Invalid Pricing Procedure: "${orderData.pricing_procedure}". Please select a valid option from the list.`);
+        return;
+      }
+    }
+
     if (!orderData.tax_code || orderData.tax_code === '') {
       alert('Tax code is required');
       return;
@@ -5220,6 +5278,59 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                   }
                 }
 
+                // SAP Pricing Procedure Determination - auto-determine from combination
+                if (customer && customer.sales_org_code && customer.distribution_channel_code && customer.division_code) {
+                  // Use customer pricing procedure for determination
+                  const customerPP = customer.customer_pricing_procedure;
+                  // Get document pricing procedure from selected document type (SAP standard requirement)
+                  const documentPP = updatedData.document_pricing_procedure;
+
+                  // SAP standard requires both customer PP and document PP
+                  if (customerPP && documentPP && (isEmpty(orderData.pricing_procedure) || isCustomerChanging)) {
+                    console.log('[Pricing Determination] Input:', {
+                      sales_org_code: customer.sales_org_code,
+                      distribution_channel_code: customer.distribution_channel_code,
+                      division_code: customer.division_code,
+                      customer_pricing_procedure: customerPP,
+                      document_pricing_procedure: documentPP
+                    });
+
+                    // Call determination API asynchronously
+                    fetch('/api/pricing/determine-procedure', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        sales_org_code: customer.sales_org_code,
+                        distribution_channel_code: customer.distribution_channel_code,
+                        division_code: customer.division_code,
+                        customer_pricing_procedure: customerPP,
+                        document_pricing_procedure: documentPP
+                      })
+                    })
+                      .then(response => response.json())
+                      .then(result => {
+                        console.log('[Pricing Determination] Result:', result);
+
+                        if (result.matched && result.pricing_procedure) {
+                          setOrderData(prev => ({
+                            ...prev,
+                            pricing_procedure: result.pricing_procedure
+                          }));
+                          setAutoFilledFields(prev => new Set(prev).add('pricing_procedure'));
+                          console.log(`[Pricing Determination] ✅ Determined pricing procedure: ${result.pricing_procedure}`);
+                        } else {
+                          console.warn('[Pricing Determination] ⚠️ No match found, no pricing procedure auto-filled');
+                        }
+                      })
+                      .catch(error => {
+                        console.error('[Pricing Determination] ❌ Error determining pricing procedure:', error);
+                        // No fallback - SAP standard requires proper determination
+                      });
+                  } else if (!documentPP) {
+                    console.warn('[Pricing Determination] ⚠️ Document pricing procedure not set in document type');
+                  }
+                }
+
                 // Tax fields
                 if (customer?.tax_profile_id) {
                   updatedData.tax_profile_id = customer.tax_profile_id;
@@ -5251,6 +5362,7 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 if (fieldsAutoFilled.has('sales_org_id')) autoFilledFieldsList.push('Sales Organization');
                 if (fieldsAutoFilled.has('distribution_channel_id')) autoFilledFieldsList.push('Distribution Channel');
                 if (fieldsAutoFilled.has('division_id')) autoFilledFieldsList.push('Division');
+                if (fieldsAutoFilled.has('pricing_procedure')) autoFilledFieldsList.push('Pricing Procedure');
                 if (fieldsAutoFilled.has('shipping_condition')) autoFilledFieldsList.push('Shipping Condition');
                 if (fieldsAutoFilled.has('sales_district')) autoFilledFieldsList.push('Sales District');
                 if (fieldsAutoFilled.has('sales_office_code')) autoFilledFieldsList.push('Sales Office');
@@ -5321,7 +5433,60 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
               <Label htmlFor="document_type">Document Type <span className="text-red-500">*</span></Label>
               <Select
                 value={orderData.document_type || ''}
-                onValueChange={(value) => setOrderData(prev => ({ ...prev, document_type: value }))}
+                onValueChange={(value) => {
+                  // Find selected document type to get its document_pricing_procedure
+                  const selectedDocType = documentTypes.find((dt: any) => String(dt.code).trim() === value);
+
+                  setOrderData(prev => ({
+                    ...prev,
+                    document_type: value,
+                    // Store document pricing procedure for later use in determination
+                    document_pricing_procedure: selectedDocType?.document_pricing_procedure || null
+                  }));
+
+                  console.log('[Document Type Change] Selected:', value, 'Document PP:', selectedDocType?.document_pricing_procedure);
+
+                  // Trigger pricing determination if customer is already selected
+                  // This handles the case where user selects document type AFTER customer
+                  const customer = customers?.find((c: any) => String(c.id) === String(orderData.customer_id));
+                  const documentPP = selectedDocType?.document_pricing_procedure;
+
+                  if (customer && customer.sales_org_code && customer.distribution_channel_code &&
+                    customer.division_code && customer.customer_pricing_procedure && documentPP) {
+
+                    console.log('[Pricing Determination on DocType Change] Triggering:', {
+                      sales_org_code: customer.sales_org_code,
+                      distribution_channel_code: customer.distribution_channel_code,
+                      division_code: customer.division_code,
+                      customer_pricing_procedure: customer.customer_pricing_procedure,
+                      document_pricing_procedure: documentPP
+                    });
+
+                    fetch('/api/pricing/determine-procedure', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        sales_org_code: customer.sales_org_code,
+                        distribution_channel_code: customer.distribution_channel_code,
+                        division_code: customer.division_code,
+                        customer_pricing_procedure: customer.customer_pricing_procedure,
+                        document_pricing_procedure: documentPP
+                      })
+                    })
+                      .then(response => response.json())
+                      .then(result => {
+                        if (result.matched && result.pricing_procedure) {
+                          setOrderData(prev => ({
+                            ...prev,
+                            pricing_procedure: result.pricing_procedure
+                          }));
+                          setAutoFilledFields(prev => new Set(prev).add('pricing_procedure'));
+                          console.log(`[Pricing Determination] ✅ Auto-filled: ${result.pricing_procedure}`);
+                        }
+                      })
+                      .catch(error => console.error('[Pricing Determination] ❌ Error:', error));
+                  }
+                }}
                 disabled={documentTypesLoading}
               >
                 <SelectTrigger>
@@ -5566,12 +5731,29 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="pricing_procedure">Pricing Procedure <span className="text-red-500">*</span></Label>
-              <Input
-                id="pricing_procedure"
-                value={orderData.pricing_procedure || ''}
-                onChange={(e) => setOrderData(prev => ({ ...prev, pricing_procedure: e.target.value }))}
-                placeholder="Enter pricing procedure code"
-              />
+              <Select
+                value={orderData.pricing_procedure || ""}
+                onValueChange={(value) => {
+                  setOrderData(prev => ({ ...prev, pricing_procedure: value }));
+                }}
+              >
+                <SelectTrigger id="pricing_procedure" className={autoFilledFields.has('pricing_procedure') ? 'bg-green-50 border-green-300' : ''}>
+                  <SelectValue placeholder="Select pricing procedure" />
+                </SelectTrigger>
+                <SelectContent>
+                  {pricingProcedures.length > 0 ? (
+                    pricingProcedures.map((pp: any) => (
+                      <SelectItem key={pp.id} value={pp.procedure_code ? String(pp.procedure_code) : (String(pp.id))}>
+                        {pp.procedure_name || pp.description} ({pp.procedure_code})
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                      No pricing procedures available
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label htmlFor="tax_code">Tax Code <span className="text-red-500">*</span></Label>

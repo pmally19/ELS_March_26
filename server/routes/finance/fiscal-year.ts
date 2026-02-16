@@ -133,14 +133,26 @@ router.post('/open', async (req: Request, res: Response) => {
             });
         }
 
+        // Fetch Fiscal Year Variant for the company
+        const companyResult = await client.query(
+            `SELECT fyv.posting_periods, fyv.special_periods 
+             FROM company_codes cc
+             LEFT JOIN fiscal_year_variants fyv ON cc.fiscal_year_variant_id = fyv.id
+             WHERE cc.id = $1`,
+            [company_code_id]
+        );
+
+        const postingPeriods = companyResult.rows[0]?.posting_periods || 12;
+        const specialPeriods = companyResult.rows[0]?.special_periods || 4;
+
         // Create new fiscal year
         const result = await client.query(
             `INSERT INTO fiscal_years (
         fiscal_year, company_code_id, start_date, end_date, 
         status, is_current, posting_periods_open, special_periods_open
-      ) VALUES ($1, $2, $3, $4, 'OPEN', false, 12, 4)
+      ) VALUES ($1, $2, $3, $4, 'OPEN', false, $5, $6)
       RETURNING *`,
-            [fiscal_year, company_code_id, start_date, end_date]
+            [fiscal_year, company_code_id, start_date, end_date, postingPeriods, specialPeriods]
         );
 
         // Log the change

@@ -466,7 +466,7 @@ export const customers = pgTable("erp_customers", {
   payment_method: varchar("payment_method", { length: 50 }),
   credit_limit: decimal("credit_limit", { precision: 15, scale: 2 }),
   credit_limit_group_id: integer("credit_limit_group_id"),
-  credit_rating: varchar("credit_rating", { length: 10 }),
+  credit_rating: varchar("credit_rating", { length: 20 }),
   discount_group: varchar("discount_group", { length: 50 }),
   price_group: varchar("price_group", { length: 50 }),
   incoterms: varchar("incoterms", { length: 20 }),
@@ -660,24 +660,18 @@ export const workspaceTileAssignmentRelations = relations(workspaceTileAssignmen
 }));
 
 // Materials table - Master data for materials
+// Schema simplified to match actual database columns
 export const materials = pgTable("materials", {
   id: serial("id").primaryKey(),
   materialCode: varchar("code", { length: 20 }).notNull().unique(),
-  description: varchar("description", { length: 100 }).notNull(),
-  materialType: varchar("type", { length: 20 }).default("ROH"), // FERT, ROH, HALB, etc.
-  valuationClass: varchar("valuation_class", { length: 50 }), // References valuation_classes(class_code)
-  baseUom: varchar("base_uom", { length: 3 }).default("EA"),
+  name: varchar("name", { length: 255 }),
+  description: varchar("description", { length: 500 }),
+  materialType: varchar("type", { length: 20 }),
+  baseUom: varchar("base_uom", { length: 3 }),
+  basePrice: decimal("base_unit_price", { precision: 15, scale: 2 }),
   materialGroup: varchar("material_group", { length: 10 }),
-  basePrice: decimal("base_price", { precision: 15, scale: 2 }),
-  currency: varchar("currency", { length: 3 }).default("USD"),
-  grossWeight: decimal("gross_weight", { precision: 15, scale: 3 }),
-  netWeight: decimal("net_weight", { precision: 15, scale: 3 }),
-  weightUnit: varchar("weight_unit", { length: 3 }).default("KG"),
-  division: varchar("division", { length: 2 }),
-  procurementType: varchar("procurement_type", { length: 1 }).default("F"), // F=External, E=In-house
-  profitCenter: varchar("profit_center", { length: 20 }),
-  costCenter: varchar("cost_center", { length: 20 }),
-  isActive: boolean("active").default(true),
+  loadingGroup: varchar("loading_group", { length: 4 }), // SAP OVL1
+  isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -795,7 +789,7 @@ export const quotations = pgTable("quotations", {
   totalAmount: doublePrecision("total_amount").notNull().default(0),
   currency: text("currency").default("USD").notNull(),
   notes: text("notes"),
-  userId: integer("user_id").references(() => users.id),
+  createdBy: integer("created_by").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -806,7 +800,7 @@ export const quotationRelations = relations(quotations, ({ one, many }) => ({
     references: [customers.id],
   }),
   user: one(users, {
-    fields: [quotations.userId],
+    fields: [quotations.createdBy],
     references: [users.id],
   }),
   items: many(quotationItems),
@@ -1106,6 +1100,7 @@ export const periodEndClosing = pgTable("period_end_closing", {
 });
 
 // Company Codes schema (ensure we have the reference)
+// Company Codes schema (ensure we have the reference)
 export const companyCodes = pgTable("company_codes", {
   id: serial("id").primaryKey(),
   code: text("code").notNull().unique(),
@@ -1117,7 +1112,9 @@ export const companyCodes = pgTable("company_codes", {
   address: text("address"),
   phone: text("phone"),
   email: text("email"),
-  isActive: boolean("is_active").default(true).notNull(),
+  isActive: boolean("active").default(true).notNull(),
+  fiscalYearVariantId: integer("fiscal_year_variant_id").references(() => fiscalYearVariants.id),
+  chartOfAccountsId: integer("chart_of_accounts_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -2824,6 +2821,7 @@ export const movementTypes = pgTable("movement_types", {
   inventoryEffect: varchar("inventory_effect", { length: 10 }).notNull(), // INCREASE, DECREASE, NEUTRAL
   glAccountDebit: varchar("gl_account_debit", { length: 20 }),
   glAccountCredit: varchar("gl_account_credit", { length: 20 }),
+  transactionKey: varchar("transaction_key", { length: 3 }), // Transaction Key (e.g. BSX, GBB)
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

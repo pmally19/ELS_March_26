@@ -506,7 +506,179 @@ router.put('/stock-balances/:id', async (req, res) => {
 });
 
 // Get stock movements
+router.get('/movements', async (req, res) => {
+  try {
+    const result = await directPool.query(`
+      SELECT 
+        sm.*,
+        m.description as product_name,
+        m.code as product_code
+      FROM stock_movements sm
+      LEFT JOIN materials m ON sm.material_code = m.code
+      ORDER BY sm.created_at DESC
+      LIMIT 100
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching stock movements:', error);
+    res.status(500).json({ message: 'Failed to fetch stock movements', error: error.message });
+  }
+});
 
+// Create stock movement
+router.post('/movements', async (req, res) => {
+  const client = await directPool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const {
+      material_id,
+      quantity,
+      movement_type,
+      plant_id,
+      storage_location,
+      unit_of_measure,
+      posting_date,
+      reference,
+      notes,
+      user_id
+    } = req.body;
+
+    // Validate required fields
+    if (!material_id || !quantity || !movement_type) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: 'material_id, quantity, and movement_type are required'
+      });
+    }
+
+    // Get material code from material_id (materials table)
+    const materialResult = await client.query(
+      'SELECT code, base_uom, description FROM materials WHERE id = $1',
+      [material_id]
+    );
+
+    if (materialResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: `Material with ID ${material_id} not found`
+      });
+    }
+
+    const material = materialResult.rows[0];
+    const material_code = material.code;
+    const uom = unit_of_measure || material.base_uom || 'EA';
+
+    // Get plant code if plant_id provided
+    let plant_code = null;
+    if (plant_id) {
+      const plantResult = await client.query(
+        'SELECT code FROM plants WHERE id = $1',
+        [plant_id]
+      );
+      if (plantResult.rows.length > 0) {
+        plant_code = plantResult.rows[0].code;
+      }
+    }
+
+    // Determine movement direction and use provided storage location or default
+    const isInbound = ['Goods Receipt', 'Production Receipt', 'Return'].includes(movement_type);
+    const isOutbound = ['Goods Issue', 'Production Issue', 'Scrap'].includes(movement_type);
+    const final_storage_location = storage_location || 'SL01';
+
+
+    // Generate material document number (SAP style: 4900000001, 4900000002, etc.)
+    const year = new Date().getFullYear();
+    const countResult = await client.query(
+      `SELECT COUNT(*) as count FROM stock_movements WHERE EXTRACT(YEAR FROM created_at) = $1`,
+      [year]
+    );
+    const count = parseInt(countResult.rows[0]?.count || '0') + 1;
+    const document_number = `${year}${count.toString().padStart(6, '0')}`;
+
+    // Insert stock movement record with correct column names
+    const movementResult = await client.query(
+      `INSERT INTO stock_movements (
+        material_code, quantity, movement_type, plant_code,
+        storage_location, unit,
+        posting_date, reference_document, notes, created_by, document_number, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+      RETURNING *`,
+      [
+        material_code,
+        parseFloat(quantity),
+        movement_type,
+        plant_code,
+        final_storage_location,
+        uom,
+        posting_date || new Date().toISOString().split('T')[0],
+        reference,
+        notes,
+        user_id?.toString() || '1',
+        document_number
+      ]
+    );
+
+    // Update or create stock balance
+    if (plant_code && final_storage_location) {
+      const stockBalanceCheck = await client.query(
+        `SELECT id, quantity, available_quantity FROM stock_balances
+         WHERE material_code = $1 AND plant_code = $2 AND storage_location = $3 AND stock_type = 'AVAILABLE'`,
+        [material_code, plant_code, final_storage_location]
+      );
+
+      const quantityChange = isInbound ? parseFloat(quantity) : -parseFloat(quantity);
+
+      if (stockBalanceCheck.rows.length > 0) {
+        // Update existing stock balance
+        const currentStock = parseFloat(stockBalanceCheck.rows[0].quantity || 0);
+        const newQuantity = currentStock + quantityChange;
+
+        await client.query(
+          `UPDATE stock_balances
+           SET quantity = $1,
+               available_quantity = $1,
+               last_updated = NOW(),
+               updated_at = NOW()
+           WHERE material_code = $2 AND plant_code = $3 AND storage_location = $4 AND stock_type = 'AVAILABLE'`,
+          [newQuantity, material_code, plant_code, final_storage_location]
+        );
+      } else {
+        // Create new stock balance if it doesn't exist (for inbound movements)
+        if (isInbound) {
+          await client.query(
+            `INSERT INTO stock_balances (
+              material_code, plant_code, storage_location, stock_type,
+              quantity, available_quantity, unit, last_updated, created_at, updated_at
+            ) VALUES ($1, $2, $3, 'AVAILABLE', $4, $4, $5, NOW(), NOW(), NOW())`,
+            [material_code, plant_code, final_storage_location, parseFloat(quantity), uom]
+          );
+        }
+      }
+    }
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      data: movementResult.rows[0],
+      message: 'Stock movement recorded successfully'
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error recording stock movement:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to record stock movement',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
 
 // Get warehouses and storage locations with stock levels and ERP details
 router.get('/warehouses', async (req, res) => {

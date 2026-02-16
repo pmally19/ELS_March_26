@@ -34,11 +34,11 @@ const moduleIcons = {
   controlling: "📊"
 };
 
-export default function AIAssistant({ 
-  moduleType, 
-  moduleName, 
-  currentData, 
-  userRole 
+export default function AIAssistant({
+  moduleType,
+  moduleName,
+  currentData,
+  userRole
 }: AIAssistantProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState("");
@@ -128,38 +128,35 @@ export default function AIAssistant({
         currentModule: moduleName
       };
 
-      console.log("Sending request to:", `/api/ai/agents/${moduleType}/conversation`);
-      console.log("Request payload:", {
-        message: inputValue,
-        context: {
-          ...context,
-          userRole: userRole || 'chief'
-        }
-      });
+      // Assuming userQuery, conversationHistory, and permissions are defined elsewhere or should be derived.
+      // For this change, we'll use inputValue as userQuery and an empty array for conversationHistory.
+      // Permissions would typically come from a user context or auth system.
+      const userQuery = inputValue;
+      const conversationHistory = messages.map(msg => ({
+        role: msg.type === "user" ? "user" : "assistant",
+        content: msg.content
+      }));
+      const permissions = ["read", "write"]; // Placeholder
 
       const response = await fetch(`/api/ai/agents/${moduleType}/conversation`, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({
-          message: inputValue,
-          context: {
-            ...context,
-            userRole: userRole || 'chief'
+          query: userQuery,
+          conversationHistory,
+          userRole,
+          permissions,
+          metadata: {
+            ui: true,
+            assistant: true
           }
-        })
+        }),
       });
 
-      console.log("Response status:", response.status);
-      console.log("Response headers:", response.headers);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
       const responseData = await response.json();
-      console.log("AI Agent Response Data:", responseData);
 
       let agentContent = "";
       let agentName = "AI Assistant";
@@ -194,7 +191,7 @@ export default function AIAssistant({
         description: "Failed to get AI response. Please try again.",
         variant: "destructive"
       });
-      
+
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: "agent",
@@ -212,7 +209,7 @@ export default function AIAssistant({
     if (!currentData || isLoading) return;
 
     setIsLoading(true);
-    
+
     const analysisMessage: Message = {
       id: Date.now().toString(),
       type: "user",
@@ -233,9 +230,9 @@ export default function AIAssistant({
 
       let agentContent = "";
       let agentName = "AI Assistant";
-      
+
       console.log("Analysis Response:", response);
-      
+
       if (response && response.success === true && (response.analysis || response.response)) {
         agentContent = response.analysis || response.response;
         agentName = response.agent || "AI Assistant";
@@ -297,7 +294,7 @@ export default function AIAssistant({
             {getStatusBadge()}
           </div>
         </CardTitle>
-        
+
         {agentCapabilities && (
           <div className="flex flex-wrap gap-1 mt-2">
             {agentCapabilities.expertise.slice(0, 3).map((skill: string) => (
@@ -324,21 +321,19 @@ export default function AIAssistant({
                     <Brain className="h-4 w-4 text-blue-600" />
                   </div>
                 )}
-                
-                <div className={`max-w-[80%] rounded-lg p-3 ${
-                  message.type === "user" 
-                    ? "bg-blue-600 text-white ml-auto" 
+
+                <div className={`max-w-[80%] rounded-lg p-3 ${message.type === "user"
+                    ? "bg-blue-600 text-white ml-auto"
                     : "bg-gray-100 text-gray-900"
-                }`}>
+                  }`}>
                   {message.type === "agent" && message.agentName && (
                     <div className="text-xs text-gray-500 mb-1 font-medium">
                       {message.agentName}
                     </div>
                   )}
                   <div className="whitespace-pre-wrap">{message.content}</div>
-                  <div className={`text-xs mt-1 ${
-                    message.type === "user" ? "text-blue-100" : "text-gray-500"
-                  }`}>
+                  <div className={`text-xs mt-1 ${message.type === "user" ? "text-blue-100" : "text-gray-500"
+                    }`}>
                     {message.timestamp.toLocaleTimeString()}
                   </div>
                 </div>
@@ -350,7 +345,7 @@ export default function AIAssistant({
                 )}
               </div>
             ))}
-            
+
             {isLoading && (
               <div className="flex gap-3 justify-start">
                 <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mt-1">

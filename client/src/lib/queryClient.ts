@@ -49,19 +49,6 @@ export async function apiRequest(
   // If it's not a native body type and it exists, treat it as JSON
   const shouldStringify = options?.body && !isNativeBody;
 
-  if (options?.method === 'POST' || options?.method === 'PUT') {
-    console.log('🔍 apiRequest Debug:', {
-      url,
-      method: options?.method,
-      isFormData,
-      isString,
-      shouldStringify,
-      bodyType: typeof options?.body,
-      bodyConstructor: options?.body?.constructor?.name,
-      headers: options?.headers
-    });
-  }
-
   // Explicitly construct headers to ensure Content-Type is set correctly
   const headers = new Headers(options?.headers || {});
 
@@ -70,14 +57,6 @@ export async function apiRequest(
   }
 
   headers.set("Accept", "application/json");
-
-  console.log('🔍 apiRequest FINAL CHECK:', {
-    shouldStringify,
-    originalBodyType: typeof options?.body,
-    isNativeBody,
-    finalBody: shouldStringify ? JSON.stringify(options.body) : 'NATIVE_BODY',
-    headers: Object.fromEntries(headers.entries())
-  });
 
   const res = await fetch(url, {
     ...options,

@@ -1,0 +1,9 @@
+-- Create sd_routes table
+CREATE TABLE IF NOT EXISTS sd_routes (
+  id SERIAL PRIMARY KEY,
+  route_code VARCHAR(6) NOT NULL UNIQUE,
+  description VARCHAR(100) NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

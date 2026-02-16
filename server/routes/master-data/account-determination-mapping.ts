@@ -606,4 +606,32 @@ export async function getGLAccountsBySalesArea(req: Request, res: Response) {
     }
 }
 
+export async function getConditionTypesBySalesArea(req: Request, res: Response) {
+    try {
+        const id = parseInt(req.params.id);
+        if (isNaN(id)) {
+            return res.status(400).json({ message: "Invalid Sales Area ID" });
+        }
+
+        const result = await pool.query(`
+      SELECT DISTINCT
+        ct.id,
+        ct.condition_code as code,
+        ct.condition_name as name,
+        ct.is_active
+      FROM condition_types ct
+      JOIN company_codes cc ON ct.company_code_id = cc.id
+      JOIN sd_sales_organizations so ON so.company_code_id = cc.id
+      JOIN sd_sales_areas sa ON sa.sales_org_code = so.code
+      WHERE sa.id = $1 AND ct.is_active = true
+      ORDER BY ct.condition_code
+    `, [id]);
+
+        return res.json(result.rows);
+    } catch (error: any) {
+        console.error("Error fetching condition types by sales area:", error);
+        return res.status(500).json({ message: `Failed to fetch condition types: ${error.message}` });
+    }
+}
+
 export default router;

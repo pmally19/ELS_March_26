@@ -48,6 +48,9 @@ import taxCalculationRouter from "./tax-calculation";
 import taxJurisdictionsRouter from "./tax-jurisdictions";
 import mrpTypesRouter from "./mrp-types";
 import mrpControllersRouter from "./mrp-controllers";
+import loadingGroupsRouter from "./loading-groups";
+import shippingConditionKeysRouter from "./shipping-condition-keys";
+import weightGroupsRouter from "./weight-groups";
 import productionVersionsRouter from "./production-versions";
 import productionOrderTypesRouter from "./production-order-types";
 import industrySectorRouter from "./industry-sector-routes";
@@ -64,6 +67,12 @@ import * as materialAccountAssignmentGroups from "./material-account-assignment-
 import * as materialAccountAssignmentGroups from "./material-account-assignment-groups.js";
 import purchasingItemCategoriesRouter from './purchasing-item-categories';
 import reasonCodesRouter from './reason-codes';
+import reasonCodesRouter from './reason-codes';
+import transactionKeysRouter from './transaction-keys';
+import routesMasterRouter from './routes-master';
+import transportationGroupsRouter from './transportation-groups';
+import shippingPointDeterminationRouter from './shipping-point-determination';
+
 
 
 
@@ -89,13 +98,14 @@ import accountCategoriesRouter from "./account-categories";
 import transactionTypesRouter from "./transaction-types";
 import assetAccountProfilesRouter from "./asset-account-profiles";
 import accountKeysRouter from "./account-keys";
-import accountDeterminationMappingRouter, { getGLAccountsBySalesArea } from "./account-determination-mapping";
+import accountDeterminationMappingRouter, { getGLAccountsBySalesArea, getConditionTypesBySalesArea } from "./account-determination-mapping";
 import bankMasterRouter from "./bank-master";
 import accountIdRouter from "./account-id";
 import glAccountsRouter from "./gl-accounts";
 import glAccountGroupsRouter from "./gl-account-groups";
 import postingPeriodControlsRouter from "./posting-period-controls";
 import retainedEarningsAccountsRouter from "./retained-earnings-accounts";
+import materialAccountDeterminationRouter from "./material-account-determination";
 import chartOfDepreciationRouter from "./chart-of-depreciation";
 import numberRangeObjectsRouter from "./number-range-objects";
 import transportationZonesRouter from "./transportation-zones";
@@ -108,6 +118,8 @@ import employeesRouter from "./employees";
 import * as managementControlAreas from "./management-control-areas";
 import controllingAreaAssignmentsRouter from "./controlling-area-assignments";
 import costCenterCategoriesRouter from "./cost-center-categories";
+import valuationGroupingCodesRouter from "./valuation-grouping-codes";
+import * as accountCategoryReferences from "./account-category-references";
 
 import customerPricingProceduresRouter from "./customer-pricing-procedures";
 import documentPricingProceduresRouter from "./document-pricing-procedures";
@@ -135,6 +147,9 @@ export function registerMasterDataRoutes(app: Express) {
 
   // Register production master data routes (includes vendor-materials endpoints)
   registerProductionMasterDataRoutes(app);
+
+  // Shipping Point Determination
+  app.use("/api/master-data/shipping-point-determination", shippingPointDeterminationRouter);
 
   // Register material router (modular approach with Zod validation)
   app.use('/api/master-data/material', materialRouter);
@@ -193,10 +208,26 @@ export function registerMasterDataRoutes(app: Express) {
 
   // Register Customer Pricing Procedures routes
   app.use('/api/master-data/customer-pricing-procedures', customerPricingProceduresRouter);
+
+  // Register Loading Groups routes
+  app.use('/api/master-data/loading-groups', loadingGroupsRouter);
+
+  // Register Shipping Condition Keys routes
+  app.use('/api/master-data/shipping-condition-keys', shippingConditionKeysRouter);
+
+  // Register Weight Groups routes
+  app.use('/api/master-data/weight-groups', weightGroupsRouter);
+
   app.use('/api/master-data/customer', customerRouter);
 
   // Register Document Pricing Procedures routes
   app.use('/api/master-data/document-pricing-procedures', documentPricingProceduresRouter);
+
+  // Register Routes Master Data
+  app.use('/api/master-data/routes', routesMasterRouter);
+
+  // Register Transportation Groups routes
+  app.use('/api/master-data/transportation-groups', transportationGroupsRouter);
 
   // Register Item Categories routes
   app.use('/api/master-data/item-categories', itemCategoriesRouter);
@@ -217,6 +248,9 @@ export function registerMasterDataRoutes(app: Express) {
 
   // Register Sales Process Types routes
   app.use('/api/master-data/sales-process-types', salesProcessTypesRouter);
+
+  // Register Material Account Determination routes
+  app.use('/api/master-data/material-account-determination', materialAccountDeterminationRouter);
 
   // Register Factory Calendar routes (at /api level for /api/factory-calendars)
   app.use('/api', factoryCalendarRouter);
@@ -314,6 +348,18 @@ export function registerMasterDataRoutes(app: Express) {
 
   // Fixed Sales Areas routes (new implementation) - Register BEFORE allMasterDataRoutes to ensure precedence
   app.get("/api/master-data/sales-areas/gl-accounts/:id", getGLAccountsBySalesArea);
+  app.get("/api/master-data/sales-areas/condition-types/:id", getConditionTypesBySalesArea);
+
+  // Valuation Grouping Codes routes
+  app.use("/api/master-data/valuation-grouping-codes", valuationGroupingCodesRouter);
+
+  // Account Category References routes
+  app.get("/api/master-data/account-category-references", accountCategoryReferences.getAccountCategoryReferences);
+  app.get("/api/master-data/account-category-references/:id", accountCategoryReferences.getAccountCategoryReferenceById);
+  app.post("/api/master-data/account-category-references", accountCategoryReferences.createAccountCategoryReference);
+  app.put("/api/master-data/account-category-references/:id", accountCategoryReferences.updateAccountCategoryReference);
+  app.delete("/api/master-data/account-category-references/:id", accountCategoryReferences.deleteAccountCategoryReference);
+
   app.get("/api/master-data/sales-areas", salesAreasFixed.getSalesAreas);
   app.get("/api/master-data/sales-areas/:id", salesAreasFixed.getSalesAreaById);
   app.post("/api/master-data/sales-areas", salesAreasFixed.createSalesArea);
@@ -596,6 +642,10 @@ export function registerMasterDataRoutes(app: Express) {
   app.use('/api/master-data/profit-center', profitCentersRouter);
   // Plural alias for compatibility with UI expecting plural endpoint
   app.use('/api/master-data/profit-centers', profitCentersRouter);
+
+  // Posting Keys (Transaction Keys) for Account Determination
+  app.use('/api/master-data/posting-keys', transactionKeysRouter);
+
   app.use('/api/master-data/business-areas', businessAreasRouter);
 
   // Serial Number Profiles routes (create-if-missing)
@@ -2801,4 +2851,7 @@ export function registerMasterDataRoutes(app: Express) {
 
   // Purchasing Item Categories
   app.use("/api/master-data/purchasing-item-categories", purchasingItemCategoriesRouter);
+
+  // Transaction Keys routes
+  app.use("/api/master-data/transaction-keys", transactionKeysRouter);
 }

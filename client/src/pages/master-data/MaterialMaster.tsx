@@ -54,6 +54,8 @@ interface Material {
   profit_center?: string;
   cost_center?: string;
   item_category_group?: string;
+  material_assignment_group_code?: string;
+  loading_group?: string; // New field
   min_stock?: number;
   max_stock?: number;
   lead_time?: number;
@@ -112,7 +114,9 @@ export default function MaterialMaster() {
     plant_code: "", // Plant assignment
     profit_center: "", // Profit center code
     cost_center: "", // Cost center code
-    item_category_group: "" // Item category group code
+    item_category_group: "", // Item category group code
+    material_assignment_group_code: "", // Material assignment group code
+    loading_group: "" // Loading group code
   });
   const [selectedPlantId, setSelectedPlantId] = useState('');
   const [activeMaterialView, setActiveMaterialView] = useState('basic');
@@ -188,6 +192,35 @@ export default function MaterialMaster() {
       code: icg.group_code || icg.code,
       description: icg.description,
       name: icg.name || icg.description
+    })).sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
+    : [];
+
+  // Fetch Material Assignment Groups for dropdown
+  const { data: materialAssignmentGroupsRaw = [], isLoading: materialAssignmentGroupsLoading } = useQuery({
+    queryKey: ["/api/master-data/material-account-assignment-groups"],
+  });
+
+  // Normalize Material Assignment Groups
+  const materialAssignmentGroups = Array.isArray(materialAssignmentGroupsRaw)
+    ? materialAssignmentGroupsRaw.map((mag: any) => ({
+      id: mag.id,
+      code: mag.code,
+      name: mag.name,
+      description: mag.description
+    })).sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
+    : [];
+
+  // Fetch Loading Groups for dropdown
+  const { data: loadingGroupsRaw = [], isLoading: loadingGroupsLoading } = useQuery({
+    queryKey: ["/api/master-data/loading-groups"],
+  });
+
+  // Normalize Loading Groups
+  const loadingGroups = Array.isArray(loadingGroupsRaw)
+    ? loadingGroupsRaw.map((lg: any) => ({
+      id: lg.id,
+      code: lg.code,
+      description: lg.description
     })).sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
     : [];
 
@@ -880,7 +913,8 @@ export default function MaterialMaster() {
       plant_code: "",
       profit_center: "",
       cost_center: "",
-      item_category_group: ""
+      item_category_group: "",
+      loading_group: ""
     });
     setSelectedPlantId('');
     setEditingMaterial(null);
@@ -943,7 +977,8 @@ export default function MaterialMaster() {
     const normalizedFormData = {
       ...formData,
       material_group: formData.material_group === "__none__" ? "" : (formData.material_group || ""),
-      item_category_group: formData.item_category_group === "__none__" ? "" : (formData.item_category_group || "")
+      item_category_group: formData.item_category_group === "__none__" ? "" : (formData.item_category_group || ""),
+      loading_group: formData.loading_group === "__none__" ? "" : (formData.loading_group || "")
     };
 
     // Log what we're sending
@@ -1065,7 +1100,8 @@ export default function MaterialMaster() {
       plant_code: (material as any).plant_code || "",
       profit_center: (material as any).profit_center || material.profit_center || "",
       cost_center: (material as any).cost_center || material.cost_center || "",
-      item_category_group: material.item_category_group || ""
+      item_category_group: material.item_category_group || "",
+      loading_group: material.loading_group || ""
     });
     setSelectedPlantId('');
     setIsDialogOpen(true);
@@ -1214,6 +1250,7 @@ export default function MaterialMaster() {
                         <TableHead className="hidden sm:table-cell">Valuation Class</TableHead>
                         <TableHead className="hidden lg:table-cell">Base Unit</TableHead>
                         <TableHead className="hidden lg:table-cell">MRP Type</TableHead>
+                        <TableHead className="hidden xl:table-cell">Loading Grp</TableHead>
                         <TableHead className="hidden xl:table-cell">Storage Loc</TableHead>
                         <TableHead className="hidden xl:table-cell">Min Stock</TableHead>
                         <TableHead className="hidden xl:table-cell">Max Stock</TableHead>
@@ -1248,6 +1285,7 @@ export default function MaterialMaster() {
                             <TableCell className="hidden sm:table-cell">{material.valuation_class || "N/A"}</TableCell>
                             <TableCell className="hidden lg:table-cell">{material.base_unit || "N/A"}</TableCell>
                             <TableCell className="hidden lg:table-cell">{material.mrp_type || "N/A"}</TableCell>
+                            <TableCell className="hidden xl:table-cell">{material.loading_group || "N/A"}</TableCell>
                             <TableCell className="hidden xl:table-cell">{material.production_storage_location || "N/A"}</TableCell>
                             <TableCell className="hidden xl:table-cell">{(material as any).min_stock || 0}</TableCell>
                             <TableCell className="hidden xl:table-cell">{(material as any).max_stock || 0}</TableCell>
@@ -2012,33 +2050,32 @@ export default function MaterialMaster() {
                             </SelectContent>
                           </Select>
                         </div>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium">Division {divisionsLoading ? "(Loading...)" : `(${divisions.length})`}</label>
-                        <Select
-                          value={formData.division}
-                          onValueChange={(val) => setFormData({ ...formData, division: val })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder={divisionsLoading ? "Loading..." : "Select division"} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {divisionsLoading ? (
-                              <SelectItem value="__loading__" disabled>Loading...</SelectItem>
-                            ) : divisions.length > 0 ? (
-                              divisions.map((div: any) => (
-                                <SelectItem key={div.id} value={div.code}>
-                                  {div.code} — {div.description || div.name}
-                                </SelectItem>
-                              ))
-                            ) : (
-                              <SelectItem value="__no_options__" disabled>No divisions available</SelectItem>
-                            )}
-                          </SelectContent>
-                        </Select>
-                      </div>
 
-                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm font-medium">Division {divisionsLoading ? "(Loading...)" : `(${divisions.length})`}</label>
+                          <Select
+                            value={formData.division}
+                            onValueChange={(val) => setFormData({ ...formData, division: val })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder={divisionsLoading ? "Loading..." : "Select division"} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {divisionsLoading ? (
+                                <SelectItem value="__loading__" disabled>Loading...</SelectItem>
+                              ) : divisions.length > 0 ? (
+                                divisions.map((div: any) => (
+                                  <SelectItem key={div.id} value={div.code}>
+                                    {div.code} — {div.description || div.name}
+                                  </SelectItem>
+                                ))
+                              ) : (
+                                <SelectItem value="__no_options__" disabled>No divisions available</SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
                         <div>
                           <label className="text-sm font-medium">Material Group {materialGroupsLoading ? "(Loading...)" : `(${materialGroups.length} available)`}</label>
                           <Select
@@ -2071,6 +2108,7 @@ export default function MaterialMaster() {
                             </SelectContent>
                           </Select>
                         </div>
+
                         <div>
                           <label className="text-sm font-medium">Item Category Group {itemCategoryGroupsLoading ? "(Loading...)" : `(${itemCategoryGroups.length} available)`}</label>
                           <Select
@@ -2091,6 +2129,64 @@ export default function MaterialMaster() {
                                 itemCategoryGroups.map((icg: any) => (
                                   <SelectItem key={icg.id} value={icg.code}>
                                     {icg.code} — {icg.description}
+                                  </SelectItem>
+                                ))
+                              ) : (
+                                <SelectItem value="__no_options__" disabled>No groups available</SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <label className="text-sm font-medium">Material Assignment Group {materialAssignmentGroupsLoading ? "(Loading...)" : `(${materialAssignmentGroups.length} available)`}</label>
+                          <Select
+                            value={formData.material_assignment_group_code && formData.material_assignment_group_code.trim() !== "" ? formData.material_assignment_group_code : "__none__"}
+                            onValueChange={(val) => {
+                              const newValue = val === "__none__" ? "" : val;
+                              setFormData({ ...formData, material_assignment_group_code: newValue });
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder={materialAssignmentGroupsLoading ? "Loading..." : "Select material assignment group"} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">None</SelectItem>
+                              {materialAssignmentGroupsLoading ? (
+                                <SelectItem value="__loading__" disabled>Loading...</SelectItem>
+                              ) : materialAssignmentGroups.length > 0 ? (
+                                materialAssignmentGroups.map((mag: any) => (
+                                  <SelectItem key={mag.id} value={mag.code}>
+                                    {mag.code} — {mag.name}
+                                  </SelectItem>
+                                ))
+                              ) : (
+                                <SelectItem value="__no_options__" disabled>No groups available</SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div>
+                          <label className="text-sm font-medium">Loading Group {loadingGroupsLoading ? "(Loading...)" : `(${loadingGroups.length} available)`}</label>
+                          <Select
+                            value={formData.loading_group && formData.loading_group.trim() !== "" ? formData.loading_group : "__none__"}
+                            onValueChange={(val) => {
+                              const newValue = val === "__none__" ? "" : val;
+                              setFormData({ ...formData, loading_group: newValue });
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder={loadingGroupsLoading ? "Loading..." : "Select loading group"} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">None</SelectItem>
+                              {loadingGroupsLoading ? (
+                                <SelectItem value="__loading__" disabled>Loading...</SelectItem>
+                              ) : loadingGroups.length > 0 ? (
+                                loadingGroups.map((lg: any) => (
+                                  <SelectItem key={lg.id} value={lg.code}>
+                                    {lg.code} — {lg.description}
                                   </SelectItem>
                                 ))
                               ) : (
@@ -2408,6 +2504,10 @@ export default function MaterialMaster() {
                     <div>
                       <p className="text-sm text-muted-foreground">Item Category Group</p>
                       <p className="font-medium">{viewingMaterialDetails.item_category_group || "N/A"}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Material Assignment Group</p>
+                      <p className="font-medium">{viewingMaterialDetails.material_assignment_group_code || "N/A"}</p>
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Industry Sector</p>

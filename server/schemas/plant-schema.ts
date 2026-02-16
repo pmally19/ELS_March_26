@@ -6,6 +6,7 @@ export const plantSchema = z.object({
   name: z.string().min(1, "Name is required").max(100, "Name must be at most 100 characters"),
   description: z.string().optional().nullable(),
   companyCodeId: z.number().min(1, "Company Code is required"),
+  valuationGroupingCodeId: z.number().optional().nullable(),
   type: z.string().min(1, "Type is required"),
   category: z.string().optional().nullable(),
   address: z.string().optional().nullable(),

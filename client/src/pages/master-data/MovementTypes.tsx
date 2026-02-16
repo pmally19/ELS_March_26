@@ -58,6 +58,7 @@ interface MovementType {
   description: string;
   movementClass: string;
   transactionType: string;
+  transactionKey?: string;
   inventoryDirection: string;
   specialStockIndicator?: string;
   valuationImpact: boolean;
@@ -75,6 +76,7 @@ const movementTypeSchema = z.object({
   description: z.string().min(1, "Description is required").max(100),
   movementClass: z.string().min(1, "Movement class is required"),
   transactionType: z.string().min(1, "Transaction type is required"),
+  transactionKey: z.string().optional(),
   inventoryDirection: z.string().min(1, "Inventory direction is required"),
   specialStockIndicator: z.string().optional(),
   valuationImpact: z.boolean().default(true),
@@ -119,6 +121,17 @@ export default function MovementTypes() {
     },
   });
 
+  // Fetch transaction keys (BSX, GBB, etc.)
+  const { data: transactionKeys = [] } = useQuery({
+    queryKey: ['/api/master-data/transaction-keys', 'active'],
+    queryFn: async () => {
+      const response = await fetch('/api/master-data/transaction-keys?is_active=true');
+      if (!response.ok) return [];
+      const data = await response.json();
+      return (data.data || []).map((tk: any) => ({ code: tk.code, name: `${tk.code} - ${tk.name}` }));
+    },
+  });
+
 
   const inventoryDirections = [
     { code: 'increase', name: 'Increase' },
@@ -140,6 +153,7 @@ export default function MovementTypes() {
           description: item.description,
           movementClass: item.movement_class,
           transactionType: item.transaction_type,
+          transactionKey: item.transaction_key || '',
           inventoryDirection: item.inventory_direction,
           specialStockIndicator: item.special_stock_indicator || '',
           valuationImpact: !!item.valuation_impact,
@@ -201,6 +215,7 @@ export default function MovementTypes() {
       description: "",
       movementClass: "receipt",
       transactionType: "purchase",
+      transactionKey: "",
       inventoryDirection: "increase",
       specialStockIndicator: "",
       valuationImpact: true,
@@ -219,6 +234,7 @@ export default function MovementTypes() {
         description: editingMovementType.description,
         movementClass: editingMovementType.movementClass,
         transactionType: editingMovementType.transactionType,
+        transactionKey: editingMovementType.transactionKey || "",
         inventoryDirection: editingMovementType.inventoryDirection,
         specialStockIndicator: editingMovementType.specialStockIndicator || "",
         valuationImpact: editingMovementType.valuationImpact,
@@ -233,6 +249,7 @@ export default function MovementTypes() {
         description: "",
         movementClass: "receipt",
         transactionType: "purchase",
+        transactionKey: "",
         inventoryDirection: "increase",
         specialStockIndicator: "",
         valuationImpact: true,
@@ -473,6 +490,7 @@ export default function MovementTypes() {
                   <TableHead>Description</TableHead>
                   <TableHead>Movement Class</TableHead>
                   <TableHead>Transaction Type</TableHead>
+                  <TableHead>Trans. Key</TableHead>
                   <TableHead>Direction</TableHead>
                   <TableHead>Impact</TableHead>
                   <TableHead>Status</TableHead>
@@ -501,6 +519,7 @@ export default function MovementTypes() {
                       <TableCell>{mt.description}</TableCell>
                       <TableCell className="capitalize">{mt.movementClass}</TableCell>
                       <TableCell className="capitalize">{mt.transactionType}</TableCell>
+                      <TableCell>{mt.transactionKey}</TableCell>
                       <TableCell className="capitalize">{mt.inventoryDirection}</TableCell>
                       <TableCell>
                         <div className="text-sm space-y-1">
@@ -639,6 +658,28 @@ export default function MovementTypes() {
               </div>
 
               <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="transactionKey"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Transaction Key</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select key" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {transactionKeys.map((tk: any) => (
+                            <SelectItem key={tk.code} value={tk.code}>{tk.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 <FormField
                   control={form.control}
                   name="inventoryDirection"
@@ -790,6 +831,10 @@ export default function MovementTypes() {
                       <Badge variant={viewingMovementType.isActive ? "default" : "secondary"}>
                         {viewingMovementType.isActive ? "Active" : "Inactive"}
                       </Badge>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-sm font-medium text-muted-foreground">Transaction Key</p>
+                      <p className="text-base">{viewingMovementType.transactionKey || '-'}</p>
                     </div>
                     <div className="col-span-2">
                       <p className="text-sm font-medium text-muted-foreground">Description</p>

@@ -27,6 +27,8 @@ const CostCenterCategories = lazy(() => import('./pages/master-data/CostCenterCa
 const CustomerAccountAssignmentGroups = lazy(() => import('./pages/master-data/CustomerAccountAssignmentGroups'));
 const MaterialAccountAssignmentGroups = lazy(() => import('./pages/master-data/MaterialAccountAssignmentGroups'));
 const ReasonCodes = lazy(() => import('./pages/master-data/ReasonCodes'));
+const PostingKeys = lazy(() => import('./pages/master-data/PostingKeys'));
+const ShippingPointDetermination = lazy(() => import('./pages/master-data/ShippingPointDetermination'));
 
 const Ledgers = lazy(() => import('./pages/master-data/Ledgers'));
 const DocumentSplitting = lazy(() => import('./pages/master-data/DocumentSplitting'));
@@ -38,8 +40,8 @@ import {
   Package, Store, ShoppingBag, CreditCard, Ruler,
   ClipboardCheck, BookOpen, DollarSign, BarChart2,
   UserCircle, Percent, Briefcase, Settings as SettingsIcon, Calendar,
-  FileText, Search, Globe, Truck, Network, Coins,
-  Cloud, ShoppingCart, MapPin, Tag, FolderTree, TrendingUp, Calculator, Shield, GitBranch, Scissors, Key, Grid3X3, ArrowRight
+  FileText, Search, Globe, Truck, Network, Coins, Route as RouteIcon,
+  Cloud, ShoppingCart, MapPin, Tag, FolderTree, TrendingUp, Calculator, Shield, GitBranch, Scissors, Key, Grid3X3, ArrowRight, Database, Scale
 } from "lucide-react";
 
 // Import the DraggableTiles component
@@ -149,7 +151,7 @@ import MRPControllers from "@/pages/master-data/MRPControllers";
 import SDDocumentTypes from "@/pages/master-data/SDDocumentTypes";
 import SalesDocumentCategories from "@/pages/master-data/SalesDocumentCategories";
 import MasterDataChartOfAccounts from "@/pages/master-data/ChartOfAccounts";
-import Customer from "@/pages/master-data/Customer";
+
 import CustomerMaster from "@/pages/master-data/CustomerMaster";
 import Vendor from "@/pages/master-data/Vendor";
 import VendorMaterialAssignment from "@/pages/master-data/VendorMaterialAssignment";
@@ -169,6 +171,7 @@ import AssetMaster from "@/pages/master-data/AssetMaster";
 import DepreciationMethods from "@/pages/master-data/DepreciationMethods";
 import DepreciationAreas from "@/pages/master-data/DepreciationAreas";
 import Regions from "@/pages/master-data/Regions";
+
 import Currencies from "@/pages/master-data/Currencies";
 import FinanceCurrencies from "@/pages/master-data/FinanceCurrencies";
 import FiscalCalendar from "@/pages/master-data/FiscalCalendar";
@@ -205,6 +208,7 @@ import AccountId from "@/pages/master-data/AccountId";
 import ToleranceGroupsNew from "@/pages/master-data/ToleranceGroupsNew";
 import CurrencyDenominationNew from "@/pages/master-data/CurrencyDenominationNew";
 import ExchangeRateTypeNew from "@/pages/master-data/ExchangeRateTypeNew";
+import RoutesMaster from "@/pages/master-data/Routes";
 import GeneralLedgerAccounts from "@/pages/master-data/GeneralLedgerAccounts";
 import GLAccountGroups from "@/pages/master-data/GLAccountGroups";
 import PostingPeriodControls from "@/pages/master-data/PostingPeriodControls";
@@ -213,6 +217,7 @@ import ChartOfDepreciation from "@/pages/master-data/ChartOfDepreciation";
 import PurchasingOrganizations from "@/pages/master-data/PurchaseOrganization";
 import ValuationClasses from "@/pages/master-data/ValuationClasses";
 import MaterialTypes from "@/pages/master-data/MaterialTypes";
+import MaterialAccountDetermination from "@/pages/master-data/MaterialAccountDetermination";
 import MaterialCategories from "@/pages/master-data/MaterialCategories";
 import ParentCategories from "@/pages/master-data/ParentCategories";
 import BatchClasses from "@/pages/master-data/BatchClasses";
@@ -224,6 +229,12 @@ import Incoterms from "@/pages/master-data/Incoterms";
 import MovementTypes from "@/pages/master-data/MovementTypes";
 import DiscountGroups from "@/pages/master-data/DiscountGroups";
 import CreditLimitGroups from "@/pages/master-data/CreditLimitGroups";
+import ValuationGroupingCodes from "@/pages/master-data/ValuationGroupingCodes";
+import LoadingGroups from "@/pages/master-data/LoadingGroups";
+import TransportationGroups from "@/pages/master-data/TransportationGroups";
+import ShippingConditionKeys from "@/pages/master-data/ShippingConditionKeys";
+import WeightGroups from "@/pages/master-data/WeightGroups";
+import AccountCategoryReferences from "@/pages/master-data/AccountCategoryReferences";
 import MasterDataChecker from "@/pages/tools/MasterDataChecker";
 import MasterDataProtection from "@/pages/tools/MasterDataProtection";
 import TestApplication from "@/pages/tools/TestApplication";
@@ -740,6 +751,14 @@ const MasterDataDashboard = () => {
       onClick: () => window.location.pathname = "/master-data/regions"
     },
     {
+      id: "posting-keys",
+      title: "Posting Keys",
+      icon: <Key className="h-5 w-5 text-blue-600" />,
+      description: "Universal posting keys for automatic account determination",
+      linkText: "Manage Posting Keys →",
+      onClick: () => window.location.pathname = "/master-data/posting-keys"
+    },
+    {
       id: "purchasing-item-categories",
       title: "Purchase Item Categories",
       icon: <Tag className="h-5 w-5 text-blue-600" />,
@@ -778,6 +797,14 @@ const MasterDataDashboard = () => {
       description: "Transaction type categories for inventory movements",
       linkText: "Manage Movement Transaction Types →",
       onClick: () => window.location.pathname = "/master-data/movement-transaction-types"
+    },
+    {
+      id: "transportation-groups",
+      title: "Transportation Groups",
+      icon: <Truck className="h-5 w-5 text-blue-600" />,
+      description: "Define transportation groups (SAP OVLK)",
+      linkText: "Manage Transportation Groups →",
+      onClick: () => window.location.pathname = "/master-data/transportation-groups"
     },
     {
       id: "movement-classes",
@@ -883,6 +910,15 @@ const MasterDataDashboard = () => {
       onClick: () => window.location.pathname = "/master-data/valuation-classes"
     },
     {
+      id: "material-account-determination",
+      title: "Material Account Determination ",
+      icon: <MapPin className="h-5 w-5 text-green-600" />,
+      description: "Configure automatic GL account determination for material valuation",
+      linkText: "Manage Account Determination →",
+      category: "Financial",
+      onClick: () => window.location.pathname = "/master-data/material-account-determination"
+    },
+    {
       id: "tax-management",
       title: "Tax Management",
       icon: <Percent className="h-5 w-5 text-green-600" />,
@@ -890,6 +926,24 @@ const MasterDataDashboard = () => {
       linkText: "Manage Tax →",
       category: "Financial",
       onClick: () => window.location.pathname = "/master-data/tax-master"
+    },
+    {
+      id: "valuation-grouping-codes",
+      title: "Valuation Grouping Codes",
+      icon: <DollarSign className="h-5 w-5 text-green-600" />,
+      description: "Material valuation and costing methods",
+      linkText: "Manage Valuation Grouping Codes →",
+      category: "Financial",
+      onClick: () => window.location.pathname = "/master-data/valuation-grouping-codes"
+    },
+    {
+      id: "account-category-references",
+      title: "Account Category References",
+      icon: <DollarSign className="h-5 w-5 text-green-600" />,
+      description: "Account category references for material valuation",
+      linkText: "Manage Account Category References →",
+      category: "Financial",
+      onClick: () => window.location.pathname = "/master-data/account-category-references"
     },
     {
       id: "depreciation-methods",
@@ -1143,6 +1197,33 @@ const MasterDataDashboard = () => {
       onClick: () => window.location.pathname = "/master-data/condition-categories"
     },
     {
+      id: "loading-groups",
+      title: "Loading Groups ",
+      icon: <Truck className="h-5 w-5 text-purple-600" />,
+      description: "Define loading group codes for material logistics",
+      linkText: "Manage Loading Groups →",
+      category: "Sales",
+      onClick: () => window.location.pathname = "/master-data/loading-groups"
+    },
+    {
+      id: "shipping-condition-keys",
+      title: "Shipping Condition Keys ",
+      icon: <Key className="h-5 w-5 text-purple-600" />,
+      description: "Define shipping condition key codes for logistics",
+      linkText: "Manage Shipping Condition Keys →",
+      category: "Sales",
+      onClick: () => window.location.pathname = "/master-data/shipping-condition-keys"
+    },
+    {
+      id: "weight-groups",
+      title: "Weight Groups",
+      icon: <Scale className="h-5 w-5 text-purple-600" />,
+      description: "Define weight group codes for logistics",
+      linkText: "Manage Weight Groups →",
+      category: "Sales",
+      onClick: () => window.location.pathname = "/master-data/weight-groups"
+    },
+    {
       id: "calculation-methods",
       title: "Calculation Types",
       icon: <Calculator className="h-5 w-5 text-purple-600" />,
@@ -1250,6 +1331,24 @@ const MasterDataDashboard = () => {
       linkText: "Manage Route Schedules →",
       category: "Logistics",
       onClick: () => window.location.pathname = "/master-data/route-schedules"
+    },
+    {
+      id: "routes",
+      title: "Routes",
+      icon: <RouteIcon className="h-5 w-5 text-orange-600" />,
+      description: "Define standard shipping routes and durations",
+      linkText: "Manage Routes →",
+      category: "Logistics",
+      onClick: () => window.location.pathname = "/master-data/routes"
+    },
+    {
+      id: "shipping-point-determination",
+      title: "Shipping Point Determination",
+      icon: <Truck className="h-5 w-5 text-orange-600" />,
+      description: "Rules for determining shipping points based on conditions",
+      linkText: "Manage Determinations →",
+      category: "Logistics",
+      onClick: () => window.location.pathname = "/master-data/shipping-point-determination"
     },
     // Inventory Category
     {
@@ -1421,29 +1520,41 @@ const MasterDataDashboard = () => {
     });
   };
 
+  // Calculate total tiles count
+  const totalTilesCount = orgTiles.length + coreTiles.length + additionalTiles.length + categorizedMasterDataTiles.length;
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Master Data Management</h1>
 
-        {/* Search Bar */}
-        <div className="relative w-96">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-          <input
-            type="text"
-            placeholder="Search master data entities..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-          />
-          {searchTerm && (
-            <button
-              onClick={() => setSearchTerm("")}
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-            >
-              ×
-            </button>
-          )}
+        {/* Search Bar with Tile Counter */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border-2 border-blue-500 rounded-lg">
+            <Database className="h-4 w-4 text-blue-600" />
+            <div className="flex flex-col">
+              <span className="text-[10px] text-blue-600 font-semibold uppercase">Tiles</span>
+              <span className="text-base font-bold text-blue-700">{totalTilesCount}</span>
+            </div>
+          </div>
+          <div className="relative w-96">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+            <input
+              type="text"
+              placeholder="Search master data entities..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+            />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm("")}
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                ×
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1529,7 +1640,7 @@ function Router() {
             <Route path="/master-data/sales-areas" component={SalesAreas} />
             <Route path="/material-master" component={MaterialMaster} />
 
-            <Route path="/master-data/customer" component={Customer} />
+
             <Route path="/master-data/vendor" component={Vendor} />
             <Route path="/master-data/bom" component={BomsContent} />
             <Route path="/master-data/work-centers" component={WorkCenters} />
@@ -1539,6 +1650,7 @@ function Router() {
             <Route path="/master-data/asset-classes" component={AssetClasses} />
             <Route path="/master-data/asset-account-determination" component={AssetAccountDetermination} />
             <Route path="/master-data/account-categories" component={AccountCategories} />
+            <Route path="/master-data/account-category-references" component={AccountCategoryReferences} />
             <Route path="/master-data/transaction-types" component={TransactionTypes} />
             <Route path="/master-data/asset-account-profiles" component={lazy(() => import('./pages/master-data/AssetAccountProfiles'))} />
             <Route path="/master-data/account-keys" component={lazy(() => import('./pages/master-data/AccountKeys'))} />
@@ -1549,6 +1661,7 @@ function Router() {
             <Route path="/master-data/depreciation-methods" component={DepreciationMethods} />
             <Route path="/master-data/depreciation-areas" component={DepreciationAreas} />
             <Route path="/master-data/regions" component={Regions} />
+            <Route path="/master-data/posting-keys" component={PostingKeys} />
             <Route path="/master-data/purchasing-item-categories" component={PurchasingItemCategories} />
             <Route path="/master-data/currencies" component={Currencies} />
             <Route path="/master-data/finance-currencies" component={FinanceCurrencies} />
@@ -1588,6 +1701,13 @@ function Router() {
             <Route path="/master-data/purchasing-groups" component={PurchasingGroups} />
             <Route path="/master-data/purchasing-organizations" component={PurchasingOrganizations} />
             <Route path="/master-data/valuation-classes" component={ValuationClasses} />
+            <Route path="/master-data/valuation-grouping-codes" component={ValuationGroupingCodes} />
+            <Route path="/master-data/material-account-determination" component={MaterialAccountDetermination} />
+            <Route path="/master-data/loading-groups" component={LoadingGroups} />
+            <Route path="/master-data/transportation-groups" component={TransportationGroups} />
+            <Route path="/master-data/shipping-condition-keys" component={ShippingConditionKeys} />
+            <Route path="/master-data/weight-groups" component={WeightGroups} />
+            <Route path="/master-data/routes" component={RoutesMaster} />
             <Route path="/master-data/movement-types" component={MovementTypes} />
 
             {/* Categorized Master Data Routes - 21 New Tiles - All redirect to main Master Data dashboard */}
@@ -1749,6 +1869,7 @@ function Router() {
             <Route path="/master-data/discount-groups" component={DiscountGroups} />
             <Route path="/master-data/credit-limit-groups" component={CreditLimitGroups} />
             <Route path="/master-data/material-types" component={MaterialTypes} />
+            <Route path="/master-data/material-account-determination" component={MaterialAccountDetermination} />
             <Route path="/master-data/parent-categories" component={ParentCategories} />
             <Route path="/master-data/material-categories" component={MaterialCategories} />
             <Route path="/master-data/account-groups" component={AccountGroups} />
@@ -1910,8 +2031,9 @@ function Router() {
             <Route path="/finance/accruals" component={AccrualManagement} />
 
             {/* Master Data - Item Categories */}
-            <Route path="/master-data/item-categories" component={ItemCategories} />
+            <Route path="/master-data/transaction-keys" component={PostingKeys} />
             <Route path="/master-data/reason-codes" component={ReasonCodes} />
+            <Route path="/master-data/shipping-point-determination" component={ShippingPointDetermination} />
 
             {/* Master Data - Condition Categories */}
             <Route path="/master-data/condition-categories" component={ConditionCategories} />

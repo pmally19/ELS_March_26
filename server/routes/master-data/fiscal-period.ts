@@ -5,11 +5,43 @@
 import { Request, Response } from "express";
 import { db } from "../../db";
 import { fiscalPeriods } from "@shared/financial-schema";
+import { companyCodeChartAssignments, companyCodes } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 export async function getFiscalPeriod(req: Request, res: Response) {
   try {
-    const periods = await db.select().from(fiscalPeriods).orderBy(fiscalPeriods.year, fiscalPeriods.period);
+    const { companyCodeId } = req.query;
+
+    let query = db.select().from(fiscalPeriods);
+
+    if (companyCodeId) {
+      // Find the fiscal year variant for this company directly from company_codes
+      const company = await db.select()
+        .from(companyCodes)
+        .where(eq(companyCodes.id, parseInt(companyCodeId as string)))
+        .limit(1);
+
+      if (company.length > 0 && company[0].fiscalYearVariantId) {
+        // Filter periods by the variant
+        query.where(eq(fiscalPeriods.fiscalYearVariantId, company[0].fiscalYearVariantId));
+        console.log(`Filtering fiscal periods for Company ${companyCodeId} using Variant ${company[0].fiscalYearVariantId}`);
+      } else {
+        // Fallback: Check companyCodeChartAssignments if not found on company_codes
+        const assignment = await db.select()
+          .from(companyCodeChartAssignments)
+          .where(eq(companyCodeChartAssignments.companyCodeId, parseInt(companyCodeId as string)))
+          .limit(1);
+
+        if (assignment.length > 0 && assignment[0].fiscalYearVariantId) {
+          query.where(eq(fiscalPeriods.fiscalYearVariantId, assignment[0].fiscalYearVariantId));
+          console.log(`Filtering fiscal periods for Company ${companyCodeId} using Variant ${assignment[0].fiscalYearVariantId} (from assignment)`);
+        } else {
+          console.warn(`No Fiscal Year Variant assigned for Company ${companyCodeId}`);
+        }
+      }
+    }
+
+    const periods = await query.orderBy(fiscalPeriods.year, fiscalPeriods.period);
     return res.json(periods);
   } catch (error: any) {
     console.error("Error fetching fiscal period data:", error);

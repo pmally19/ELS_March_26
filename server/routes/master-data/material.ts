@@ -45,6 +45,8 @@ const materialSchema = z.object({
   profitCenter: z.string().max(20, "Profit center must be 20 characters or less").optional().nullable().or(z.literal('')),
   costCenter: z.string().max(20, "Cost center must be 20 characters or less").optional().nullable().or(z.literal('')),
   itemCategoryGroup: z.string().max(4, "Item category group must be 4 characters or less").optional().nullable().or(z.literal('')),
+  materialAssignmentGroupCode: z.string().max(4, "Material assignment group must be 4 characters or less").optional().nullable().or(z.literal('')),
+  loadingGroup: z.string().max(4, "Loading group must be 4 characters or less").optional().nullable().or(z.literal('')), // New field
   isActive: z.boolean().optional().nullable(),
 });
 
@@ -83,6 +85,8 @@ router.get('/', async (req, res) => {
         industry_sector,
         item_category_group,
         material_group,
+        material_assignment_group_code,
+        loading_group,
         price_control,
         sales_organization,
         distribution_channel,
@@ -159,6 +163,46 @@ router.get('/finished-products', async (req, res) => {
   }
 });
 
+// Get top-selling materials
+router.get('/top-selling', async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit.toString()) : 5;
+    console.log(`Fetching top ${limit} selling materials...`);
+
+    // Query to get top-selling materials based on sales order items
+    const result = await pool.query(`
+      SELECT 
+        m.id,
+        m.code,
+        m.name,
+        m.type,
+        m.base_uom,
+        m.base_unit_price,
+        COALESCE(SUM(soi.ordered_quantity), 0) as total_sold,
+        COALESCE(SUM(soi.net_amount), 0) as total_revenue,
+        COUNT(DISTINCT soi.sales_order_id) as order_count
+      FROM materials m
+      LEFT JOIN sales_order_items soi ON m.id = soi.material_id
+      LEFT JOIN sales_orders so ON soi.sales_order_id = so.id
+      WHERE m.is_active = true
+        AND (so.status IS NULL OR so.status NOT IN ('Cancelled', 'Rejected'))
+      GROUP BY m.id, m.code, m.name, m.type, m.base_uom, m.base_unit_price
+      ORDER BY total_sold DESC, total_revenue DESC
+      LIMIT $1
+    `, [limit]);
+
+    console.log('Top-selling materials query result:', result.rows.length, 'rows');
+    if (result.rows.length > 0) {
+      console.log('Top material:', result.rows[0]);
+    }
+
+    return res.status(200).json(result.rows);
+  } catch (error: any) {
+    console.error('Error fetching top-selling materials:', error);
+    return res.status(500).json({ error: "Internal server error", message: error.message });
+  }
+});
+
 // Get material by ID
 router.get('/:id', async (req, res) => {
   try {
@@ -192,6 +236,7 @@ router.get('/:id', async (req, res) => {
         industry_sector,
         item_category_group,
         material_group,
+        material_assignment_group_code,
         price_control,
         sales_organization,
         distribution_channel,
@@ -301,6 +346,8 @@ router.post('/', async (req: any, res: any) => {
       profitCenter: req.body.profitCenter !== undefined ? req.body.profitCenter : req.body.profit_center,
       costCenter: req.body.costCenter !== undefined ? req.body.costCenter : req.body.cost_center,
       itemCategoryGroup: req.body.itemCategoryGroup !== undefined ? req.body.itemCategoryGroup : req.body.item_category_group,
+      materialAssignmentGroupCode: req.body.materialAssignmentGroupCode !== undefined ? req.body.materialAssignmentGroupCode : req.body.material_assignment_group_code,
+      loadingGroup: req.body.loadingGroup !== undefined ? req.body.loadingGroup : req.body.loading_group,
       isActive: req.body.isActive !== undefined ? req.body.isActive : (req.body.is_active !== undefined ? req.body.is_active : true)
     };
 
@@ -532,6 +579,18 @@ router.post('/', async (req: any, res: any) => {
         ? transformedBody.plantCode
         : null);
 
+    const materialAssignmentGroupCodeValue = (data.materialAssignmentGroupCode !== undefined && data.materialAssignmentGroupCode !== null && data.materialAssignmentGroupCode !== '')
+      ? data.materialAssignmentGroupCode
+      : ((transformedBody.materialAssignmentGroupCode !== undefined && transformedBody.materialAssignmentGroupCode !== null && transformedBody.materialAssignmentGroupCode !== '')
+        ? transformedBody.materialAssignmentGroupCode
+        : null);
+
+    const loadingGroupValue = (data.loadingGroup !== undefined && data.loadingGroup !== null && data.loadingGroup !== '')
+      ? data.loadingGroup
+      : ((transformedBody.loadingGroup !== undefined && transformedBody.loadingGroup !== null && transformedBody.loadingGroup !== '')
+        ? transformedBody.loadingGroup
+        : null);
+
     // Try simple INSERT without ID - let database handle it completely
     // No hardcoded defaults - all values must be explicitly provided
     // Include ALL fields that the frontend sends
@@ -543,7 +602,7 @@ router.post('/', async (req: any, res: any) => {
         planned_delivery_time, production_time, mrp_controller,
         weight, gross_weight, net_weight, weight_unit, 
         volume, volume_unit, valuation_class, industry_sector, 
-        item_category_group, material_group, price_control, sales_organization, distribution_channel, division,
+        item_category_group, material_group, material_assignment_group_code, loading_group, price_control, sales_organization, distribution_channel, division,
         purchasing_group, purchase_organization, production_storage_location,
         plant_code, profit_center, cost_center,
         is_active, created_at, updated_at
@@ -577,6 +636,8 @@ router.post('/', async (req: any, res: any) => {
         ${transformedBody.industrySector !== undefined && transformedBody.industrySector !== '' ? transformedBody.industrySector : null}, 
         ${transformedBody.itemCategoryGroup !== undefined && transformedBody.itemCategoryGroup !== '' ? transformedBody.itemCategoryGroup : null},
         ${transformedBody.materialGroup !== undefined && transformedBody.materialGroup !== '' ? transformedBody.materialGroup : null}, 
+        ${materialAssignmentGroupCodeValue},
+        ${loadingGroupValue},
         ${priceControlValue},
         ${salesOrganizationValue},
         ${distributionChannelValue},
@@ -591,7 +652,7 @@ router.post('/', async (req: any, res: any) => {
         NOW(), 
         NOW()
       )
-      RETURNING id, code, name, type, description, base_uom, base_unit_price, mrp_type, procurement_type, lot_size, reorder_point, safety_stock, min_stock, max_stock, lead_time, planned_delivery_time, production_time, mrp_controller, weight, gross_weight, net_weight, weight_unit, volume, volume_unit, valuation_class, industry_sector, material_group, price_control, sales_organization, distribution_channel, division, purchasing_group, purchase_organization, production_storage_location, plant_code, profit_center, cost_center, is_active, created_at, updated_at
+      RETURNING id, code, name, type, description, base_uom, base_unit_price, mrp_type, procurement_type, lot_size, reorder_point, safety_stock, min_stock, max_stock, lead_time, planned_delivery_time, production_time, mrp_controller, weight, gross_weight, net_weight, weight_unit, volume, volume_unit, valuation_class, industry_sector, material_group, material_assignment_group_code, price_control, sales_organization, distribution_channel, division, purchasing_group, purchase_organization, production_storage_location, plant_code, profit_center, cost_center, is_active, created_at, updated_at
     `);
 
     console.log('✅ INSERT - Result:', {
@@ -726,6 +787,7 @@ const updateMaterialHandler = async (req: express.Request, res: express.Response
       profitCenter: req.body.profitCenter !== undefined ? req.body.profitCenter : req.body.profit_center,
       costCenter: req.body.costCenter !== undefined ? req.body.costCenter : req.body.cost_center,
       itemCategoryGroup: req.body.itemCategoryGroup !== undefined ? req.body.itemCategoryGroup : req.body.item_category_group,
+      materialAssignmentGroupCode: req.body.materialAssignmentGroupCode !== undefined ? req.body.materialAssignmentGroupCode : req.body.material_assignment_group_code,
       isActive: req.body.isActive !== undefined ? req.body.isActive : req.body.is_active
     };
 
@@ -1034,6 +1096,22 @@ const updateMaterialHandler = async (req: express.Request, res: express.Response
         updateParts.push(sql`cost_center = ${costCenterValue}`);
       }
     }
+    if (data.materialAssignmentGroupCode !== undefined || transformedBody.materialAssignmentGroupCode !== undefined) {
+      const materialAssignmentGroupCodeValue = data.materialAssignmentGroupCode !== undefined ? data.materialAssignmentGroupCode : transformedBody.materialAssignmentGroupCode;
+      if (materialAssignmentGroupCodeValue === '' || materialAssignmentGroupCodeValue === null) {
+        updateParts.push(sql`material_assignment_group_code = NULL`);
+      } else {
+        updateParts.push(sql`material_assignment_group_code = ${materialAssignmentGroupCodeValue}`);
+      }
+    }
+    if (data.loadingGroup !== undefined || transformedBody.loadingGroup !== undefined) {
+      const loadingGroupValue = data.loadingGroup !== undefined ? data.loadingGroup : transformedBody.loadingGroup;
+      if (loadingGroupValue === '' || loadingGroupValue === null) {
+        updateParts.push(sql`loading_group = NULL`);
+      } else {
+        updateParts.push(sql`loading_group = ${loadingGroupValue}`);
+      }
+    }
     if (data.isActive !== undefined) {
       updateParts.push(sql`is_active = ${data.isActive}`);
     }
@@ -1056,7 +1134,7 @@ const updateMaterialHandler = async (req: express.Request, res: express.Response
       UPDATE materials 
       SET ${sql.join(updateParts, sql`, `)}
       WHERE id = ${id}
-      RETURNING id, code, name, type, description, base_uom, base_unit_price, mrp_type, weight, gross_weight, net_weight, weight_unit, volume, volume_unit, valuation_class, industry_sector, item_category_group, material_group, price_control, sales_organization, distribution_channel, purchase_organization, purchasing_group, production_storage_location, is_active, created_at, updated_at
+      RETURNING id, code, name, type, description, base_uom, base_unit_price, mrp_type, weight, gross_weight, net_weight, weight_unit, volume, volume_unit, valuation_class, industry_sector, item_category_group, material_group, material_assignment_group_code, loading_group, price_control, sales_organization, distribution_channel, purchase_organization, purchasing_group, production_storage_location, is_active, created_at, updated_at
     `);
 
     console.log('Update Material - Update result:', {

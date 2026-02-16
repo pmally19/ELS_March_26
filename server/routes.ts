@@ -123,6 +123,7 @@ import oneProjectRoutes from "./one-project-routes";
 import salesComprehensiveFixRoutes from "./routes/sales-comprehensive-fix";
 import applicationTilesFixRoutes from "./routes/application-tiles-fix";
 import { generalLedgerRoutes } from "./routes/general-ledger-routes";
+import deliveryRoutes from "./routes/deliveryRoutes";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize master data routes FIRST to avoid conflicts
@@ -594,11 +595,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/condition-types", (await import('./routes/condition-types')).default);
   app.use("/api/pricing-procedures", (await import('./routes/pricing-procedures')).default);
 
+  // Register Pricing Determination routes for SAP-standard pricing procedure lookup
+  app.use("/api/pricing", (await import('./routes/pricing')).default);
+  console.log('✅ Pricing determination routes mounted at /api/pricing');
+
   // Register AWS Data Sync routes
   app.use("/api/aws", (await import('./routes/aws-data-sync')).default);
 
   // Order-to-Cash Integration Routes
   app.use("/api/order-to-cash", orderToCashRoutes);
+
+  // Delivery Management Routes
+  app.use("/api/delivery", deliveryRoutes);
+  console.log('✅ Delivery routes mounted successfully at /api/delivery');
 
   // AR Debit Memo routes (additional customer charges)
   const arDebitMemoRoutes = await import('./routes/ar-debit-memo-routes');
@@ -2598,6 +2607,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const products = await storage.getProducts();
       res.json(products);
     } catch (error) {
+      console.error('Error in /api/products:', error);
       res.status(500).json({ message: "Failed to fetch products" });
     }
   });

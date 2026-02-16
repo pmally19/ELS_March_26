@@ -81,7 +81,7 @@ export const salesOffices = pgTable("sd_sales_offices", {
 // Shipping Point
 export const shippingPoints = pgTable("sd_shipping_points", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  code: varchar("code", { length: 4 }).unique().notNull(),
+  code: varchar("code", { length: 20 }).unique().notNull(),
   name: varchar("name", { length: 50 }).notNull(),
   plantCode: varchar("plant_code", { length: 4 }).notNull(),
   factoryCalendar: varchar("factory_calendar", { length: 2 }),
@@ -89,14 +89,76 @@ export const shippingPoints = pgTable("sd_shipping_points", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Loading Groups (SAP OVL1)
+export const loadingGroups = pgTable("loading_groups", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  code: varchar("code", { length: 2 }).unique().notNull(),
+  description: varchar("description", { length: 20 }).notNull(),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+});
+
+// Shipping Condition Keys (SAP OVLK)
+export const shippingConditionKeys = pgTable("shipping_condition_keys", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  keyCode: varchar("key_code", { length: 3 }).unique().notNull(),
+  description: varchar("description", { length: 20 }).notNull(),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+});
+
+// Weight Groups (SAP OVL2)
+export const weightGroups = pgTable("weight_groups", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  code: varchar("code", { length: 4 }).unique().notNull(),
+  description: varchar("description", { length: 20 }).notNull(),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+});
+
+// Transportation Groups (SAP OVLK)
+export const transportationGroups = pgTable("transportation_groups", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  code: varchar("code", { length: 4 }).unique().notNull(),
+  description: varchar("description", { length: 20 }).notNull(),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+});
+
+// Shipping Point Determination (SAP OVL2)
+export const shippingPointDetermination = pgTable("shipping_point_determination", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  shippingConditionKey: varchar("shipping_condition_key", { length: 20 }).notNull(), // References shipping_condition_keys.key_code
+  loadingGroupCode: varchar("loading_group_code", { length: 20 }).notNull(), // References loading_groups.code
+  plantCode: varchar("plant_code", { length: 20 }).notNull(), // References plants
+  proposedShippingPoint: varchar("proposed_shipping_point", { length: 20 }).notNull(), // References shipping_points.code
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+}, (table) => [
+  // Unique constraint on the combination of input keys
+  index("idx_shipping_point_determination_unique").on(table.shippingConditionKey, table.loadingGroupCode, table.plantCode),
+]);
+
 // Shipping Conditions (Logistics)
 export const shippingConditions = pgTable("sd_shipping_conditions", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   conditionCode: varchar("condition_code", { length: 4 }).unique().notNull(), // Shipping Condition Code
-  description: varchar("description", { length: 100 }).notNull(), // Description (of Condition)
-  loadingGroup: varchar("loading_group", { length: 4 }),
-  plantCode: varchar("plant_code", { length: 4 }), // Plant (Delivering)
-  proposedShippingPoint: varchar("proposed_shipping_point", { length: 4 }),
+
   manualShippingPointAllowed: boolean("manual_shipping_point_allowed").default(true), // Manual Shipping Point (Optional)
   countryOfDeparture: varchar("country_of_departure", { length: 3 }),
   departureZone: varchar("departure_zone", { length: 10 }),
@@ -105,6 +167,16 @@ export const shippingConditions = pgTable("sd_shipping_conditions", {
   receivingZone: varchar("receiving_zone", { length: 10 }),
   weightGroup: varchar("weight_group", { length: 4 }),
   proposedRoute: varchar("proposed_route", { length: 6 }), // Proposed Route
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Routes Master Data
+export const routes = pgTable("sd_routes", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  routeCode: varchar("route_code", { length: 6 }).unique().notNull(), // e.g., R00001
+  description: varchar("description", { length: 100 }).notNull(),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -410,6 +482,16 @@ export const insertCustomerIncotermsDefaultsSchema = createInsertSchema(customer
 export const selectCustomerIncotermsDefaultsSchema = createSelectSchema(customerIncotermsDefaults);
 export const insertSalesOrderIncotermsSchema = createInsertSchema(salesOrderIncoterms).omit({ id: true });
 export const selectSalesOrderIncotermsSchema = createSelectSchema(salesOrderIncoterms);
+export const insertLoadingGroupSchema = createInsertSchema(loadingGroups).omit({ id: true });
+export const selectLoadingGroupSchema = createSelectSchema(loadingGroups);
+export const insertShippingConditionKeySchema = createInsertSchema(shippingConditionKeys).omit({ id: true });
+export const selectShippingConditionKeySchema = createSelectSchema(shippingConditionKeys);
+export const insertWeightGroupSchema = createInsertSchema(weightGroups).omit({ id: true });
+export const selectWeightGroupSchema = createSelectSchema(weightGroups);
+export const insertTransportationGroupSchema = createInsertSchema(transportationGroups).omit({ id: true });
+export const selectTransportationGroupSchema = createSelectSchema(transportationGroups);
+
+
 
 // Type exports
 export type SalesOrganization = typeof salesOrganizations.$inferSelect;
@@ -434,4 +516,20 @@ export type CustomerIncotermsDefaults = typeof customerIncotermsDefaults.$inferS
 export type InsertCustomerIncotermsDefaults = typeof customerIncotermsDefaults.$inferInsert;
 export type SalesOrderIncoterms = typeof salesOrderIncoterms.$inferSelect;
 export type InsertSalesOrderIncoterms = typeof salesOrderIncoterms.$inferInsert;
+export type LoadingGroup = typeof loadingGroups.$inferSelect;
+export type InsertLoadingGroup = typeof loadingGroups.$inferInsert;
+export type ShippingConditionKey = typeof shippingConditionKeys.$inferSelect;
+export type InsertShippingConditionKey = typeof shippingConditionKeys.$inferInsert;
+export type WeightGroup = typeof weightGroups.$inferSelect;
+export type InsertWeightGroup = typeof weightGroups.$inferInsert;
+export type TransportationGroup = typeof transportationGroups.$inferSelect;
+export type InsertTransportationGroup = typeof transportationGroups.$inferInsert;
+
+export const insertShippingPointDeterminationSchema = createInsertSchema(shippingPointDetermination).omit({ id: true });
+export const selectShippingPointDeterminationSchema = createSelectSchema(shippingPointDetermination);
+export type ShippingPointDetermination = typeof shippingPointDetermination.$inferSelect;
+export type InsertShippingPointDetermination = typeof shippingPointDetermination.$inferInsert;
+
+
+
 

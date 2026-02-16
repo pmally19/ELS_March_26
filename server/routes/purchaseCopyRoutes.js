@@ -50,7 +50,7 @@ router.post('/copy-po-to-goods-receipt', async (req, res) => {
     await client.query('BEGIN');
     console.log('[GoodsReceipt] Transaction started for PO to Goods Receipt');
 
-    const { purchase_order_id, received_by, delivery_note, bill_of_lading } = req.body;
+    const { purchase_order_id, received_by, delivery_note, bill_of_lading, movement_type } = req.body;
 
     if (!purchase_order_id) {
       await client.query('ROLLBACK');
@@ -162,7 +162,7 @@ router.post('/copy-po-to-goods-receipt', async (req, res) => {
       }
     }
 
-    console.log(`📦 Creating ONE goods receipt with ${itemsToReceive.length} item(s)`);
+    console.log(`📦 Creating ONE goods receipt with ${itemsToReceive.length} item(s) using movement type: ${movement_type || '101 (default)'}`);
 
     // Create ONE goods receipt with ALL items
     const result = await goodsReceiptService.createGoodsReceiptFromPO(
@@ -170,7 +170,8 @@ router.post('/copy-po-to-goods-receipt', async (req, res) => {
       {
         items: itemsToReceive,  // Pass ALL items at once
         deliveryNote: delivery_note || null,
-        billOfLading: bill_of_lading || null
+        billOfLading: bill_of_lading || null,
+        movementType: movement_type || '101'  // Pass movement type, defaulting to 101
       },
       finalReceivedBy,
       client

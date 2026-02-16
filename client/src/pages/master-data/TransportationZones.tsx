@@ -123,9 +123,9 @@ export default function TransportationZones() {
 
   // Fetch shipping points for dropdown
   const { data: shippingPoints = [] } = useQuery<ShippingPoint[]>({
-    queryKey: ["/api/master-data/shipping-points"],
+    queryKey: ["/api/master-data/shipping-point"],
     queryFn: async () => {
-      const response = await fetch("/api/master-data/shipping-points");
+      const response = await fetch("/api/master-data/shipping-point");
       if (!response.ok) return [];
       return response.json();
     },
@@ -416,8 +416,8 @@ export default function TransportationZones() {
     <div className="container mx-auto p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center gap-4 mb-6">
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           size="sm"
           onClick={() => window.history.back()}
           className="flex items-center gap-2"

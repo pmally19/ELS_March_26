@@ -31,7 +31,7 @@ export default function Products() {
   const [currentProduct, setCurrentProduct] = useState<any>(null);
   const [sortField, setSortField] = useState("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-  
+
   const { toast } = useToast();
   const permissions = useAgentPermissions();
   const queryClient = useQueryClient();
@@ -110,8 +110,8 @@ export default function Products() {
   const filteredProducts = (products as any[] | undefined)
     ?.filter((product: any) => {
       const matchesSearch =
-        product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        product.sku.toLowerCase().includes(searchTerm.toLowerCase());
+        (product.name || product.description || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (product.sku || product.materialCode || product.code || "").toLowerCase().includes(searchTerm.toLowerCase());
       const matchesCategory =
         categoryFilter === "all" ||
         (product.categoryId !== undefined &&
@@ -134,7 +134,7 @@ export default function Products() {
   return (
     <>
       <Header title="Products" />
-      
+
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 mt-4">
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative w-64">
@@ -169,7 +169,7 @@ export default function Products() {
           Add Product
         </Button>
       </div>
-      
+
       <Card className="border border-gray-100">
         <CardHeader>
           <CardTitle>Product List</CardTitle>
@@ -183,7 +183,7 @@ export default function Products() {
                 <thead>
                   <tr className="border-b">
                     <th className="py-3 px-4 text-left">
-                      <button 
+                      <button
                         onClick={() => handleSort('name')}
                         className="flex items-center text-xs font-medium text-gray-500 uppercase tracking-wider"
                       >
@@ -194,7 +194,7 @@ export default function Products() {
                       </button>
                     </th>
                     <th className="py-3 px-4 text-left">
-                      <button 
+                      <button
                         onClick={() => handleSort('sku')}
                         className="flex items-center text-xs font-medium text-gray-500 uppercase tracking-wider"
                       >
@@ -206,7 +206,7 @@ export default function Products() {
                     </th>
                     <th className="py-3 px-4 text-left">Category</th>
                     <th className="py-3 px-4 text-left">
-                      <button 
+                      <button
                         onClick={() => handleSort('price')}
                         className="flex items-center text-xs font-medium text-gray-500 uppercase tracking-wider"
                       >
@@ -217,7 +217,7 @@ export default function Products() {
                       </button>
                     </th>
                     <th className="py-3 px-4 text-left">
-                      <button 
+                      <button
                         onClick={() => handleSort('stock')}
                         className="flex items-center text-xs font-medium text-gray-500 uppercase tracking-wider"
                       >
@@ -240,18 +240,18 @@ export default function Products() {
                             <Package className="h-5 w-5" />
                           </div>
                           <div>
-                            <p className="font-medium text-gray-900">{product.name}</p>
-                            <p className="text-xs text-gray-500 mt-1 max-w-xs truncate">{product.description}</p>
+                            <p className="font-medium text-gray-900">{product.name || product.description || 'Unnamed'}</p>
+                            <p className="text-xs text-gray-500 mt-1 max-w-xs truncate">{product.description || product.name || ''}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-gray-500">{product.sku}</td>
+                      <td className="py-3 px-4 text-gray-500">{product.sku || product.materialCode || product.code || 'N/A'}</td>
                       <td className="py-3 px-4 text-gray-500">{getCategoryName(product.categoryId)}</td>
-                      <td className="py-3 px-4 font-medium">${product.price.toFixed(2)}</td>
-                      <td className="py-3 px-4 text-gray-500">{product.stock}</td>
+                      <td className="py-3 px-4 font-medium">${Number(product.price || product.basePrice || 0).toFixed(2)}</td>
+                      <td className="py-3 px-4 text-gray-500">{product.stock || 0}</td>
                       <td className="py-3 px-4">
-                        <Badge className={getStockStatusClass(product.stock, product.minStock)}>
-                          {getStockStatusText(product.stock, product.minStock)}
+                        <Badge className={getStockStatusClass(product.stock || 0, product.minStock || 0)}>
+                          {getStockStatusText(product.stock || 0, product.minStock || 0)}
                         </Badge>
                       </td>
                       <td className="py-3 px-4">
@@ -285,7 +285,7 @@ export default function Products() {
           )}
         </CardContent>
       </Card>
-      
+
       {/* Create Product Dialog */}
       <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
         <DialogContent className="sm:max-w-lg">
@@ -295,7 +295,7 @@ export default function Products() {
           <ProductForm onSuccess={() => setIsCreateDialogOpen(false)} />
         </DialogContent>
       </Dialog>
-      
+
       {/* Edit Product Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent className="sm:max-w-lg">
@@ -305,14 +305,14 @@ export default function Products() {
           {currentProduct && (
             <ProductForm
               defaultValues={{
-                name: currentProduct.name,
-                categoryId: currentProduct.categoryId.toString(),
-                sku: currentProduct.sku,
-                price: currentProduct.price.toString(),
-                stock: currentProduct.stock.toString(),
-                minStock: currentProduct.minStock.toString(),
+                name: currentProduct.name || currentProduct.description || "",
+                categoryId: currentProduct.categoryId?.toString() ?? "",
+                sku: currentProduct.sku || currentProduct.materialCode || currentProduct.code || "",
+                price: (currentProduct.price || currentProduct.basePrice || 0).toString(),
+                stock: (currentProduct.stock || 0).toString(),
+                minStock: (currentProduct.minStock || 0).toString(),
                 maxStock: currentProduct.maxStock?.toString() ?? "",
-                description: currentProduct.description,
+                description: currentProduct.description || currentProduct.name || "",
                 storageLocationCode: currentProduct.storageLocationCode ?? "",
                 materialMasterId: currentProduct.materialMasterId
                   ? currentProduct.materialMasterId.toString()
@@ -324,7 +324,7 @@ export default function Products() {
           )}
         </DialogContent>
       </Dialog>
-      
+
       {/* Delete Product Dialog */}
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <AlertDialogContent>

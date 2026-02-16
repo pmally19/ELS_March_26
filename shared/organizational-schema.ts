@@ -17,14 +17,20 @@ const commonFields = {
 
 // Company Code - Legal entities in your organization
 export const companyCodes = pgTable("company_codes", {
-  ...commonFields,
+  id: serial("id").primaryKey(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdBy: integer("created_by"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: integer("updated_by"),
+  version: integer("version").default(1).notNull(),
+  isActive: boolean("active").default(true).notNull(), // Maps to 'active' column in DB
+  notes: text("notes"),
   code: text("code").notNull().unique(),
   name: text("name").notNull(),
   description: text("description"),
   currency: text("currency").notNull(), // Currency code (e.g., 'USD', 'EUR') - integrated with currencies table via frontend
   country: text("country").notNull(),
   taxId: text("tax_id"),
-  fiscalYear: text("fiscal_year").notNull(),
   address: text("address"),
   city: text("city"),
   state: text("state"),
@@ -33,6 +39,8 @@ export const companyCodes = pgTable("company_codes", {
   email: text("email"),
   website: text("website"),
   logoUrl: text("logo_url"),
+  fiscalYearVariantId: integer("fiscal_year_variant_id").references(() => fiscalYearVariants.id),
+  chartOfAccountsId: integer("chart_of_accounts_id"),
 });
 
 export const companyCodeRelations = relations(companyCodes, ({ one, many }) => ({
@@ -179,54 +187,54 @@ export const creditControlAreaRelations = relations(creditControlAreas, ({ one }
 }));
 
 // Create insert schemas
-export const insertCompanyCodeSchema = createInsertSchema(companyCodes).omit({ 
-  id: true, 
-  createdAt: true, 
+export const insertCompanyCodeSchema = createInsertSchema(companyCodes).omit({
+  id: true,
+  createdAt: true,
   updatedAt: true,
   createdBy: true,
   updatedBy: true,
   version: true
 });
 
-export const insertPlantSchema = createInsertSchema(plants).omit({ 
-  id: true, 
-  createdAt: true, 
+export const insertPlantSchema = createInsertSchema(plants).omit({
+  id: true,
+  createdAt: true,
   updatedAt: true,
   createdBy: true,
   updatedBy: true,
   version: true
 });
 
-export const insertStorageLocationSchema = createInsertSchema(storageLocations).omit({ 
-  id: true, 
-  createdAt: true, 
+export const insertStorageLocationSchema = createInsertSchema(storageLocations).omit({
+  id: true,
+  createdAt: true,
   updatedAt: true,
   createdBy: true,
   updatedBy: true,
   version: true
 });
 
-export const insertSalesOrgSchema = createInsertSchema(salesOrganizations).omit({ 
-  id: true, 
-  createdAt: true, 
+export const insertSalesOrgSchema = createInsertSchema(salesOrganizations).omit({
+  id: true,
+  createdAt: true,
   updatedAt: true,
   createdBy: true,
   updatedBy: true,
   version: true
 });
 
-export const insertPurchaseOrgSchema = createInsertSchema(purchaseOrganizations).omit({ 
-  id: true, 
-  createdAt: true, 
+export const insertPurchaseOrgSchema = createInsertSchema(purchaseOrganizations).omit({
+  id: true,
+  createdAt: true,
   updatedAt: true,
   createdBy: true,
   updatedBy: true,
   version: true
 });
 
-export const insertCreditControlSchema = createInsertSchema(creditControlAreas).omit({ 
-  id: true, 
-  createdAt: true, 
+export const insertCreditControlSchema = createInsertSchema(creditControlAreas).omit({
+  id: true,
+  createdAt: true,
   updatedAt: true,
   createdBy: true,
   updatedBy: true,
@@ -281,9 +289,9 @@ export const chartOfAccountsRelations = relations(chartOfAccounts, ({ one }) => 
   }),
 }));
 
-export const insertChartOfAccountsSchema = createInsertSchema(chartOfAccounts).omit({ 
-  id: true, 
-  createdAt: true, 
+export const insertChartOfAccountsSchema = createInsertSchema(chartOfAccounts).omit({
+  id: true,
+  createdAt: true,
   updatedAt: true,
   createdBy: true,
   updatedBy: true,

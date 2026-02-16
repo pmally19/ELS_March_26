@@ -42,9 +42,13 @@ export async function getPlants(req: Request, res: Response) {
         p.is_active as "isActive",
         p.created_at as "createdAt",
         p.updated_at as "updatedAt",
-        cc.name as "companyCodeName"
+        p.valuation_grouping_code_id as "valuationGroupingCodeId",
+        cc.name as "companyCodeName",
+        vgc.code as "valuationGroupingCode",
+        vgc.name as "valuationGroupingName"
       FROM plants p 
       LEFT JOIN company_codes cc ON p.company_code_id = cc.id 
+      LEFT JOIN valuation_grouping_codes vgc ON p.valuation_grouping_code_id = vgc.id
       WHERE ${whereCondition}
       ORDER BY p.code
     `);
@@ -88,9 +92,13 @@ export async function getPlantById(req: Request, res: Response) {
         p.is_active as "isActive",
         p.created_at as "createdAt",
         p.updated_at as "updatedAt",
-        cc.name as "companyCodeName"
+        p.valuation_grouping_code_id as "valuationGroupingCodeId",
+        cc.name as "companyCodeName",
+        vgc.code as "valuationGroupingCode",
+        vgc.name as "valuationGroupingName"
       FROM plants p 
       LEFT JOIN company_codes cc ON p.company_code_id = cc.id 
+      LEFT JOIN valuation_grouping_codes vgc ON p.valuation_grouping_code_id = vgc.id
       WHERE p.id = ${id}
     `);
 
@@ -146,12 +154,12 @@ export async function createPlant(req: Request, res: Response) {
 
       const result = await pool.query(`
         INSERT INTO plants (
-          code, name, company_code_id, type, status, is_active
+          code, name, company_code_id, type, status, is_active, valuation_grouping_code_id
         ) VALUES (
-          $1, $2, $3, $4, $5, $6
+          $1, $2, $3, $4, $5, $6, $7
         ) RETURNING *
       `, [
-        data.code, data.name, data.companyCodeId, data.type, status, isActive
+        data.code, data.name, data.companyCodeId, data.type, status, isActive, data.valuationGroupingCodeId || null
       ]);
 
       newPlant = result.rows[0];
@@ -217,6 +225,7 @@ export async function createPlant(req: Request, res: Response) {
       factoryCalendar: newPlant.factory_calendar,
       status: newPlant.status,
       isActive: newPlant.is_active,
+      valuationGroupingCodeId: newPlant.valuation_grouping_code_id,
       createdAt: newPlant.created_at,
       updatedAt: newPlant.updated_at
     };
@@ -284,14 +293,16 @@ export async function updatePlant(req: Request, res: Response) {
       SET code = $1, name = $2, description = $3, company_code_id = $4, type = $5, 
           category = $6, address = $7, city = $8, state = $9, country = $10, 
           postal_code = $11, phone = $12, email = $13, manager = $14, timezone = $15, 
-          operating_hours = $16, coordinates = $17, factory_calendar = $18, status = $19, is_active = $20, updated_at = NOW()
-      WHERE id = $21
+          operating_hours = $16, coordinates = $17, factory_calendar = $18, status = $19, is_active = $20, 
+          valuation_grouping_code_id = $21, updated_at = NOW()
+      WHERE id = $22
       RETURNING *
     `, [
       data.code, data.name, data.description, data.companyCodeId, data.type,
       data.category, data.address, data.city, data.state, data.country,
       data.postalCode, data.phone, data.email, data.manager, data.timezone,
-      data.operatingHours, data.coordinates, data.factoryCalendar, data.status, data.isActive, id
+      data.operatingHours, data.coordinates, data.factoryCalendar, data.status, data.isActive,
+      data.valuationGroupingCodeId || null, id
     ]);
 
     const updatedPlant = updateResult.rows[0];
@@ -328,6 +339,7 @@ export async function updatePlant(req: Request, res: Response) {
       factoryCalendar: updatedPlant.factory_calendar,
       status: updatedPlant.status,
       isActive: updatedPlant.is_active,
+      valuationGroupingCodeId: updatedPlant.valuation_grouping_code_id,
       createdAt: updatedPlant.created_at,
       updatedAt: updatedPlant.updated_at
     };
@@ -564,12 +576,12 @@ export async function bulkImportPlants(req: Request, res: Response) {
         // Create plant with minimal columns first
         const insertResult = await pool.query(`
           INSERT INTO plants (
-            code, name, company_code_id, type, status, is_active
+            code, name, company_code_id, type, status, is_active, valuation_grouping_code_id
           ) VALUES (
-            $1, $2, $3, $4, $5, $6
+            $1, $2, $3, $4, $5, $6, $7
           ) RETURNING *
         `, [
-          data.code, data.name, data.companyCodeId, data.type, status, isActive
+          data.code, data.name, data.companyCodeId, data.type, status, isActive, data.valuationGroupingCodeId || null
         ]);
 
         let newPlant = insertResult.rows[0];
