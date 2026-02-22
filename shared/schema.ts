@@ -471,7 +471,7 @@ export const customers = pgTable("erp_customers", {
   price_group: varchar("price_group", { length: 50 }),
   incoterms: varchar("incoterms", { length: 20 }),
   shipping_method: varchar("shipping_method", { length: 50 }),
-  shipping_conditions: varchar("shipping_conditions", { length: 4 }),
+  shippingConditionKey: varchar("shipping_condition_key", { length: 4 }),
   delivery_terms: varchar("delivery_terms", { length: 100 }),
   delivery_route: varchar("delivery_route", { length: 100 }),
   delivery_priority: varchar("delivery_priority", { length: 2 }),
@@ -2259,6 +2259,7 @@ export const taxRules = pgTable("tax_rules", {
   effectiveFrom: date("effective_from").notNull(),
   effectiveTo: date("effective_to"),
   isActive: boolean("is_active").notNull().default(true),
+  taxCategoryId: integer("tax_category_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -362,28 +362,44 @@ export default function PurchaseRequisition() {
             updated.description = material.description || (material as any).name || material.material_name || '';
             updated.unit_of_measure = (material as any).base_uom || material.unit_of_measure || material.base_unit || 'EA';
 
-            // Auto-fill price from material master data
-            // Materials API returns 'base_unit_price' as the price field
-            const materialPrice = (material as any).base_unit_price ||
-              (material as any).base_price ||
-              (material as any).standard_price ||
-              (material as any).price ||
-              0;
+            // Auto-fill price with priority: vendor price > material base price
+            // First, check if we have vendor-specific pricing
+            const vendorMaterial = selectedVendorId
+              ? vendorMaterials.find((vm: any) => vm.materialId === parseInt(value))
+              : null;
 
-            console.log('💰 Material price found:', materialPrice); // Debug log
+            let priceToUse = 0;
+            let priceSource = '';
 
-            const numericPrice = typeof materialPrice === 'string' ? parseFloat(materialPrice) : materialPrice;
+            if (vendorMaterial && vendorMaterial.unitPrice) {
+              // Use vendor-specific price
+              priceToUse = typeof vendorMaterial.unitPrice === 'string'
+                ? parseFloat(vendorMaterial.unitPrice)
+                : vendorMaterial.unitPrice;
+              priceSource = 'vendor';
+              console.log('💰 Using vendor-specific price:', priceToUse, 'for vendor ID:', selectedVendorId);
+            } else {
+              // Fall back to material base price
+              const materialPrice = (material as any).base_unit_price ||
+                (material as any).base_price ||
+                (material as any).standard_price ||
+                (material as any).price ||
+                0;
+              priceToUse = typeof materialPrice === 'string' ? parseFloat(materialPrice) : materialPrice;
+              priceSource = 'material';
+              console.log('💰 Using material base price:', priceToUse);
+            }
 
-            if (numericPrice > 0) {
-              updated.estimated_unit_price = numericPrice;
-              console.log('✅ Price auto-filled:', numericPrice); // Debug log
+            if (priceToUse > 0) {
+              updated.estimated_unit_price = priceToUse;
+              console.log(`✅ Price auto-filled from ${priceSource}:`, priceToUse);
 
               // Recalculate total if quantity exists
               if (updated.quantity > 0) {
                 updated.estimated_total_price = updated.quantity * updated.estimated_unit_price;
               }
             } else {
-              console.warn('⚠️ No valid price found for material:', material); // Debug log
+              console.warn('⚠️ No valid price found for material:', material);
             }
 
             // Auto-fill additional material master fields

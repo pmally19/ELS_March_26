@@ -1,5 +1,6 @@
 import express from 'express';
 import { pool } from '../db';
+import { pricingCalculationService } from '../services/pricing-calculation';
 
 const router = express.Router();
 
@@ -383,6 +384,94 @@ router.delete('/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting pricing procedure:', error);
     res.status(500).json({ error: 'Failed to delete pricing procedure' });
+  }
+});
+
+/**
+ * POST /api/pricing-procedures/:procedureCode/preview
+ * Runs the pricing engine in preview mode for given items + context.
+ * Returns per-step condition values so the frontend can display them live.
+ */
+router.post('/:procedureCode/preview', async (req, res) => {
+  try {
+    const { procedureCode } = req.params;
+    const { items = [], salesOrgId, distributionChannelId, divisionId, customerId } = req.body;
+
+
+
+    // Calculate for the first item (or aggregated) — gives the per-step breakdown
+    const firstItem = items[0];
+    if (!firstItem) {
+      return res.json({ conditions: [], subtotal: 0, taxTotal: 0, grandTotal: 0 });
+    }
+
+    const baseValue = parseFloat(firstItem.unit_price || 0) * parseFloat(firstItem.quantity || 1);
+
+    const result = await pricingCalculationService.calculatePricing(
+      procedureCode,
+      baseValue,
+      {
+        materialId: firstItem.material_id ? parseInt(firstItem.material_id) : undefined,
+        customerId: customerId ? parseInt(customerId) : undefined,
+        salesOrgId: salesOrgId ? parseInt(salesOrgId) : undefined,
+        distributionChannelId: distributionChannelId ? parseInt(distributionChannelId) : undefined,
+        divisionId: divisionId ? parseInt(divisionId) : undefined,
+        quantity: parseFloat(firstItem.quantity || 1),
+      }
+    );
+
+    // Aggregate for all items if more than one
+    let aggregatedConditions = result.conditions;
+    let totalSubtotal = result.subtotal;
+    let totalTax = result.taxTotal;
+    let totalGrand = result.grandTotal;
+
+    if (items.length > 1) {
+      // Re-run for each additional item and sum up
+      for (let i = 1; i < items.length; i++) {
+        const item = items[i];
+        const itemBase = parseFloat(item.unit_price || 0) * parseFloat(item.quantity || 1);
+        if (itemBase <= 0) continue;
+
+        const itemResult = await pricingCalculationService.calculatePricing(
+          procedureCode,
+          itemBase,
+          {
+            materialId: item.material_id ? parseInt(item.material_id) : undefined,
+            customerId: customerId ? parseInt(customerId) : undefined,
+            salesOrgId: salesOrgId ? parseInt(salesOrgId) : undefined,
+            distributionChannelId: distributionChannelId ? parseInt(distributionChannelId) : undefined,
+            divisionId: divisionId ? parseInt(divisionId) : undefined,
+            quantity: parseFloat(item.quantity || 1),
+          }
+        );
+
+        totalSubtotal += itemResult.subtotal;
+        totalTax += itemResult.taxTotal;
+        totalGrand += itemResult.grandTotal;
+
+        // Merge condition values by step
+        for (const cond of itemResult.conditions) {
+          const existing = aggregatedConditions.find(c => c.step === cond.step);
+          if (existing) {
+            existing.calculatedValue += cond.calculatedValue;
+            existing.baseValue += cond.baseValue;
+          }
+        }
+      }
+    }
+
+    res.json({
+      conditions: aggregatedConditions,
+      subtotal: totalSubtotal,
+      taxTotal: totalTax,
+      grandTotal: totalGrand,
+      procedureCode,
+      itemCount: items.length,
+    });
+  } catch (error: any) {
+    console.error('[Pricing Preview] Error:', error);
+    res.status(500).json({ error: 'Failed to generate pricing preview', message: error.message });
   }
 });
 

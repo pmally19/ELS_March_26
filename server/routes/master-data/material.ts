@@ -46,7 +46,8 @@ const materialSchema = z.object({
   costCenter: z.string().max(20, "Cost center must be 20 characters or less").optional().nullable().or(z.literal('')),
   itemCategoryGroup: z.string().max(4, "Item category group must be 4 characters or less").optional().nullable().or(z.literal('')),
   materialAssignmentGroupCode: z.string().max(4, "Material assignment group must be 4 characters or less").optional().nullable().or(z.literal('')),
-  loadingGroup: z.string().max(4, "Loading group must be 4 characters or less").optional().nullable().or(z.literal('')), // New field
+  loadingGroup: z.string().max(4, "Loading group must be 4 characters or less").optional().nullable().or(z.literal('')),
+  taxClassificationCode: z.string().max(10, "Tax classification code must be 10 characters or less").optional().nullable().or(z.literal('')),
   isActive: z.boolean().optional().nullable(),
 });
 
@@ -87,6 +88,7 @@ router.get('/', async (req, res) => {
         material_group,
         material_assignment_group_code,
         loading_group,
+        tax_classification_code,
         price_control,
         sales_organization,
         distribution_channel,
@@ -237,6 +239,8 @@ router.get('/:id', async (req, res) => {
         item_category_group,
         material_group,
         material_assignment_group_code,
+        loading_group,
+        tax_classification_code,
         price_control,
         sales_organization,
         distribution_channel,
@@ -348,6 +352,7 @@ router.post('/', async (req: any, res: any) => {
       itemCategoryGroup: req.body.itemCategoryGroup !== undefined ? req.body.itemCategoryGroup : req.body.item_category_group,
       materialAssignmentGroupCode: req.body.materialAssignmentGroupCode !== undefined ? req.body.materialAssignmentGroupCode : req.body.material_assignment_group_code,
       loadingGroup: req.body.loadingGroup !== undefined ? req.body.loadingGroup : req.body.loading_group,
+      taxClassificationCode: req.body.taxClassificationCode !== undefined ? req.body.taxClassificationCode : req.body.tax_classification_code,
       isActive: req.body.isActive !== undefined ? req.body.isActive : (req.body.is_active !== undefined ? req.body.is_active : true)
     };
 
@@ -604,7 +609,7 @@ router.post('/', async (req: any, res: any) => {
         volume, volume_unit, valuation_class, industry_sector, 
         item_category_group, material_group, material_assignment_group_code, loading_group, price_control, sales_organization, distribution_channel, division,
         purchasing_group, purchase_organization, production_storage_location,
-        plant_code, profit_center, cost_center,
+        plant_code, profit_center, cost_center, tax_classification_code,
         is_active, created_at, updated_at
       )
       VALUES (
@@ -648,6 +653,7 @@ router.post('/', async (req: any, res: any) => {
         ${plantCodeValue},
         ${profitCenterValue},
         ${costCenterValue},
+        ${(data as any).taxClassificationCode || transformedBody.taxClassificationCode || null},
         ${data.isActive !== undefined ? data.isActive : true}, 
         NOW(), 
         NOW()
@@ -788,6 +794,8 @@ const updateMaterialHandler = async (req: express.Request, res: express.Response
       costCenter: req.body.costCenter !== undefined ? req.body.costCenter : req.body.cost_center,
       itemCategoryGroup: req.body.itemCategoryGroup !== undefined ? req.body.itemCategoryGroup : req.body.item_category_group,
       materialAssignmentGroupCode: req.body.materialAssignmentGroupCode !== undefined ? req.body.materialAssignmentGroupCode : req.body.material_assignment_group_code,
+      loadingGroup: req.body.loadingGroup !== undefined ? req.body.loadingGroup : req.body.loading_group,
+      taxClassificationCode: req.body.taxClassificationCode !== undefined ? req.body.taxClassificationCode : req.body.tax_classification_code,
       isActive: req.body.isActive !== undefined ? req.body.isActive : req.body.is_active
     };
 
@@ -1110,6 +1118,14 @@ const updateMaterialHandler = async (req: express.Request, res: express.Response
         updateParts.push(sql`loading_group = NULL`);
       } else {
         updateParts.push(sql`loading_group = ${loadingGroupValue}`);
+      }
+    }
+    if (data.taxClassificationCode !== undefined || transformedBody.taxClassificationCode !== undefined) {
+      const taxClassificationCodeValue = data.taxClassificationCode !== undefined ? data.taxClassificationCode : transformedBody.taxClassificationCode;
+      if (taxClassificationCodeValue === '' || taxClassificationCodeValue === null) {
+        updateParts.push(sql`tax_classification_code = NULL`);
+      } else {
+        updateParts.push(sql`tax_classification_code = ${taxClassificationCodeValue}`);
       }
     }
     if (data.isActive !== undefined) {

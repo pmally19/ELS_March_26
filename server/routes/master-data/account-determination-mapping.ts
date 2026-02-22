@@ -244,103 +244,20 @@ router.post("/", async (req: Request, res: Response) => {
             is_active
         } = body;
 
-        // Validate required fields
-        if (!account_key_code || !business_scenario || !gl_account_id) {
-            return res.status(400).json({
-                message: "Account key code, business scenario, and GL account are required"
-            });
-        }
-
-        if (is_active === undefined || is_active === null) {
-            return res.status(400).json({ message: "is_active field is required" });
-        }
-
-        // Check if account key exists
-        const keyCheck = await pool.query(
-            `SELECT id FROM account_keys WHERE code = $1`,
-            [account_key_code]
-        );
-
-        if (keyCheck.rows.length === 0) {
-            return res.status(400).json({ message: "Invalid account key code" });
-        }
-
-        // Check if sales area exists (if provided)
-        if (sales_area_id) {
-            const salesAreaCheck = await pool.query(
-                `SELECT id FROM sd_sales_areas WHERE id = $1`,
-                [sales_area_id]
-            );
-
-            if (salesAreaCheck.rows.length === 0) {
-                return res.status(400).json({ message: "Invalid sales area" });
-            }
-        }
-
-        // Check customer assignment group (if provided)
-        if (customer_assignment_group_id) {
-            const custGroupCheck = await pool.query(
-                `SELECT id FROM sd_Customer_account_assignment_groups WHERE id = $1`,
-                [customer_assignment_group_id]
-            );
-            if (custGroupCheck.rows.length === 0) {
-                return res.status(400).json({ message: "Invalid Customer Account Assignment Group" });
-            }
-        }
-
-        // Check material assignment group (if provided)
-        if (material_assignment_group_id) {
-            const matGroupCheck = await pool.query(
-                `SELECT id FROM sd_material_account_assignment_groups WHERE id = $1`,
-                [material_assignment_group_id]
-            );
-            if (matGroupCheck.rows.length === 0) {
-                return res.status(400).json({ message: "Invalid Material Account Assignment Group" });
-            }
-        }
-
-        // Check if GL account exists
-        const glCheck = await pool.query(
-            `SELECT id FROM gl_accounts WHERE id = $1`,
-            [gl_account_id]
-        );
-
-        if (glCheck.rows.length === 0) {
-            return res.status(400).json({ message: "Invalid GL account" });
-        }
-
-        // Check for duplicate mapping
-        const duplicateCheck = await pool.query(
-            `SELECT id FROM account_determination_mapping 
-             WHERE account_key_code = $1 
-               AND business_scenario = $2 
-               AND (sales_area_id = $3 OR (sales_area_id IS NULL AND $3 IS NULL))
-               AND (customer_assignment_group_id = $4 OR (customer_assignment_group_id IS NULL AND $4 IS NULL))
-               AND (material_assignment_group_id = $5 OR (material_assignment_group_id IS NULL AND $5 IS NULL))
-               AND (condition_type_id = $6 OR (condition_type_id IS NULL AND $6 IS NULL))`,
-            [
-                account_key_code,
-                business_scenario,
-                sales_area_id || null,
-                customer_assignment_group_id || null,
-                material_assignment_group_id || null,
-                condition_type_id || null
-            ]
-        );
-
-        if (duplicateCheck.rows.length > 0) {
-            return res.status(409).json({
-                message: "Mapping already exists for this combination of keys"
-            });
-        }
-
+        // Upsert: insert or update if same combination already exists
         const result = await pool.query(`
       INSERT INTO account_determination_mapping (
-        account_key_code, business_scenario, sales_area_id, 
+        account_key_code, business_scenario, sales_area_id,
         customer_assignment_group_id, material_assignment_group_id,
         condition_type_id, gl_account_id, description, is_active, created_at, updated_at
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+      ON CONFLICT ON CONSTRAINT uq_account_determination
+      DO UPDATE SET
+        gl_account_id = EXCLUDED.gl_account_id,
+        description   = EXCLUDED.description,
+        is_active     = EXCLUDED.is_active,
+        updated_at    = NOW()
       RETURNING *
     `, [
             account_key_code,
@@ -351,7 +268,7 @@ router.post("/", async (req: Request, res: Response) => {
             condition_type_id || null,
             gl_account_id,
             description || null,
-            is_active
+            is_active ?? true
         ]);
 
         return res.status(201).json(result.rows[0]);
@@ -397,64 +314,6 @@ router.put("/:id", async (req: Request, res: Response) => {
 
         if (existing.rows.length === 0) {
             return res.status(404).json({ message: "Account determination mapping not found" });
-        }
-
-        // Validate account key if provided
-        if (account_key_code) {
-            const keyCheck = await pool.query(
-                `SELECT id FROM account_keys WHERE code = $1`,
-                [account_key_code]
-            );
-
-            if (keyCheck.rows.length === 0) {
-                return res.status(400).json({ message: "Invalid account key code" });
-            }
-        }
-
-        // Validate sales area if provided
-        if (sales_area_id) {
-            const salesAreaCheck = await pool.query(
-                `SELECT id FROM sd_sales_areas WHERE id = $1`,
-                [sales_area_id]
-            );
-
-            if (salesAreaCheck.rows.length === 0) {
-                return res.status(400).json({ message: "Invalid sales area" });
-            }
-        }
-
-        // Validate customer assignment group
-        if (customer_assignment_group_id) {
-            const custGroupCheck = await pool.query(
-                `SELECT id FROM sd_Customer_account_assignment_groups WHERE id = $1`,
-                [customer_assignment_group_id]
-            );
-            if (custGroupCheck.rows.length === 0) {
-                return res.status(400).json({ message: "Invalid Customer Account Assignment Group" });
-            }
-        }
-
-        // Validate material assignment group
-        if (material_assignment_group_id) {
-            const matGroupCheck = await pool.query(
-                `SELECT id FROM sd_material_account_assignment_groups WHERE id = $1`,
-                [material_assignment_group_id]
-            );
-            if (matGroupCheck.rows.length === 0) {
-                return res.status(400).json({ message: "Invalid Material Account Assignment Group" });
-            }
-        }
-
-        // Validate GL account if provided
-        if (gl_account_id) {
-            const glCheck = await pool.query(
-                `SELECT id FROM gl_accounts WHERE id = $1`,
-                [gl_account_id]
-            );
-
-            if (glCheck.rows.length === 0) {
-                return res.status(400).json({ message: "Invalid GL account" });
-            }
         }
 
         // Check for duplicate if key fields are being changed

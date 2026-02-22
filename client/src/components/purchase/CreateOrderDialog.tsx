@@ -415,9 +415,17 @@ export default function CreateOrderDialog({ isOpen, onClose, orderId }: CreateOr
       return;
     }
 
-    // Use material's base price instead of vendor material assignment price
-    const unitPrice = assignment.material.baseUnitPrice || 0;
+    // Use vendor-specific price if available, otherwise fall back to material base price
+    // Priority: vendor_materials.unit_price > material.base_unit_price
+    const unitPrice = assignment.unitPrice || assignment.material.baseUnitPrice || 0;
     const currency = formData.currency || "";
+
+    console.log(`💰 Adding material to PO - using price: ${unitPrice}`, {
+      materialId: assignment.materialId,
+      vendorPrice: assignment.unitPrice,
+      materialBasePrice: assignment.material.baseUnitPrice,
+      priceSource: assignment.unitPrice ? 'vendor_materials' : 'material_master'
+    });
 
     const newItem: OrderItem = {
       materialId: assignment.materialId,

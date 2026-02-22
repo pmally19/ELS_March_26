@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { apiRequest } from '@/lib/queryClient';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -75,6 +77,37 @@ export default function CustomerAddressManager({
   isEditing = false
 }: CustomerAddressManagerProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  // Fetch countries for dropdown
+  const { data: countriesList = [] } = useQuery<any[]>({
+    queryKey: ['/api/master-data/countries'],
+    queryFn: async () => {
+      const response = await apiRequest('/api/master-data/countries');
+      return await response.json();
+    },
+    retry: 1,
+  });
+
+  // Fetch all states (we filter by country on the client side per address entry)
+  const { data: allStatesList = [] } = useQuery<any[]>({
+    queryKey: ['/api/master-data/states'],
+    queryFn: async () => {
+      const response = await apiRequest('/api/master-data/states');
+      return await response.json();
+    },
+    retry: 1,
+  });
+
+  // Helper to get states for a specific country name
+  const getStatesForCountry = (countryName: string) => {
+    if (!countryName) return [];
+    const country = (countriesList as any[]).find(
+      (c: any) => c.name === countryName || c.code === countryName
+    );
+    if (!country) return [];
+    return (allStatesList as any[]).filter((s: any) => (s.countryId || s.country_id) === country.id);
+  };
+
   // Use ref to track temp counter to avoid re-renders
   const tempCounterRef = React.useRef<number>(0);
 
@@ -477,23 +510,57 @@ export default function CustomerAddressManager({
             />
           </div>
           <div>
-            <Label>State/Province</Label>
-            <Input
-              value={address.state}
-              onChange={(e) => updateAddress(type, address.id, { state: e.target.value })}
-              placeholder="State/Province"
+            <Label>Country <span className="text-red-500">*</span></Label>
+            <Select
+              value={address.country || ''}
+              onValueChange={(value) => {
+                updateAddress(type, address.id, { country: value, state: '' });
+              }}
               disabled={!isEditing}
-            />
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select country" />
+              </SelectTrigger>
+              <SelectContent>
+                {countriesList.length === 0 ? (
+                  <SelectItem value="no-countries" disabled>No countries available</SelectItem>
+                ) : (
+                  (countriesList as any[]).map((c: any) => (
+                    <SelectItem key={c.id} value={c.name}>
+                      {c.code} - {c.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
           </div>
           <div>
-            <Label>Country <span className="text-red-500">*</span></Label>
-            <Input
-              value={address.country}
-              onChange={(e) => updateAddress(type, address.id, { country: e.target.value })}
-              placeholder="Country"
-              disabled={!isEditing}
-              required
-            />
+            <Label>State/Province</Label>
+            {(() => {
+              const statesForCountry = getStatesForCountry(address.country);
+              return (
+                <Select
+                  value={address.state || ''}
+                  onValueChange={(value) => updateAddress(type, address.id, { state: value })}
+                  disabled={!isEditing || !address.country}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={address.country ? "Select state/province" : "Select country first"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {statesForCountry.length === 0 ? (
+                      <SelectItem value="no-states" disabled>No states for this country</SelectItem>
+                    ) : (
+                      statesForCountry.map((s: any) => (
+                        <SelectItem key={s.id} value={s.name || s.code}>
+                          {s.code} - {s.name}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              );
+            })()}
           </div>
         </div>
 

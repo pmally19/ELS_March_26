@@ -21,12 +21,12 @@ interface GLAccountGroup {
   description?: string;
   accountCategory: "ASSETS" | "LIABILITIES" | "EQUITY" | "REVENUE" | "EXPENSES";
   accountSubcategory?: string;
-  accountNumberPattern?: string;
-  accountNumberMinLength: number;
-  accountNumberMaxLength: number;
-  numberRangeStart?: string;
-  numberRangeEnd?: string;
-  fieldControlGroup?: string;
+  numberRangeId?: number;
+  numberRangeCode?: string;
+  numberRangeDescription?: string;
+  numberRangeObject?: string;
+  numberRangeFrom?: string;
+  numberRangeTo?: string;
   accountNameRequired: boolean;
   descriptionRequired: boolean;
   currencyRequired: boolean;
@@ -58,6 +58,16 @@ export default function GLAccountGroups() {
       const res = await fetch('/api/master-data/gl-account-groups');
       if (!res.ok) throw new Error('Failed to fetch GL account groups');
       return res.json();
+    },
+  });
+
+  const numberRanges = useQuery({
+    queryKey: ['/api/number-ranges'],
+    queryFn: async () => {
+      const res = await fetch('/api/number-ranges');
+      if (!res.ok) throw new Error('Failed to fetch number ranges');
+      const data = await res.json();
+      return data.records || [];
     },
   });
 
@@ -110,12 +120,7 @@ export default function GLAccountGroups() {
       description: group?.description || '',
       accountCategory: group?.accountCategory || 'ASSETS',
       accountSubcategory: group?.accountSubcategory || '',
-      accountNumberPattern: group?.accountNumberPattern || '',
-      accountNumberMinLength: group?.accountNumberMinLength || 4,
-      accountNumberMaxLength: group?.accountNumberMaxLength || 10,
-      numberRangeStart: group?.numberRangeStart || '',
-      numberRangeEnd: group?.numberRangeEnd || '',
-      fieldControlGroup: group?.fieldControlGroup || '',
+      numberRangeId: group?.numberRangeId,
       accountNameRequired: group?.accountNameRequired ?? true,
       descriptionRequired: group?.descriptionRequired ?? false,
       currencyRequired: group?.currencyRequired ?? true,
@@ -213,72 +218,26 @@ export default function GLAccountGroups() {
           </TabsContent>
 
           <TabsContent value="numbering" className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="numberRangeStart">Number Range Start</Label>
-                <Input
-                  id="numberRangeStart"
-                  value={formData.numberRangeStart}
-                  onChange={(e) => setFormData({ ...formData, numberRangeStart: e.target.value })}
-                  placeholder="e.g., 1000"
-                />
-              </div>
-              <div>
-                <Label htmlFor="numberRangeEnd">Number Range End</Label>
-                <Input
-                  id="numberRangeEnd"
-                  value={formData.numberRangeEnd}
-                  onChange={(e) => setFormData({ ...formData, numberRangeEnd: e.target.value })}
-                  placeholder="e.g., 1999"
-                />
-              </div>
-            </div>
-
             <div>
-              <Label htmlFor="accountNumberPattern">Account Number Pattern</Label>
-              <Input
-                id="accountNumberPattern"
-                value={formData.accountNumberPattern}
-                onChange={(e) => setFormData({ ...formData, accountNumberPattern: e.target.value })}
-                placeholder="e.g., NNNN-NNN"
-                maxLength={50}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="accountNumberMinLength">Min Length</Label>
-                <Input
-                  id="accountNumberMinLength"
-                  type="number"
-                  value={formData.accountNumberMinLength}
-                  onChange={(e) => setFormData({ ...formData, accountNumberMinLength: parseInt(e.target.value) })}
-                  min={1}
-                  max={20}
-                />
-              </div>
-              <div>
-                <Label htmlFor="accountNumberMaxLength">Max Length</Label>
-                <Input
-                  id="accountNumberMaxLength"
-                  type="number"
-                  value={formData.accountNumberMaxLength}
-                  onChange={(e) => setFormData({ ...formData, accountNumberMaxLength: parseInt(e.target.value) })}
-                  min={1}
-                  max={20}
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label htmlFor="fieldControlGroup">Field Control Group</Label>
-              <Input
-                id="fieldControlGroup"
-                value={formData.fieldControlGroup}
-                onChange={(e) => setFormData({ ...formData, fieldControlGroup: e.target.value })}
-                placeholder="e.g., FCG001"
-                maxLength={10}
-              />
+              <Label htmlFor="numberRange">Number Range Object</Label>
+              <Select
+                value={formData.numberRangeId?.toString()}
+                onValueChange={(value) => setFormData({ ...formData, numberRangeId: value ? parseInt(value) : undefined })}
+              >
+                <SelectTrigger id="numberRange">
+                  <SelectValue placeholder="None (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  {numberRanges.data?.map((nr: any) => (
+                    <SelectItem key={nr.id} value={nr.id.toString()}>
+                      {nr.number_range_code} - {nr.description} ({nr.range_from} to {nr.range_to})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground mt-2">
+                Select a number range to define automatic numbering for GL accounts in this group
+              </p>
             </div>
           </TabsContent>
 
@@ -366,7 +325,7 @@ export default function GLAccountGroups() {
               </div>
             </div>
           </TabsContent>
-        </Tabs>
+        </Tabs >
 
         <div className="flex justify-end space-x-2 pt-4">
           <Button type="button" variant="outline" onClick={onCancel}>
@@ -376,12 +335,12 @@ export default function GLAccountGroups() {
             {group ? 'Update' : 'Create'} Group
           </Button>
         </div>
-      </form>
+      </form >
     );
   };
 
   const filteredGroups = groups.filter((group: GLAccountGroup) => {
-    const matchesSearch = 
+    const matchesSearch =
       group.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
       group.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (group.description || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -397,8 +356,8 @@ export default function GLAccountGroups() {
     <div className="container mx-auto p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center gap-4 mb-6">
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           size="sm"
           onClick={() => window.history.back()}
           className="flex items-center gap-2"
@@ -502,10 +461,10 @@ export default function GLAccountGroups() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                {group.numberRangeStart && group.numberRangeEnd && (
+                {group.numberRangeCode && (
                   <div>
                     <span className="text-gray-600">Number Range:</span>
-                    <div className="font-medium">{group.numberRangeStart} - {group.numberRangeEnd}</div>
+                    <div className="font-medium">{group.numberRangeCode} - {group.numberRangeDescription || ''}</div>
                   </div>
                 )}
                 <div>
@@ -532,7 +491,7 @@ export default function GLAccountGroups() {
             </CardContent>
           </Card>
         ))}
-        
+
         {filteredGroups.length === 0 && (
           <Card>
             <CardContent className="text-center py-8">

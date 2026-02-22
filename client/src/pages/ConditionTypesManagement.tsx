@@ -34,7 +34,8 @@ const conditionTypeSchema = z.object({
   sequence_number: z.number().min(1).max(99),
   is_mandatory: z.boolean().default(false),
   is_active: z.boolean().default(true),
-  account_key: z.string().optional()
+  account_key: z.string().optional(),
+  condition_class_id: z.number().nullable().optional()
 });
 
 type ConditionType = z.infer<typeof conditionTypeSchema> & {
@@ -118,6 +119,17 @@ export default function ConditionTypesManagement() {
     queryFn: async () => {
       const res = await apiRequest('/api/master-data/account-keys');
       if (!res.ok) throw new Error('Failed to fetch account keys');
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    }
+  });
+
+  // Fetch condition classes from API
+  const { data: conditionClasses = [] } = useQuery({
+    queryKey: ['/api/condition-types/condition-classes'],
+    queryFn: async () => {
+      const res = await apiRequest('/api/condition-types/condition-classes');
+      if (!res.ok) throw new Error('Failed to fetch condition classes');
       const data = await res.json();
       return Array.isArray(data) ? data : [];
     }
@@ -399,7 +411,8 @@ export default function ConditionTypesManagement() {
       default_value: 0,
       sequence_number: 1,
       is_mandatory: false,
-      is_active: true
+      is_active: true,
+      condition_class_id: null
     });
     setIsDialogOpen(true);
   };
@@ -566,7 +579,7 @@ export default function ConditionTypesManagement() {
                 Add Condition Type
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>
                   {editingCondition ? 'Edit' : 'Create'} Condition Type
@@ -722,6 +735,38 @@ export default function ConditionTypesManagement() {
                         </Select>
                         <FormDescription>
                           GL account determination key (leave empty if not needed)
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="condition_class_id"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Condition Class (Optional)</FormLabel>
+                        <Select
+                          onValueChange={(val) => field.onChange(val === "none" ? null : parseInt(val))}
+                          value={field.value ? String(field.value) : "none"}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select condition class" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="none">None</SelectItem>
+                            {conditionClasses.map((cls: any) => (
+                              <SelectItem key={cls.id} value={String(cls.id)}>
+                                {cls.class_code} - {cls.class_name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          Condition class grouping (A=Discount, B=Prices, D=Taxes)
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -1403,6 +1448,21 @@ export default function ConditionTypesManagement() {
                     <p className="text-sm mt-1">{viewingCondition.description}</p>
                   </div>
                 )}
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Account Key</Label>
+                    <p className="text-lg font-mono">{(viewingCondition as any).account_key || 'Not set'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-muted-foreground">Condition Class</Label>
+                    <p className="text-lg">
+                      {(viewingCondition as any).condition_class_code
+                        ? `${(viewingCondition as any).condition_class_code} - ${(viewingCondition as any).condition_class_name}`
+                        : 'None'}
+                    </p>
+                  </div>
+                </div>
               </TabsContent>
 
               <TabsContent value="configuration" className="space-y-4">

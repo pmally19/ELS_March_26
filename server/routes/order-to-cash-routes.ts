@@ -20,6 +20,7 @@ import { accountDeterminationService } from "../services/account-determination-s
 import { InventoryTrackingService } from "../services/inventoryTrackingService.js";
 import { validatePeriodLock } from "../middleware/period-lock-check";
 import { FiscalPeriodService } from "../services/fiscal-period-service";
+import { pricingCalculationService, PricingContext } from "../services/pricing-calculation";
 
 const inventoryTrackingService = new InventoryTrackingService(pool);
 
@@ -736,8 +737,29 @@ router.post("/sales-orders", async (req, res) => {
       console.warn(`⚠️ Order number collision detected, using: ${orderNumber}`);
     }
 
-    // Calculate total amount from items
+    // ── Server-side pricing procedure determination ─────────────────────────
+    let resolvedPricingProcedure: string | null = null;
+    try {
+      resolvedPricingProcedure = await pricingCalculationService.determinePricingProcedure(
+        salesOrgId,
+        orderData.distribution_channel_id ? parseInt(String(orderData.distribution_channel_id)) : undefined,
+        orderData.division_id ? parseInt(String(orderData.division_id)) : undefined,
+        orderData.customer_pricing_procedure,
+        orderData.document_type   // treat doc type as document pricing procedure key
+      );
+    } catch (ppErr) {
+      console.warn('⚠️ Could not auto-determine pricing procedure:', ppErr);
+    }
+    // Fall back to frontend-provided value if server cannot determine
+    const effectivePricingProcedure = resolvedPricingProcedure || orderData.pricing_procedure || null;
+    console.log(`📋 Effective pricing procedure: ${effectivePricingProcedure}`);
+
+    // ── Calculate total amount from items (fallback if no pricing engine) ────
     let subtotal = 0;
+    // Engine-accumulated totals (will override below if engine runs successfully)
+    let engineSubtotal = 0;
+    let engineTaxTotal = 0;
+    let pricingEngineRan = false;
     if (items && Array.isArray(items)) {
       subtotal = items.reduce((sum, item) => {
         return sum + (parseFloat(item.quantity || 0) * parseFloat(item.unit_price || 0));
@@ -1043,6 +1065,10 @@ router.post("/sales-orders", async (req, res) => {
     if (items && Array.isArray(items) && salesOrderId) {
       console.log('📦 Creating sales order items with dynamic inventory management...');
 
+      // Accumulate engine pricing per-order
+      let engineSubtotalAcc = 0;
+      let engineTaxAcc = 0;
+
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const subtotal = parseFloat(item.quantity || 0) * parseFloat(item.unit_price || 0);
@@ -1159,13 +1185,47 @@ router.post("/sales-orders", async (req, res) => {
 
         console.log(`📦 Creating order item: Material=${materialId}, Plant=${finalPlantId}(${finalPlantCode}), Storage=${finalStorageLocationId}(${finalStorageLocationCode}), Unit=${finalUnit}`);
 
-        // Create sales order item with complete information
-        // Use frontend values as priority, then fallback to resolved values
-        // Insert matching the new schema
-        // Create sales order item with complete information
-        // Use frontend values as priority, then fallback to resolved values
-        // Updated to matching migrated DB schema (material_id, sales_order_id, ordered_quantity, material_description, net_amount)
-        await db.execute(sql`
+        // ── Run pricing engine for this item ─────────────────────────────────
+        let itemNetAmount = subtotal;
+        let itemTaxAmount = 0;
+        let itemDiscountAmount = 0;
+
+        if (effectivePricingProcedure) {
+          try {
+            const pricingCtx: PricingContext = {
+              customerCode: String(orderData.customer_id || ''),
+              materialCode: materialCode || undefined,
+              materialId: materialId ? Number(materialId) : undefined,
+              customerId: orderData.customer_id ? Number(orderData.customer_id) : undefined,
+              salesOrgId: salesOrgId || undefined,
+              distributionChannelId: orderData.distribution_channel_id ? Number(orderData.distribution_channel_id) : undefined,
+              divisionId: orderData.division_id ? Number(orderData.division_id) : undefined,
+              quantity: quantity,
+            };
+
+            const pricingResult = await pricingCalculationService.calculatePricing(
+              effectivePricingProcedure,
+              subtotal,   // base = qty × price per item
+              pricingCtx
+            );
+
+            itemNetAmount = pricingResult.subtotal > 0 ? pricingResult.subtotal : subtotal;
+            itemTaxAmount = pricingResult.taxTotal;
+
+            engineSubtotalAcc += itemNetAmount;
+            engineTaxAcc += itemTaxAmount;
+            pricingEngineRan = true;
+
+            console.log(`✅ Pricing engine for item ${i + 1}: net=${itemNetAmount}, tax=${itemTaxAmount}`);
+          } catch (pricingErr) {
+            console.warn(`⚠️ Pricing engine failed for item ${i + 1}, using frontend values:`, pricingErr);
+          }
+        }
+
+        const taxPercent = itemNetAmount > 0 ? (itemTaxAmount / itemNetAmount) * 100 : parseFloat(item.tax_percent || 0);
+
+        // Insert sales order item and get its ID for condition persistence
+        const itemInsertResult = await db.execute(sql`
           INSERT INTO sales_order_items (
             sales_order_id, material_id, material_description, ordered_quantity, unit_price,
             discount_percent, tax_percent, net_amount, active,
@@ -1174,13 +1234,54 @@ router.post("/sales-orders", async (req, res) => {
           ) VALUES (
             ${salesOrderId}, ${materialId || null}, ${item.material_description || item.product_name || ''},
             ${quantity}, ${parseFloat(item.unit_price || 0)},
-            ${parseFloat(item.discount_percent || 0)}, ${parseFloat(item.tax_percent || 0)},
-            ${subtotal}, true,
+            ${itemDiscountAmount}, ${taxPercent},
+            ${itemNetAmount + itemTaxAmount}, true,
             ${finalPlantId}, ${finalPlantCode || null},
             ${finalStorageLocationId || null}, ${finalStorageLocationCode || null},
             NOW(), NOW()
-          )
+          ) RETURNING id
         `);
+
+        const soiId = itemInsertResult.rows[0]?.id;
+
+        // ── Persist condition breakdown into sales_order_item_conditions ────
+        if (soiId && effectivePricingProcedure && pricingEngineRan) {
+          try {
+            const pricingCtx2: PricingContext = {
+              customerCode: String(orderData.customer_id || ''),
+              materialCode: materialCode || undefined,
+              materialId: materialId ? Number(materialId) : undefined,
+              customerId: orderData.customer_id ? Number(orderData.customer_id) : undefined,
+              salesOrgId: salesOrgId || undefined,
+              quantity: quantity,
+            };
+            const condResult = await pricingCalculationService.calculatePricing(
+              effectivePricingProcedure, subtotal, pricingCtx2
+            );
+
+            for (const cond of condResult.conditions) {
+              if (!cond.conditionType && !cond.isSubtotal) continue; // skip empty steps
+              await db.execute(sql`
+                INSERT INTO sales_order_item_conditions (
+                  sales_order_item_id, sales_order_id,
+                  step_number, condition_type_code, condition_name,
+                  base_value, rate, condition_amount, currency,
+                  calculation_type, is_statistical, is_tax, account_key, created_at
+                ) VALUES (
+                  ${soiId}, ${salesOrderId},
+                  ${cond.step}, ${cond.conditionType || null}, ${cond.description || null},
+                  ${cond.baseValue}, ${cond.rate}, ${cond.calculatedValue},
+                  ${orderData.currency || 'INR'},
+                  ${cond.calculationType || 'A'}, ${cond.isStatistical}, ${cond.isTax},
+                  ${cond.accountKey || null}, NOW()
+                )
+              `);
+            }
+            console.log(`✅ Persisted ${condResult.conditions.length} conditions for item ${soiId}`);
+          } catch (condErr) {
+            console.warn(`⚠️ Could not persist conditions for item ${soiId}:`, condErr);
+          }
+        }
 
         // Log unit for inventory tracking (even if not stored in sales_order_items table)
         if (finalUnit) {
@@ -1252,6 +1353,33 @@ router.post("/sales-orders", async (req, res) => {
       }
 
       console.log('✅ Sales order items created with dynamic inventory management');
+
+      // Override totals with engine-calculated values if engine ran successfully
+      if (pricingEngineRan) {
+        engineSubtotal = engineSubtotalAcc;
+        engineTaxTotal = engineTaxAcc;
+        console.log(`📊 Engine totals: subtotal=${engineSubtotal}, tax=${engineTaxTotal}`);
+      }
+    }
+
+    // Patch the saved SO row with engine-calculated totals (if engine ran)
+    if (pricingEngineRan && salesOrderId) {
+      try {
+        const finalSubtotal = engineSubtotal;
+        const finalTax = engineTaxTotal;
+        const finalTotal = finalSubtotal + finalTax + shippingAmount;
+        await db.execute(sql`
+          UPDATE sales_orders
+          SET subtotal = ${finalSubtotal.toFixed(2)},
+              tax_amount = ${finalTax.toFixed(2)},
+              total_amount = ${finalTotal.toFixed(2)},
+              pricing_procedure = ${effectivePricingProcedure}
+          WHERE id = ${salesOrderId}
+        `);
+        console.log(`✅ Updated SO ${salesOrderId} totals: subtotal=${finalSubtotal}, tax=${finalTax}, total=${finalTotal}`);
+      } catch (updateErr) {
+        console.warn('⚠️ Could not update SO totals after pricing engine run:', updateErr);
+      }
     }
 
     res.json({
@@ -3574,13 +3702,38 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
             }
 
             // Insert material movement - NO try-catch, let it fail if there's an issue
+            // Resolve GL accounts for PGI: GBB (COGS Debit) and BSX (Inventory Credit)
+            let pgiDebitGL: string | null = null;
+            let pgiCreditGL: string | null = null;
+            try {
+              const pgiGLResult = await db.execute(sql`
+                SELECT
+                  (SELECT gl.account_number FROM material_account_determination mad
+                    JOIN transaction_keys tk ON tk.id = mad.transaction_key_id
+                    JOIN gl_accounts gl ON gl.id = mad.gl_account_id
+                    WHERE tk.code = 'GBB' AND mad.is_active = true AND gl.is_active = true
+                    ORDER BY mad.id LIMIT 1) as gbb_account,
+                  (SELECT gl.account_number FROM material_account_determination mad
+                    JOIN transaction_keys tk ON tk.id = mad.transaction_key_id
+                    JOIN gl_accounts gl ON gl.id = mad.gl_account_id
+                    WHERE tk.code = 'BSX' AND mad.is_active = true AND gl.is_active = true
+                    ORDER BY mad.id LIMIT 1) as bsx_account
+              `);
+              pgiDebitGL = getString(pgiGLResult.rows[0]?.gbb_account) || null;  // Dr COGS
+              pgiCreditGL = getString(pgiGLResult.rows[0]?.bsx_account) || null;  // Cr Inventory
+              console.log(`🧾 PGI GL Accounts: Dr(GBB)=${pgiDebitGL} Cr(BSX)=${pgiCreditGL}`);
+            } catch (glErr: any) {
+              console.warn('⚠️ Could not resolve PGI GL accounts:', glErr.message);
+            }
+
             await db.execute(sql`
               INSERT INTO stock_movements (
                 movement_number, movement_type, material_id, material_code, material_name,
                 quantity, unit_of_measure, from_location, plant_id,
                 delivery_order_id, sales_order_id,
                 reference_document, reference_type, batch_number,
-                movement_date, posting_date, status, posted_by, notes
+                movement_date, posting_date, status, posted_by, notes,
+                gl_account_debit, gl_account_credit, financial_posting_status
               ) VALUES (
                 ${movementNumber},
                 'Goods Issue',
@@ -3600,7 +3753,10 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
                 CURRENT_DATE,
                 'Posted',
                 1,
-                ${`Goods issue for delivery ${delivery.delivery_number} - Item ${item.line_item}`}
+                ${`Goods issue for delivery ${delivery.delivery_number} - Item ${item.line_item}`},
+                ${pgiDebitGL},
+                ${pgiCreditGL},
+                ${pgiDebitGL && pgiCreditGL ? 'POSTED' : 'PENDING'}
               )
             `);
 

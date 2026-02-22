@@ -35,6 +35,7 @@ const customerSchema = z.object({
     sales_office_code: z.string().optional(),
     sales_group_code: z.string().optional(),
     customer_group: z.string().optional(),
+    customer_assignment_group_id: z.number().optional(),
 });
 
 // GET /api/master-data/customer
@@ -254,7 +255,8 @@ router.post("/", async (req: Request, res: Response) => {
             'currency', 'payment_terms', 'credit_limit', 'company_code_id',
             'sales_organization_id', 'credit_control_area_id', 'is_b2b', 'is_vip',
             'status', 'is_active', 'customer_pricing_procedure',
-            'sales_office_code', 'sales_group_code', 'customer_group'
+            'sales_office_code', 'sales_group_code', 'customer_group', 'customer_assignment_group_id',
+            'shipping_condition_key'
         ];
 
         const values = [
@@ -263,7 +265,8 @@ router.post("/", async (req: Request, res: Response) => {
             data.currency, data.payment_terms, data.credit_limit || 0, data.company_code_id,
             data.sales_organization_id, data.credit_control_area_id, data.is_b2b || false, data.is_vip || false,
             data.status || 'active', true, data.customer_pricing_procedure || null,
-            data.sales_office_code, data.sales_group_code, data.customer_group
+            data.sales_office_code, data.sales_group_code, data.customer_group, data.customer_assignment_group_id,
+            data.shipping_condition_key || null
         ];
 
         const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
@@ -372,7 +375,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
             price_group: data.price_group,
             incoterms: data.incoterms,
             shipping_method: data.shipping_method,
-            shipping_conditions: data.shipping_conditions,
+            shipping_condition_key: data.shipping_condition_key,
             delivery_terms: data.delivery_terms,
             delivery_route: data.delivery_route,
             delivery_priority: data.delivery_priority,
@@ -417,7 +420,8 @@ router.patch("/:id", async (req: Request, res: Response) => {
             authorization_group: data.authorization_group,
             language_code: data.language_code,
             customer_group: data.customer_group,
-            customer_type_id: data.customer_type_id
+            customer_type_id: data.customer_type_id,
+            customer_assignment_group_id: data.customer_assignment_group_id
         };
 
         // Debug logging to track update issues
@@ -427,7 +431,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
         console.log('  Sample request body values:', {
             name: req.body.name,
             email: req.body.email,
-            phone: req.body.phone,
+            customer_assignment_group_id: req.body.customer_assignment_group_id,
             city: req.body.city,
             country: req.body.country
         });

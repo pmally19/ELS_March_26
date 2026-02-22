@@ -11,9 +11,11 @@ router.get('/', async (req, res) => {
     let result;
     if (company_code) {
       result = await pool.query(`
-        SELECT ct.*, cc.code as company_code, cc.name as company_name, ct.account_key
+        SELECT ct.*, cc.code as company_code, cc.name as company_name, ct.account_key,
+          ccl.class_code as condition_class_code, ccl.class_name as condition_class_name
         FROM condition_types ct
         JOIN company_codes cc ON ct.company_code_id = cc.id
+        LEFT JOIN condition_classes ccl ON ct.condition_class_id = ccl.id
         WHERE cc.code = $1
         ORDER BY ct.sequence_number, ct.condition_code
       `, [company_code]);
@@ -88,6 +90,23 @@ router.get('/condition-categories', async (req, res) => {
   }
 });
 
+// Get condition classes for dropdown
+router.get('/condition-classes', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, class_code, class_name, description
+      FROM condition_classes
+      WHERE is_active = true
+      ORDER BY class_code
+    `);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching condition classes:', error);
+    res.status(500).json({ error: 'Failed to fetch condition classes' });
+  }
+});
+
 // Create new condition type
 router.post('/', async (req, res) => {
   try {
@@ -104,7 +123,8 @@ router.post('/', async (req, res) => {
       is_mandatory,
       is_active,
       company_code,
-      account_key
+      account_key,
+      condition_class_id
     } = req.body;
 
     // Get company_code_id
@@ -133,13 +153,14 @@ router.post('/', async (req, res) => {
       INSERT INTO condition_types(
           condition_code, condition_name, condition_category, calculation_type,
           description, default_value, min_value, max_value, sequence_number,
-          is_mandatory, is_active, company_code_id, account_key
-        ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          is_mandatory, is_active, company_code_id, account_key, condition_class_id
+        ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING *
         `, [
       condition_code, condition_name, condition_category, calculation_type,
       description, default_value, min_value, max_value, sequence_number,
-      is_mandatory, is_active, company_code_id, account_key
+      is_mandatory, is_active, company_code_id, account_key,
+      condition_class_id || null
     ]);
 
     res.status(201).json(insertResult.rows[0]);
@@ -174,7 +195,8 @@ router.put('/:id', async (req, res) => {
       sequence_number,
       is_mandatory,
       is_active,
-      account_key
+      account_key,
+      condition_class_id
     } = body;
 
     console.log('After destructure account_key:', account_key);
@@ -232,6 +254,10 @@ router.put('/:id', async (req, res) => {
     if (account_key !== undefined) {
       updates.push(`account_key = $${paramIndex++}`);
       values.push(account_key);
+    }
+    if (condition_class_id !== undefined) {
+      updates.push(`condition_class_id = $${paramIndex++}`);
+      values.push(condition_class_id || null);
     }
 
     // Always update the timestamp

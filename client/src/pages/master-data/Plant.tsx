@@ -112,11 +112,6 @@ const PLANT_TYPES = [
   "Retail Store"
 ];
 
-// List of countries
-const COUNTRIES = [
-  "United States", "Canada", "United Kingdom", "Germany", "France", "Italy", "Spain",
-  "Japan", "China", "Australia", "India", "Brazil", "Mexico", "South Africa", "Russia"
-];
 
 // List of timezones
 const TIMEZONES = [
@@ -198,6 +193,17 @@ export default function PlantPage() {
     },
     retry: 1,
   });
+
+  // Fetch countries for dropdown selection
+  const { data: countriesList = [] } = useQuery<any[]>({
+    queryKey: ['/api/master-data/countries'],
+    queryFn: async () => {
+      const response = await apiRequest('/api/master-data/countries');
+      return await response.json();
+    },
+    retry: 1,
+  });
+
 
   // Fetch data function - extracted for reuse
   const fetchData = async () => {
@@ -318,6 +324,27 @@ export default function PlantPage() {
       status: "active",
       isActive: true,
     },
+  });
+
+  // Watch country field to cascade state dropdown
+  const selectedCountry = form.watch('country');
+  const selectedCountryId = (() => {
+    if (!selectedCountry) return null;
+    const found = (countriesList as any[]).find(
+      (c: any) => c.name === selectedCountry || c.code === selectedCountry
+    );
+    return found ? found.id : null;
+  })();
+
+  // Fetch states filtered by selected country
+  const { data: statesList = [] } = useQuery<any[]>({
+    queryKey: ['/api/master-data/states/country', selectedCountryId],
+    queryFn: async () => {
+      const response = await apiRequest(`/api/master-data/states/country/${selectedCountryId}`);
+      return await response.json();
+    },
+    enabled: !!selectedCountryId,
+    retry: 1,
   });
 
   // Set form values when editing
@@ -1233,30 +1260,16 @@ export default function PlantPage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
-                        name="state"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>State/Province</FormLabel>
-                            <FormControl>
-                              <Input
-                                placeholder="State or province"
-                                {...field}
-                                value={field.value || ""}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-
-                      <FormField
-                        control={form.control}
                         name="country"
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Country</FormLabel>
                             <Select
-                              onValueChange={field.onChange}
+                              onValueChange={(value) => {
+                                field.onChange(value);
+                                // Clear state when country changes
+                                form.setValue('state', '');
+                              }}
                               defaultValue={field.value}
                               value={field.value}
                             >
@@ -1266,11 +1279,49 @@ export default function PlantPage() {
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                {COUNTRIES.map((country) => (
-                                  <SelectItem key={country} value={country}>
-                                    {country}
-                                  </SelectItem>
-                                ))}
+                                {countriesList.length === 0 ? (
+                                  <SelectItem value="no-countries" disabled>No countries available</SelectItem>
+                                ) : (
+                                  countriesList.map((c: any) => (
+                                    <SelectItem key={c.id} value={c.name}>
+                                      {c.code} - {c.name}
+                                    </SelectItem>
+                                  ))
+                                )}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="state"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>State/Province</FormLabel>
+                            <Select
+                              onValueChange={field.onChange}
+                              defaultValue={field.value}
+                              value={field.value || ""}
+                              disabled={!selectedCountryId}
+                            >
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder={selectedCountryId ? "Select state/province" : "Select a country first"} />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {statesList.length === 0 ? (
+                                  <SelectItem value="no-states" disabled>No states available for this country</SelectItem>
+                                ) : (
+                                  statesList.map((s: any) => (
+                                    <SelectItem key={s.id} value={s.name || s.code}>
+                                      {s.code} - {s.name}
+                                    </SelectItem>
+                                  ))
+                                )}
                               </SelectContent>
                             </Select>
                             <FormMessage />

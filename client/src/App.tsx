@@ -28,6 +28,7 @@ const CustomerAccountAssignmentGroups = lazy(() => import('./pages/master-data/C
 const MaterialAccountAssignmentGroups = lazy(() => import('./pages/master-data/MaterialAccountAssignmentGroups'));
 const ReasonCodes = lazy(() => import('./pages/master-data/ReasonCodes'));
 const PostingKeys = lazy(() => import('./pages/master-data/PostingKeys'));
+const TaxCategories = lazy(() => import('./pages/master-data/TaxCategories'));
 const ShippingPointDetermination = lazy(() => import('./pages/master-data/ShippingPointDetermination'));
 
 const Ledgers = lazy(() => import('./pages/master-data/Ledgers'));
@@ -93,7 +94,7 @@ import MasterDataCrossReference from "@/pages/MasterDataCrossReference";
 // Import transaction modules
 import SalesOrderTransaction from "@/pages/transactions/SalesOrder";
 import InvoiceTransaction from "@/pages/transactions/Invoice";
-import DocumentNumberRanges from "@/pages/transactions/DocumentNumberRanges";
+import DocumentNumberRanges from "@/pages/master-data/DocumentNumberRanges";
 import DocumentPostingSystem from "@/pages/transactions/DocumentPostingSystem";
 import AutomaticClearing from "@/pages/transactions/AutomaticClearing";
 import ApplicationTilesManagement from "@/pages/transactions/ApplicationTilesManagement";
@@ -167,6 +168,7 @@ import TransactionTypes from "@/pages/master-data/TransactionTypes";
 import BusinessArea from "@/pages/master-data/BusinessArea";
 import Employees from "@/pages/master-data/Employees";
 import TaxManagement from "@/pages/master-data/TaxManagement";
+import TaxClassifications from "@/pages/master-data/TaxClassifications";
 import AssetMaster from "@/pages/master-data/AssetMaster";
 import DepreciationMethods from "@/pages/master-data/DepreciationMethods";
 import DepreciationAreas from "@/pages/master-data/DepreciationAreas";
@@ -180,6 +182,7 @@ import HolidayCalendar from "@/pages/master-data/HolidayCalendar";
 import ItemCategories from "@/pages/master-data/ItemCategories";
 import PurchasingItemCategories from "@/pages/master-data/PurchasingItemCategories";
 import ConditionCategories from "@/pages/master-data/ConditionCategories";
+import ConditionClasses from "@/pages/master-data/ConditionClasses";
 import CalculationMethods from "@/pages/master-data/CalculationMethods";
 import InterestCalculators from "@/pages/master-data/InterestCalculators";
 import ItemCategoryGroups from "@/pages/master-data/ItemCategoryGroups";
@@ -607,6 +610,14 @@ const MasterDataDashboard = () => {
       onClick: navigate("/condition-types")
     },
     {
+      id: "condition-classes",
+      title: "Condition Classes",
+      icon: <Grid3X3 className="h-5 w-5 text-purple-600" />,
+      description: "Condition class groupings (A=Discount, B=Prices, D=Taxes)",
+      linkText: "Manage Condition Classes →",
+      onClick: navigate("/master-data/condition-classes")
+    },
+    {
       id: "customer-pricing-procedures",
       title: "Customer Pricing Procedures",
       icon: <Calculator className="h-5 w-5 text-blue-600" />,
@@ -926,6 +937,15 @@ const MasterDataDashboard = () => {
       linkText: "Manage Tax →",
       category: "Financial",
       onClick: () => window.location.pathname = "/master-data/tax-master"
+    },
+    {
+      id: "tax-categories",
+      title: "Tax Categories",
+      icon: <Tag className="h-5 w-5 text-green-600" />,
+      description: "Tax category codes for GL account assignment (INPUT_TAX, OUTPUT_TAX, BOTH)",
+      linkText: "Manage Tax Categories →",
+      category: "Financial",
+      onClick: () => window.location.pathname = "/master-data/tax-categories"
     },
     {
       id: "valuation-grouping-codes",
@@ -1285,6 +1305,15 @@ const MasterDataDashboard = () => {
       linkText: "Manage Tax Jurisdictions →",
       category: "Finance",
       onClick: () => window.location.pathname = "/master-data/tax-jurisdictions"
+    },
+    {
+      id: "tax-classifications",
+      title: "Tax Classifications",
+      icon: <Tag className="h-5 w-5 text-purple-600" />,
+      description: "Manage tax relevance indicators for customers and materials",
+      linkText: "Manage Tax Classifications →",
+      category: "Finance",
+      onClick: () => window.location.pathname = "/master-data/tax-classifications"
     },
     // Logistics Category
     {
@@ -1685,7 +1714,9 @@ function Router() {
             <Route path="/master-data/account-id" component={AccountId} />
             <Route path="/master-data/tax-configuration" component={TaxManagement} />
             <Route path="/master-data/tax-master" component={TaxManagement} />
-            <Route path="/master-data/tax-codes" component={TaxManagement} />
+            <Route path="/master-data/tax-management" component={TaxManagement} />
+            <Route path="/master-data/tax-categories" component={TaxCategories} />
+            <Route path="/master-data/tax-classifications" component={TaxClassifications} />
             <Route path="/master-data/tolerance-groups" component={ToleranceGroups} />
             <Route path="/master-data/management-control-areas" component={ControllingAreaIntegration} />
             <Route path="/master-data/currency-denomination" component={CurrencyDenominationNew} />
@@ -1752,12 +1783,12 @@ function Router() {
             <Route path="/transactions/cost-center-accounting" component={lazy(() => import("./pages/transactions/CostCenterAccounting"))} />
             <Route path="/transactions/cost-center-planning" component={lazy(() => import("./pages/transactions/CostCenterPlanning"))} />
             <Route path="/transactions/credit-management" component={lazy(() => import("./pages/transactions/CreditManagement"))} />
-            <Route path="/transactions/document-number-ranges" component={lazy(() => import("./pages/transactions/DocumentNumberRanges"))} />
+            <Route path="/transactions/document-number-ranges" component={lazy(() => import("./pages/master-data/DocumentNumberRanges"))} />
             <Route path="/transactions/document-posting" component={lazy(() => import("./pages/transactions/DocumentPosting"))} />
             <Route path="/transactions/document-posting-system" component={lazy(() => import("./pages/transactions/DocumentPostingSystem"))} />
             <Route path="/transactions/down-payment-management" component={lazy(() => import("./pages/transactions/DownPaymentManagement"))} />
             <Route path="/transactions/dunning-management" component={lazy(() => import("./pages/transactions/DunningManagement"))} />
-            <Route path="/transactions/exchange-rate-management" component={lazy(() => import("./pages/transactions/ExchangeRateManagement"))} />
+            <Route path="/transactions/exchange-rate-management" component={lazy(() => import("./pages/master-data/ExchangeRateManagement"))} />
             <Route path="/transactions/financial-reporting" component={lazy(() => import("./pages/transactions/FinancialReporting"))} />
             <Route path="/transactions/foreign-currency-valuation" component={lazy(() => import("./pages/transactions/ForeignCurrencyValuation"))} />
             <Route path="/transactions/funds-management" component={lazy(() => import("./pages/transactions/FundsManagement"))} />
@@ -1766,10 +1797,10 @@ function Router() {
             <Route path="/transactions/goods-receipt" component={lazy(() => import("./pages/transactions/GoodsReceipt"))} />
             <Route path="/transactions/intercompany-transactions" component={lazy(() => import("./pages/transactions/IntercompanyTransactions"))} />
             <Route path="/transactions/internal-orders" component={lazy(() => import("./pages/transactions/InternalOrders"))} />
-            <Route path="/transactions/inventory-management" component={lazy(() => import("./pages/transactions/InventoryManagement"))} />
+            <Route path="/transactions/inventory-management" component={lazy(() => import("./pages/InventoryManagement"))} />
             <Route path="/transactions/inventory-valuation" component={lazy(() => import("./pages/transactions/InventoryValuation"))} />
             <Route path="/transactions/invoice" component={lazy(() => import("./pages/transactions/Invoice"))} />
-            <Route path="/transactions/invoice-verification" component={lazy(() => import("./pages/transactions/InvoiceVerification"))} />
+            <Route path="/transactions/invoice-verification" component={lazy(() => import("./pages/sales/InvoiceVerification"))} />
             <Route path="/transactions/ledger-management" component={lazy(() => import("./pages/transactions/LedgerManagement"))} />
             <Route path="/transactions/management-reporting-dashboard-enhancement" component={lazy(() => import("./pages/transactions/ManagementReportingDashboardEnhancement"))} />
             <Route path="/transactions/material-requirement-planning" component={lazy(() => import("./pages/transactions/MaterialRequirementPlanning"))} />
@@ -2037,6 +2068,9 @@ function Router() {
 
             {/* Master Data - Condition Categories */}
             <Route path="/master-data/condition-categories" component={ConditionCategories} />
+
+            {/* Master Data - Condition Classes */}
+            <Route path="/master-data/condition-classes" component={ConditionClasses} />
 
             {/* Master Data - Calculation Methods */}
             <Route path="/master-data/calculation-methods" component={CalculationMethods} />

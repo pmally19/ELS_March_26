@@ -94,7 +94,19 @@ export const taxCodes = pgTable("tax_codes", {
   effectiveTo: date("effective_to"),
   taxAccount: varchar("tax_account", { length: 10 }),
   taxBaseAccount: varchar("tax_base_account", { length: 10 }),
+})
+
+// Tax Categories
+export const taxCategories = pgTable("tax_categories", {
+  id: serial("id").primaryKey(),
+  taxCategoryCode: varchar("tax_category_code", { length: 2 }).notNull().unique(),
+  description: varchar("description", { length: 50 }).notNull(),
+  taxType: varchar("tax_type", { length: 20 }).notNull(), // INPUT_TAX, OUTPUT_TAX, BOTH
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
+
 
 // Exchange Rate Types
 export const exchangeRateTypes = pgTable("exchange_rate_types", {
@@ -297,6 +309,7 @@ export const insertDocumentNumberRangeSchema = createInsertSchema(documentNumber
 export const insertFieldStatusVariantSchema = createInsertSchema(fieldStatusVariants).omit(omitId);
 export const insertToleranceGroupSchema = createInsertSchema(toleranceGroups).omit(omitId);
 export const insertTaxCodeSchema = createInsertSchema(taxCodes).omit(omitId);
+export const insertTaxCategorySchema = createInsertSchema(taxCategories).omit(omitId);
 export const insertExchangeRateTypeSchema = createInsertSchema(exchangeRateTypes).omit(omitId);
 export const insertExchangeRateSchema = createInsertSchema(exchangeRates).omit(omitId);
 export const insertFunctionalAreaSchema = createInsertSchema(functionalAreas).omit(omitId);

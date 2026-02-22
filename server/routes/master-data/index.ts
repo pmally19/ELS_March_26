@@ -43,6 +43,9 @@ import serialNumberProfilesRouter from "./serial-number-profiles";
 import allMasterDataRoutes from "./all-master-data-routes";
 import taxProfilesRouter from "./tax-profiles";
 import taxRulesRouter from "./tax-rules";
+import taxProceduresRouter from "./tax-procedures";
+import taxAccountDeterminationRouter from "./tax-account-determination";
+import taxClassificationsRouter from "./tax-classifications";
 import taxCodesRouter from "./tax-codes";
 import taxCalculationRouter from "./tax-calculation";
 import taxJurisdictionsRouter from "./tax-jurisdictions";
@@ -57,22 +60,22 @@ import industrySectorRouter from "./industry-sector-routes";
 import paymentTermsRouter from "./payment-terms";
 import itemCategoriesRouter from "./item-categories";
 import conditionCategoriesRouter from "./condition-categories";
+import conditionClassesRouter from "./condition-classes";
 import calculationMethodsRouter from "./calculation-methods";
 import itemCategoryGroupsRouter from "./item-category-groups";
 import itemCategoryDeterminationRouter from "./item-category-determination";
 import salesProcessTypesRouter from "./sales-process-types";
 import materialRouter from "./material";
-import * as customerAccountAssignmentGroups from "./customer-account-assignment-groups.js";
-import * as materialAccountAssignmentGroups from "./material-account-assignment-groups.js";
-import * as materialAccountAssignmentGroups from "./material-account-assignment-groups.js";
+import * as customerAccountAssignmentGroups from "./customer-account-assignment-groups";
+import * as materialAccountAssignmentGroups from "./material-account-assignment-groups";
 import purchasingItemCategoriesRouter from './purchasing-item-categories';
 import reasonCodesRouter from './reason-codes';
-import reasonCodesRouter from './reason-codes';
 import transactionKeysRouter from './transaction-keys';
+import taxCategoriesRouter from './tax-categories';
 import routesMasterRouter from './routes-master';
 import transportationGroupsRouter from './transportation-groups';
 import shippingPointDeterminationRouter from './shipping-point-determination';
-
+import taxConditionRecordsRouter from './tax-condition-records';
 
 
 
@@ -102,6 +105,7 @@ import accountDeterminationMappingRouter, { getGLAccountsBySalesArea, getConditi
 import bankMasterRouter from "./bank-master";
 import accountIdRouter from "./account-id";
 import glAccountsRouter from "./gl-accounts";
+import glAccountAutoNumberRouter from "./gl-account-auto-number";
 import glAccountGroupsRouter from "./gl-account-groups";
 import postingPeriodControlsRouter from "./posting-period-controls";
 import retainedEarningsAccountsRouter from "./retained-earnings-accounts";
@@ -187,8 +191,13 @@ export function registerMasterDataRoutes(app: Express) {
   app.use('/api/master-data/tax-profiles', taxProfilesRouter);
   app.use('/api/master-data/tax-rules', taxRulesRouter);
   app.use('/api/master-data/tax-codes', taxCodesRouter);
+  app.use('/api/master-data/tax-categories', taxCategoriesRouter);
   app.use('/api/master-data/tax-calculation', taxCalculationRouter);
   app.use('/api/master-data/tax-jurisdictions', taxJurisdictionsRouter);
+  app.use('/api/master-data/tax-classifications', taxClassificationsRouter);
+  app.use('/api/master-data/tax-procedures', taxProceduresRouter);
+  app.use('/api/master-data/tax-account-determination', taxAccountDeterminationRouter);
+  app.use('/api/master-data/tax-condition-records', taxConditionRecordsRouter);
   app.use('/api/master-data/tolerance-groups', toleranceGroupsRouter);
   app.use('/api/master-data/mrp-types', mrpTypesRouter);
   app.use('/api/master-data/mrp-controllers', mrpControllersRouter);
@@ -234,6 +243,9 @@ export function registerMasterDataRoutes(app: Express) {
 
   // Register Condition Categories routes
   app.use('/api/master-data/condition-categories', conditionCategoriesRouter);
+
+  // Register Condition Classes routes
+  app.use('/api/master-data/condition-classes', conditionClassesRouter);
 
 
 
@@ -330,6 +342,7 @@ export function registerMasterDataRoutes(app: Express) {
 
   // Register GL Accounts Routes
   app.use('/api/master-data/gl-accounts', glAccountsRouter);
+  app.use('/api/master-data/gl-account-auto-number', glAccountAutoNumberRouter);
 
   // Register Transportation Zones Routes
   app.use('/api/master-data/transportation-zones', transportationZonesRouter);

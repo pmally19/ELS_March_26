@@ -83,7 +83,7 @@ async function ensureMovementTypesColumns(pool: any) {
       console.log('✅ Added gl_account_determination column');
     }
 
-    // Add transaction_key column if it doesn't exist
+    // Add transaction_key column if it doesn't exist (kept for backward compat)
     if (!availableColumns.includes('transaction_key')) {
       await pool.query('ALTER TABLE movement_types ADD COLUMN transaction_key character varying(3)');
       console.log('✅ Added transaction_key column');
@@ -105,6 +105,22 @@ async function ensureMovementTypesColumns(pool: any) {
       console.log('✅ Added is_active column');
     }
 
+    // Create junction table for multiple transaction keys per movement type
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS movement_type_transaction_keys (
+        id SERIAL PRIMARY KEY,
+        movement_type_id INTEGER NOT NULL REFERENCES movement_types(id) ON DELETE CASCADE,
+        transaction_key VARCHAR(10) NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(movement_type_id, transaction_key)
+      )
+    `);
+    // Index for fast lookup
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_mt_transaction_keys_mt_id
+      ON movement_type_transaction_keys(movement_type_id)
+    `);
+
   } catch (error: any) {
     console.warn('Error ensuring movement types columns:', error.message);
   }
@@ -122,36 +138,39 @@ router.use('/movement-classes', movementClassesRoutes);
 router.get('/movement-types', async (req, res) => {
   try {
     const pool = ensureActivePool();
-
-    // Ensure columns exist before querying
     await ensureMovementTypesColumns(pool);
 
     const query = `
       SELECT 
-        id,
-        COALESCE(movement_type_code, movement_code) as movement_type_code,
-        COALESCE(description, movement_name) as description,
-        COALESCE(movement_class, movement_category) as movement_class,
-        COALESCE(transaction_type, 'inventory') as transaction_type,
-        COALESCE(inventory_direction, 
+        mt.id,
+        COALESCE(mt.movement_type_code, mt.movement_code) as movement_type_code,
+        COALESCE(mt.description, mt.movement_name) as description,
+        COALESCE(mt.movement_class, mt.movement_category) as movement_class,
+        COALESCE(mt.transaction_type, 'inventory') as transaction_type,
+        COALESCE(mt.inventory_direction, 
           CASE 
-            WHEN debit_credit_indicator = 'D' THEN 'increase'
-            WHEN debit_credit_indicator = 'C' THEN 'decrease'
+            WHEN mt.debit_credit_indicator = 'D' THEN 'increase'
+            WHEN mt.debit_credit_indicator = 'C' THEN 'decrease'
             ELSE 'neutral'
           END
         ) as inventory_direction,
-        COALESCE(special_stock_indicator, '') as special_stock_indicator,
-        COALESCE(valuation_impact, value_update, true) as valuation_impact,
-        COALESCE(quantity_impact, quantity_update, true) as quantity_impact,
-        COALESCE(quantity_impact, quantity_update, true) as quantity_impact,
-        COALESCE(gl_account_determination, '') as gl_account_determination,
-        COALESCE(transaction_key, '') as transaction_key,
-        COALESCE(company_code_id, 1) as company_code_id,
-        COALESCE(is_active, active, true) as is_active,
-        created_at,
-        updated_at
-      FROM movement_types 
-      ORDER BY id
+        COALESCE(mt.special_stock_indicator, '') as special_stock_indicator,
+        COALESCE(mt.valuation_impact, mt.value_update, true) as valuation_impact,
+        COALESCE(mt.quantity_impact, mt.quantity_update, true) as quantity_impact,
+        COALESCE(mt.gl_account_determination, '') as gl_account_determination,
+        COALESCE(mt.transaction_key, '') as transaction_key,
+        COALESCE(mt.company_code_id, 1) as company_code_id,
+        COALESCE(mt.is_active, mt.active, true) as is_active,
+        mt.created_at,
+        mt.updated_at,
+        COALESCE(
+          ARRAY_AGG(mttk.transaction_key ORDER BY mttk.transaction_key) FILTER (WHERE mttk.transaction_key IS NOT NULL),
+          ARRAY[]::varchar[]
+        ) as transaction_keys
+      FROM movement_types mt
+      LEFT JOIN movement_type_transaction_keys mttk ON mt.id = mttk.movement_type_id
+      GROUP BY mt.id
+      ORDER BY mt.id
     `;
 
     const result = await pool.query(query);
@@ -165,8 +184,6 @@ router.get('/movement-types', async (req, res) => {
 router.post('/movement-types', async (req, res) => {
   try {
     const pool = ensureActivePool();
-
-    // Ensure columns exist before inserting
     await ensureMovementTypesColumns(pool);
 
     const {
@@ -178,25 +195,21 @@ router.post('/movement-types', async (req, res) => {
       specialStockIndicator,
       valuationImpact,
       quantityImpact,
-
       glAccountDetermination,
       transactionKey,
+      transactionKeys,   // NEW: array of transaction key codes
       companyCodeId
     } = req.body;
 
-    // Validation
     if (!movementTypeCode || !description || !movementClass) {
       return res.status(400).json({
         message: 'movementTypeCode, description, and movementClass are required'
       });
     }
 
-    // Map inventory direction to debit/credit indicator
     const debitCreditIndicator = inventoryDirection === 'increase' ? 'D' :
       inventoryDirection === 'decrease' ? 'C' : 'N';
 
-    // Use modern column names with fallback to legacy columns
-    // Explicit type casting to avoid PostgreSQL type mismatch errors
     const query = `
       INSERT INTO movement_types (
         movement_type_code, description, movement_class, transaction_type,
@@ -220,11 +233,22 @@ router.post('/movement-types', async (req, res) => {
       debitCreditIndicator, false, transactionKey || null
     ]);
 
-    res.status(201).json(records.rows[0]);
+    const newId = records.rows[0].id;
+
+    // Insert multiple transaction keys into junction table
+    const keys: string[] = Array.isArray(transactionKeys) ? transactionKeys : (transactionKey ? [transactionKey] : []);
+    for (const key of keys) {
+      if (key) {
+        await pool.query(
+          'INSERT INTO movement_type_transaction_keys (movement_type_id, transaction_key) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [newId, key]
+        );
+      }
+    }
+
+    res.status(201).json({ ...records.rows[0], transaction_keys: keys });
   } catch (error: any) {
     console.error('Error creating movement type:', error);
-
-    // Handle specific database errors
     if (error.code === '23505') {
       return res.status(400).json({ message: 'Movement type code already exists' });
     } else if (error.code === '23502') {
@@ -232,7 +256,6 @@ router.post('/movement-types', async (req, res) => {
     } else if (error.code === '23514') {
       return res.status(400).json({ message: 'Invalid data provided for movement type' });
     }
-
     res.status(500).json({
       message: 'Failed to create movement type',
       error: error.message,
@@ -244,8 +267,6 @@ router.post('/movement-types', async (req, res) => {
 router.put('/movement-types/:id', async (req, res) => {
   try {
     const pool = ensureActivePool();
-
-    // Ensure columns exist before updating
     await ensureMovementTypesColumns(pool);
 
     const { id } = req.params;
@@ -258,18 +279,16 @@ router.put('/movement-types/:id', async (req, res) => {
       specialStockIndicator,
       valuationImpact,
       quantityImpact,
-
       glAccountDetermination,
       transactionKey,
+      transactionKeys,   // NEW: array of transaction key codes
       companyCodeId,
       isActive
     } = req.body;
 
-    // Map inventory direction to debit/credit indicator
     const debitCreditIndicator = inventoryDirection === 'increase' ? 'D' :
       inventoryDirection === 'decrease' ? 'C' : 'N';
 
-    // Use modern column names with fallback to legacy columns
     const query = `
       UPDATE movement_types SET 
         movement_type_code = COALESCE($1, movement_type_code),
@@ -307,17 +326,26 @@ router.put('/movement-types/:id', async (req, res) => {
       return res.status(404).json({ message: 'Movement type not found' });
     }
 
-    res.json(records.rows[0]);
+    // Replace transaction keys in junction table
+    const keys: string[] = Array.isArray(transactionKeys) ? transactionKeys : (transactionKey ? [transactionKey] : []);
+    await pool.query('DELETE FROM movement_type_transaction_keys WHERE movement_type_id = $1', [id]);
+    for (const key of keys) {
+      if (key) {
+        await pool.query(
+          'INSERT INTO movement_type_transaction_keys (movement_type_id, transaction_key) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [id, key]
+        );
+      }
+    }
+
+    res.json({ ...records.rows[0], transaction_keys: keys });
   } catch (error: any) {
     console.error('Error updating movement type:', error);
-
-    // Handle specific database errors
     if (error.code === '23505') {
       return res.status(400).json({ message: 'Movement type code already exists' });
     } else if (error.code === '23514') {
       return res.status(400).json({ message: 'Invalid data provided for movement type' });
     }
-
     res.status(500).json({
       message: 'Failed to update movement type',
       error: error.message,
@@ -331,7 +359,6 @@ router.delete('/movement-types/:id', async (req, res) => {
     const pool = ensureActivePool();
     const { id } = req.params;
 
-    // First check if the movement type exists
     const checkQuery = 'SELECT id FROM movement_types WHERE id = $1';
     const checkResult = await pool.query(checkQuery, [id]);
 
@@ -339,7 +366,6 @@ router.delete('/movement-types/:id', async (req, res) => {
       return res.status(404).json({ message: 'Movement type not found' });
     }
 
-    // Check if movement type is being used in any transactions
     const usageCheckQuery = `
       SELECT COUNT(*) as usage_count 
       FROM stock_movements 
@@ -356,11 +382,12 @@ router.delete('/movement-types/:id', async (req, res) => {
         });
       }
     } catch (usageError) {
-      // If the material_movements table doesn't exist, proceed with deletion
       console.warn('Could not check movement type usage:', usageError);
     }
 
-    // Delete the movement type
+    // Remove transaction keys from junction table first (CASCADE handles it, but explicit is safer)
+    await pool.query('DELETE FROM movement_type_transaction_keys WHERE movement_type_id = $1', [id]);
+
     const deleteQuery = 'DELETE FROM movement_types WHERE id = $1 RETURNING id, movement_type_code, description';
     const deleteResult = await pool.query(deleteQuery, [id]);
 
@@ -372,14 +399,11 @@ router.delete('/movement-types/:id', async (req, res) => {
     });
   } catch (error: any) {
     console.error('Error deleting movement type:', error);
-
-    // Handle specific database errors
     if (error.code === '23503') {
       return res.status(400).json({
         message: 'Cannot delete movement type. It is referenced by other records.'
       });
     }
-
     res.status(500).json({
       message: 'Failed to delete movement type',
       error: error.message,

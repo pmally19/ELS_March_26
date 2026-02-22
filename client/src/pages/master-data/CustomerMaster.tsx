@@ -116,12 +116,13 @@ interface Customer {
   sales_org_code?: string;
   distribution_channel_code?: string;
   division_code?: string;
-  shipping_conditions?: string;
+  shipping_condition_key?: string;
   delivery_priority?: string;
   sales_district?: string;
   sales_office_code?: string;
   sales_group_code?: string;
   price_list?: string;
+  customer_assignment_group_id?: number;
 }
 
 export default function CustomerMaster() {
@@ -167,7 +168,7 @@ export default function CustomerMaster() {
     shipping_method: "",
     delivery_terms: "",
     delivery_route: "",
-    shipping_conditions: "",
+    shipping_condition_key: "",
     delivery_priority: "",
     sales_org_code: "",
     sales_org_name: "",
@@ -228,7 +229,8 @@ export default function CustomerMaster() {
     // Financial Posting Controls
     deletion_flag: false,
     authorization_group: "",
-    customer_pricing_procedure: ""
+    customer_pricing_procedure: "",
+    customer_assignment_group_id: undefined as number | undefined
   });
 
   const { toast } = useToast();
@@ -458,13 +460,14 @@ export default function CustomerMaster() {
           sales_org_code: r.sales_org_code,
           distribution_channel_code: r.distribution_channel_code,
           division_code: r.division_code,
-          shipping_conditions: r.shipping_conditions,
+          shipping_condition_key: r.shipping_condition_key || r.shipping_conditions,
           delivery_priority: r.delivery_priority,
           sales_district: r.sales_district,
           sales_office_code: r.sales_office_code,
           sales_group_code: r.sales_group_code,
           price_list: r.price_list,
-          address_notes: r.address_notes ?? ""
+          address_notes: r.address_notes ?? "",
+          customer_assignment_group_id: r.customer_assignment_group_id ?? undefined
         }));
       });
     },
@@ -588,6 +591,20 @@ export default function CustomerMaster() {
     },
   });
 
+  // Fetch customer assignment groups for dropdown
+  const { data: customerAssignmentGroups = [], isLoading: assignmentGroupsLoading } = useQuery<any[]>({
+    queryKey: ['/api/master-data/customer-account-assignment-groups'],
+    queryFn: async () => {
+      try {
+        const response = await apiRequest('/api/master-data/customer-account-assignment-groups');
+        const data = await response.json();
+        return Array.isArray(data) ? data.filter((cag: any) => cag.is_active !== false) : [];
+      } catch {
+        return [];
+      }
+    },
+  });
+
   // Fetch countries for dropdown selection
   const { data: countries = [], isLoading: countriesLoading } = useQuery<any[]>({
     queryKey: ['/api/master-data/countries'],
@@ -651,6 +668,20 @@ export default function CustomerMaster() {
     },
   });
 
+  // Fetch shipping condition keys for dropdown selection
+  const { data: shippingConditionKeys = [], isLoading: shippingConditionKeysLoading } = useQuery<any[]>({
+    queryKey: ['/api/master-data/shipping-condition-keys'],
+    queryFn: async () => {
+      try {
+        const response = await apiRequest('/api/master-data/shipping-condition-keys');
+        const data = await response.json();
+        return Array.isArray(data) ? data.filter((sck: any) => sck.isActive !== false && sck.is_active !== false) : [];
+      } catch {
+        return [];
+      }
+    },
+  });
+
   // State for Sales Area ID to drive Sales Office query
   const [selectedSalesAreaId, setSelectedSalesAreaId] = useState<number | null>(null);
 
@@ -695,6 +726,7 @@ export default function CustomerMaster() {
   const companyCodesData = companyCodes || [];
   const discountGroupsData = discountGroups || [];
   const incotermsData = incoterms || [];
+  const shippingConditionKeysData = shippingConditionKeys || [];
 
   // Sync selectedCountryId when editing customer and countries are loaded
   useEffect(() => {
@@ -987,10 +1019,19 @@ export default function CustomerMaster() {
           (newState as any)[key] = updateValue;
         }
       }
-
       return newState;
     });
   }, []);
+
+  // Fetch tax classifications
+  const { data: taxClassifications = [] } = useQuery({
+    queryKey: ['tax-classifications'],
+    queryFn: async () => {
+      const res = await fetch('/api/master-data/tax-classifications');
+      if (!res.ok) throw new Error('Failed to fetch tax classifications');
+      return res.json();
+    }
+  });
 
   // Filter customers based on search term and active status
   const filteredCustomers = customers.filter((customer: Customer) => {
@@ -1196,7 +1237,7 @@ export default function CustomerMaster() {
       price_group: "",
       incoterms: "",
       shipping_method: "",
-      shipping_conditions: "",
+      shipping_condition_key: "",
       delivery_terms: "",
       delivery_route: "",
       delivery_priority: "",
@@ -1262,7 +1303,8 @@ export default function CustomerMaster() {
 
       // Additional Standard Fields
       language_code: "",
-      customer_pricing_procedure: ""
+      customer_pricing_procedure: "",
+      customer_assignment_group_id: undefined
     });
     setEditingCustomer(null);
     if (closeDialog) {
@@ -1358,7 +1400,7 @@ export default function CustomerMaster() {
       sales_org_code: formData.sales_org_code || null,
       distribution_channel_code: formData.distribution_channel_code || null,
       division_code: formData.division_code || null,
-      shipping_conditions: formData.shipping_conditions || null,
+      shipping_condition_key: formData.shipping_condition_key || null,
       delivery_priority: formData.delivery_priority || null,
       sales_district: formData.sales_district || null,
       sales_office_code: formData.sales_office_code || null,
@@ -1383,6 +1425,7 @@ export default function CustomerMaster() {
       deletion_flag: formData.deletion_flag || false,
       authorization_group: formData.authorization_group || null,
       customer_pricing_procedure: formData.customer_pricing_procedure || null,
+      customer_assignment_group_id: formData.customer_assignment_group_id || null,
       // Address Management - include all address arrays
       sold_to_addresses: formData.sold_to_addresses || [],
       bill_to_addresses: formData.bill_to_addresses || [],
@@ -1481,9 +1524,10 @@ export default function CustomerMaster() {
       credit_rating: customer.credit_rating || "",
       discount_group: customer.discount_group || "",
       price_group: customer.price_group || "",
+      customer_assignment_group_id: customer.customer_assignment_group_id || undefined,
       incoterms: customer.incoterms || "",
       shipping_method: customer.shipping_method || "",
-      shipping_conditions: customer.shipping_conditions || "",
+      shipping_condition_key: customer.shipping_condition_key || customer.shipping_conditions || "",
       delivery_terms: customer.delivery_terms || "",
       delivery_route: customer.delivery_route || "",
       delivery_priority: customer.delivery_priority || "",
@@ -1819,7 +1863,7 @@ export default function CustomerMaster() {
               resetForm(false);
             }
           }}>
-            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="w-[95vw] sm:w-full sm:max-w-[85vw] md:max-w-3xl lg:max-w-4xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>
                   {editingCustomer ? "Edit Customer" : "Add New Customer"}
@@ -1827,7 +1871,7 @@ export default function CustomerMaster() {
               </DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-6">
                 <Tabs defaultValue="general" className="w-full">
-                  <TabsList className="grid w-full grid-cols-5">
+                  <TabsList className="flex flex-wrap h-auto w-full gap-2 sm:grid sm:grid-cols-5">
                     <TabsTrigger value="general">General Data</TabsTrigger>
                     <TabsTrigger value="address">Address</TabsTrigger>
                     <TabsTrigger value="company">finance</TabsTrigger>
@@ -2835,7 +2879,35 @@ export default function CustomerMaster() {
                         </Select>
                       </div>
                       <div>
-                        {/* Spacer or additional field */}
+                        <label className="text-sm font-medium">Customer Assignment Group</label>
+                        <Select
+                          value={formData.customer_assignment_group_id?.toString() || ""}
+                          onValueChange={(value) => setFormData({ ...formData, customer_assignment_group_id: value ? parseInt(value) : undefined })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select assignment group (optional)">
+                              {formData.customer_assignment_group_id && customerAssignmentGroups.length > 0
+                                ? (() => {
+                                  const selected = customerAssignmentGroups.find((cag: any) =>
+                                    String(cag.id) === String(formData.customer_assignment_group_id)
+                                  );
+                                  return selected ? `${selected.code} - ${selected.name}` : formData.customer_assignment_group_id;
+                                })()
+                                : undefined}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {customerAssignmentGroups.length > 0 ? (
+                              customerAssignmentGroups.map((cag: any) => (
+                                <SelectItem key={cag.id} value={cag.id.toString()}>
+                                  {cag.code} - {cag.name}
+                                </SelectItem>
+                              ))
+                            ) : (
+                              <SelectItem value="__none__" disabled>No assignment groups available</SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
@@ -2848,13 +2920,31 @@ export default function CustomerMaster() {
                         />
                       </div>
                       <div>
-                        <label className="text-sm font-medium">Shipping Conditions</label>
-                        <Input
-                          value={formData.shipping_conditions ?? ""}
-                          onChange={(e) => setFormData({ ...formData, shipping_conditions: e.target.value })}
-                          placeholder="Shipping conditions code"
-                          maxLength={4}
-                        />
+                        <label className="text-sm font-medium">Shipping Condition</label>
+                        <Select
+                          value={formData.shipping_condition_key || ""}
+                          onValueChange={(value) => setFormData({ ...formData, shipping_condition_key: value === "__none__" ? "" : value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select shipping condition" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {shippingConditionKeysData.length > 0 ? (
+                              shippingConditionKeysData.map((sck: any) => (
+                                <SelectItem key={sck.id} value={sck.keyCode || sck.key_code}>
+                                  {sck.keyCode || sck.key_code} - {sck.description}
+                                </SelectItem>
+                              ))
+                            ) : (
+                              <SelectItem value="__none__" disabled>
+                                {shippingConditionKeysLoading ? "Loading..." : "No shipping conditions available"}
+                              </SelectItem>
+                            )}
+                            {shippingConditionKeysData.length > 0 && (
+                              <SelectItem value="__none__">None</SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
@@ -2968,13 +3058,24 @@ export default function CustomerMaster() {
                           </select>
                         </div>
                         <div>
-                          <label className="text-sm font-medium">Tax Classification Code</label>
-                          <Input
-                            value={formData.tax_classification_code ?? ""}
-                            onChange={(e) => setFormData({ ...formData, tax_classification_code: e.target.value })}
-                            placeholder="Detailed tax classification"
-                            maxLength={10}
-                          />
+                          <label className="text-sm font-medium">Tax Classification</label>
+                          <Select
+                            value={formData.tax_classification_code || ""}
+                            onValueChange={(value) => setFormData({ ...formData, tax_classification_code: value })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select classification" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {taxClassifications
+                                .filter((tc: any) => tc.applies_to === 'BOTH' || tc.applies_to === 'CUSTOMER')
+                                .map((tc: any) => (
+                                  <SelectItem key={tc.id} value={tc.code}>
+                                    {tc.code} - {tc.description}
+                                  </SelectItem>
+                                ))}
+                            </SelectContent>
+                          </Select>
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
@@ -3061,7 +3162,7 @@ export default function CustomerMaster() {
 
       {/* Customer Details Dialog */}
       <Dialog open={isCustomerDetailsOpen} onOpenChange={setIsCustomerDetailsOpen}>
-        <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogContent className="w-[95vw] sm:w-full sm:max-w-[90vw] md:max-w-4xl lg:max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
           {viewingCustomerDetails && (
             <>
               <DialogHeader className="flex-shrink-0">
@@ -3256,6 +3357,10 @@ export default function CustomerMaster() {
                           <dd className="text-sm text-gray-900">{viewingCustomerDetails.shipping_method || "—"}</dd>
                         </div>
                         <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Shipping Condition:</dt>
+                          <dd className="text-sm text-gray-900">{viewingCustomerDetails.shipping_condition_key || "—"}</dd>
+                        </div>
+                        <div className="flex justify-between">
                           <dt className="text-sm font-medium text-gray-500">Sales Group:</dt>
                           <dd className="text-sm text-gray-900">{viewingCustomerDetails.sales_group_code || "—"}</dd>
                         </div>
@@ -3284,6 +3389,19 @@ export default function CustomerMaster() {
                               return procedure
                                 ? `${procedure.code} - ${procedure.description || procedure.name}`
                                 : viewingCustomerDetails.customer_pricing_procedure;
+                            })() : "—"}
+                          </dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Customer Assignment Group:</dt>
+                          <dd className="text-sm text-gray-900">
+                            {viewingCustomerDetails.customer_assignment_group_id ? (() => {
+                              const assignmentGroup = customerAssignmentGroups.find((cag: any) =>
+                                String(cag.id) === String(viewingCustomerDetails.customer_assignment_group_id)
+                              );
+                              return assignmentGroup
+                                ? `${assignmentGroup.code} - ${assignmentGroup.name}`
+                                : viewingCustomerDetails.customer_assignment_group_id;
                             })() : "—"}
                           </dd>
                         </div>

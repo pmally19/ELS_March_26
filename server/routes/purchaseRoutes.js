@@ -1087,6 +1087,34 @@ router.post('/orders', async (req, res) => {
 
     const purchaseOrderId = orderResult.rows[0].id;
 
+    // Fetch vendor-specific pricing for all materials in this PO
+    console.log(`[PO Creation] Fetching vendor-specific pricing for vendor ID ${vendor_id}...`);
+    const vendorMaterialsResult = await client.query(`
+      SELECT 
+        vm.material_id,
+        vm.unit_price as vendor_unit_price,
+        vm.currency as vendor_currency,
+        vm.lead_time_days,
+        vm.minimum_order_quantity
+      FROM vendor_materials vm
+      WHERE vm.vendor_id = $1 AND vm.is_active = true
+    `, [vendor_id]);
+
+    // Create a map of material_id -> vendor pricing for quick lookup
+    const vendorPricingMap = {};
+    vendorMaterialsResult.rows.forEach(row => {
+      vendorPricingMap[row.material_id] = {
+        unitPrice: parseFloat(row.vendor_unit_price) || null,
+        currency: row.vendor_currency,
+        leadTimeDays: row.lead_time_days,
+        minimumOrderQuantity: row.minimum_order_quantity
+      };
+    });
+    console.log(`[PO Creation] Found vendor pricing for ${vendorMaterialsResult.rows.length} materials`);
+
+    // Track actual total for recalculating PO total_amount
+    let actualPoTotal = 0;
+
     // Insert purchase order items and update inventory ordered_quantity
     const itemPromises = items.map(async (item, index) => {
       try {
@@ -1145,13 +1173,32 @@ router.post('/orders', async (req, res) => {
         itemInsertValues.push(`$${itemParamIndex++}`);
         itemInsertParams.push(item.quantity);
 
+        // Apply vendor-specific pricing if available
+        const vendorPricing = item.material_id ? vendorPricingMap[item.material_id] : null;
+
+        let finalUnitPrice = item.unit_price || 0;
+        let finalTotalPrice = item.total_price || 0;
+
+        if (vendorPricing && vendorPricing.unitPrice) {
+          // Use vendor-specific price
+          finalUnitPrice = vendorPricing.unitPrice;
+          finalTotalPrice = finalUnitPrice * (item.quantity || 0);
+          console.log(`[PO Creation] Using vendor price for material ${item.material_id}: ${finalUnitPrice} (source: vendor_materials)`);
+        } else {
+          // Use provided price from request
+          console.log(`[PO Creation] Using provided price for material ${item.material_id}: ${finalUnitPrice} (source: request, no vendor price)`);
+        }
+
+        // Add to actual total for PO header update
+        actualPoTotal += finalTotalPrice;
+
         itemInsertColumns.push('unit_price');
         itemInsertValues.push(`$${itemParamIndex++}`);
-        itemInsertParams.push(item.unit_price);
+        itemInsertParams.push(finalUnitPrice);
 
         itemInsertColumns.push('total_price');
         itemInsertValues.push(`$${itemParamIndex++}`);
-        itemInsertParams.push(item.total_price);
+        itemInsertParams.push(finalTotalPrice);
 
         if (availableItemColumns.includes('delivery_date')) {
           itemInsertColumns.push('delivery_date');
@@ -1387,6 +1434,14 @@ router.post('/orders', async (req, res) => {
     try {
       await Promise.all(itemPromises);
       console.log(`✅ All ${items.length} purchase order items inserted successfully`);
+
+      // Update PO total_amount with actual total based on vendor prices
+      console.log(`[PO Creation] Updating PO total from ${finalTotalAmount} (provided) to ${actualPoTotal} (with vendor prices)`);
+      await client.query(`
+        UPDATE purchase_orders
+        SET total_amount = $1
+        WHERE id = $2
+      `, [actualPoTotal, purchaseOrderId]);
     } catch (itemErr) {
       console.error('❌ Error inserting purchase order items:', itemErr.message);
       console.error('Error details:', itemErr);
@@ -2649,8 +2704,57 @@ router.post('/requisitions/:id/convert-to-po', async (req, res) => {
       console.log(`[PR to PO] Updated PO ${po.id} with ${updates.length} fields`);
     }
 
-    // Insert PO items with ALL fields from PR items
+    // Fetch vendor-specific pricing for materials
+    // This allows PO to use vendor prices instead of PR estimated prices
+    console.log(`[PR to PO] Fetching vendor-specific pricing for vendor ID ${vendor_id}...`);
+    const vendorMaterialsResult = await client.query(`
+      SELECT 
+        vm.material_id,
+        vm.unit_price as vendor_unit_price,
+        vm.currency as vendor_currency,
+        vm.lead_time_days,
+        vm.minimum_order_quantity
+      FROM vendor_materials vm
+      WHERE vm.vendor_id = $1 AND vm.is_active = true
+    `, [vendor_id]);
+
+    // Create a map of material_id -> vendor pricing for quick lookup
+    const vendorPricingMap = {};
+    vendorMaterialsResult.rows.forEach(row => {
+      vendorPricingMap[row.material_id] = {
+        unitPrice: parseFloat(row.vendor_unit_price) || null,
+        currency: row.vendor_currency,
+        leadTimeDays: row.lead_time_days,
+        minimumOrderQuantity: row.minimum_order_quantity
+      };
+    });
+    console.log(`[PR to PO] Found vendor pricing for ${vendorMaterialsResult.rows.length} materials`);
+
+    // Track actual total for PO header update
+    let actualPoTotal = 0;
+
+    // Insert PO items with vendor-specific pricing (if available) or PR prices (fallback)
     for (const item of prItems.rows) {
+      // Check if vendor has specific pricing for this material
+      const vendorPricing = item.material_id ? vendorPricingMap[item.material_id] : null;
+
+      let unitPrice = item.estimated_unit_price || 0;
+      let totalPrice = item.estimated_total_price || item.total_price || 0;
+      let priceSource = 'PR';
+
+      if (vendorPricing && vendorPricing.unitPrice) {
+        // Use vendor-specific price
+        unitPrice = vendorPricing.unitPrice;
+        totalPrice = unitPrice * (item.quantity || 0);
+        priceSource = 'Vendor';
+        console.log(`[PR to PO] Using vendor price for material ${item.material_id}: ${unitPrice} (source: vendor_materials)`);
+      } else {
+        console.log(`[PR to PO] Using PR price for material ${item.material_id}: ${unitPrice} (source: PR, no vendor price available)`);
+      }
+
+      // Add to actual PO total
+      actualPoTotal += totalPrice;
+
       await client.query(`
         INSERT INTO purchase_order_items (
           purchase_order_id,
@@ -2676,9 +2780,9 @@ router.post('/requisitions/:id/convert-to-po', async (req, res) => {
         item.material_code_ref || item.material_code,
         item.description,
         item.quantity,
-        item.estimated_unit_price || 0,
+        unitPrice,  // Now uses vendor price if available
         item.unit_of_measure || 'EA',
-        item.estimated_total_price || item.total_price || 0,
+        totalPrice,  // Recalculated with vendor price
         true,  // active
         item.plant_id || null,
         item.storage_location_id || null,
@@ -2687,6 +2791,14 @@ router.post('/requisitions/:id/convert-to-po', async (req, res) => {
         item.purchasing_organization_id || null
       ]);
     }
+
+    // Update PO total_amount with actual total based on vendor prices
+    console.log(`[PR to PO] Updating PO total from ${calculatedTotal} (PR price) to ${actualPoTotal} (with vendor prices)`);
+    await client.query(`
+      UPDATE purchase_orders
+      SET total_amount = $1
+      WHERE id = $2
+    `, [actualPoTotal, po.id]);
 
     // Update PR with PO link
     await client.query(`

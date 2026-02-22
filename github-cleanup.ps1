@@ -4,7 +4,7 @@
 Write-Host "Starting GitHub Codebase Cleanup..." -ForegroundColor Cyan
 Write-Host ""
 
-$rootPath = "c:\Users\moksh\Desktop\28-10-2025"
+$rootPath = "c:\Users\moksh\Desktop\ELS_Feb_12"
 Set-Location $rootPath
 
 # Count files before cleanup

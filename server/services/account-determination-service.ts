@@ -205,24 +205,83 @@ export class AccountDeterminationService {
   }
 
   /**
-   * Get default GL account for an account key from system configuration
+   * Get default GL account for an account key.
+   *
+   * Priority:
+   *   1. account_determination_mapping by SAP key code (ERL → Revenue, GBB → COGS, BSX → Inventory)
+   *   2. material_account_determination by transaction key code (BSX, GBB, WRX)
+   *   3. gl_accounts by account_type matching
    */
   private async getDefaultGLAccountForAccountKey(accountKey: string): Promise<string | null> {
     try {
-      const result = await pool.query(`
-        SELECT account_number
-        FROM gl_accounts
-        WHERE account_type = CASE 
-          WHEN $1 LIKE 'REVENUE%' THEN 'REVENUE'
-          WHEN $1 LIKE 'EXPENSE%' THEN 'EXPENSES'
-          ELSE 'REVENUE'
-        END
-        AND is_active = true
-        ORDER BY account_number
-        LIMIT 1
-      `, [accountKey]);
+      // Map normalized keys back to SAP codes for account_determination_mapping lookup
+      const sapKeyMap: Record<string, string[]> = {
+        'REVENUE': ['ERL'],
+        'REVENUE_FINAL': ['ERF'],
+        'REVENUE_STATISTICAL': ['ERS'],
+        'ERL': ['ERL'],
+        'ERF': ['ERF'],
+        'ERS': ['ERS'],
+        'GBB': ['GBB'],
+        'BSX': ['BSX'],
+        'WRX': ['WRX'],
+        'PRD': ['PRD'],
+      };
 
-      return result.rows.length > 0 ? String(result.rows[0].account_number) : null;
+      const sapCodes = sapKeyMap[accountKey] || [accountKey];
+
+      // Priority 1: Check account_determination_mapping (SD account key table)
+      const admResult = await pool.query(`
+        SELECT gl.account_number
+        FROM account_determination_mapping adm
+        JOIN gl_accounts gl ON adm.gl_account_id = gl.id
+        WHERE adm.account_key_code = ANY($1::text[])
+          AND adm.is_active = true
+          AND gl.is_active = true
+          AND gl.account_number IS NOT NULL
+        ORDER BY adm.id
+        LIMIT 1
+      `, [sapCodes]);
+
+      if (admResult.rows.length > 0) {
+        console.log(`✅ [AccountDetermination] Found GL ${admResult.rows[0].account_number} via account_determination_mapping for key: ${accountKey}`);
+        return String(admResult.rows[0].account_number);
+      }
+
+      // Priority 2: Check material_account_determination (MM transaction key table)
+      const madResult = await pool.query(`
+        SELECT gl.account_number
+        FROM material_account_determination mad
+        JOIN transaction_keys tk ON tk.id = mad.transaction_key_id
+        JOIN gl_accounts gl ON gl.id = mad.gl_account_id
+        WHERE tk.code = ANY($1::text[])
+          AND mad.is_active = true
+          AND gl.is_active = true
+        ORDER BY mad.id
+        LIMIT 1
+      `, [sapCodes]);
+
+      if (madResult.rows.length > 0) {
+        console.log(`✅ [AccountDetermination] Found GL ${madResult.rows[0].account_number} via material_account_determination for key: ${accountKey}`);
+        return String(madResult.rows[0].account_number);
+      }
+
+      // Priority 3: Fallback to gl_accounts by type
+      const typeMap: Record<string, string> = {
+        'REVENUE': 'REVENUE', 'REVENUE_FINAL': 'REVENUE', 'REVENUE_STATISTICAL': 'REVENUE',
+        'ERL': 'REVENUE', 'ERF': 'REVENUE', 'ERS': 'REVENUE',
+        'GBB': 'EXPENSES', 'WRX': 'LIABILITIES',
+        'BSX': 'ASSETS', 'PRD': 'EXPENSES',
+      };
+      const glType = typeMap[accountKey] || 'REVENUE';
+
+      const glResult = await pool.query(`
+        SELECT account_number FROM gl_accounts
+        WHERE account_type = $1 AND is_active = true
+        ORDER BY account_number LIMIT 1
+      `, [glType]);
+
+      return glResult.rows.length > 0 ? String(glResult.rows[0].account_number) : null;
     } catch (error) {
       console.error('Error getting default GL account:', error);
       return null;
@@ -358,25 +417,48 @@ export class AccountDeterminationService {
 
     const arAccount = String(arAccountResult.rows[0].account_number);
 
-    // Determine revenue accounts for each material
-    for (const materialId of params.materialIds) {
-      const materialGroup = await this.getMaterialAccountGroup(materialId);
-      
-      const revenueResult = await this.determineGLAccount({
-        chartOfAccounts,
-        salesOrganization: params.salesOrganization,
-        customerAccountGroup: customerGroup,
-        materialAccountGroup: materialGroup,
-        accountKey: 'REVENUE' // Revenue account key
-      });
+    // Step 1: Try to get revenue account directly from account_determination_mapping (ERL = Revenue)
+    // This is the primary SD account determination path, mirrors SAP VKOA table
+    const erlFromMapping = await pool.query(`
+      SELECT gl.account_number
+      FROM account_determination_mapping adm
+      JOIN gl_accounts gl ON adm.gl_account_id = gl.id
+      WHERE adm.account_key_code = 'ERL'
+        AND adm.is_active = true
+        AND gl.is_active = true
+        AND gl.account_number IS NOT NULL
+      ORDER BY adm.id
+      LIMIT 1
+    `);
 
-      if (revenueResult.success) {
-        revenueAccounts.push({
-          accountKey: revenueResult.accountKey || 'REVENUE',
-          glAccount: revenueResult.glAccount
+    if (erlFromMapping.rows.length > 0) {
+      const erlAccount = String(erlFromMapping.rows[0].account_number);
+      console.log(`✅ [BillingDetermination] ERL revenue account from account_determination_mapping: ${erlAccount}`);
+      // Use this ERL account for all materials in this invoice
+      for (const materialId of params.materialIds) {
+        revenueAccounts.push({ accountKey: 'ERL', glAccount: erlAccount });
+      }
+    } else {
+      // Step 2: Fall back to per-material account_determination chain
+      for (const materialId of params.materialIds) {
+        const materialGroup = await this.getMaterialAccountGroup(materialId);
+
+        const revenueResult = await this.determineGLAccount({
+          chartOfAccounts,
+          salesOrganization: params.salesOrganization,
+          customerAccountGroup: customerGroup,
+          materialAccountGroup: materialGroup,
+          accountKey: 'REVENUE'
         });
-      } else {
-        errors.push(`Material ${materialId}: ${revenueResult.error}`);
+
+        if (revenueResult.success) {
+          revenueAccounts.push({
+            accountKey: revenueResult.accountKey || 'ERL',
+            glAccount: revenueResult.glAccount
+          });
+        } else {
+          errors.push(`Material ${materialId}: ${revenueResult.error}`);
+        }
       }
     }
 
@@ -391,8 +473,8 @@ export class AccountDeterminationService {
       LIMIT 1
     `);
 
-    const taxAccount = taxAccountResult.rows.length > 0 
-      ? String(taxAccountResult.rows[0].account_number) 
+    const taxAccount = taxAccountResult.rows.length > 0
+      ? String(taxAccountResult.rows[0].account_number)
       : ''; // Optional tax account
 
     return {
@@ -414,25 +496,50 @@ export class AccountDeterminationService {
     taxAccount: string;
   }> {
     try {
-      const [arResult, revenueResult, taxResult] = await Promise.all([
-        pool.query(`SELECT account_number FROM gl_accounts WHERE account_type = 'ASSETS' AND reconciliation_account = true AND is_active = true ORDER BY account_number LIMIT 1`),
-        pool.query(`SELECT account_number FROM gl_accounts WHERE account_type = 'REVENUE' AND is_active = true ORDER BY account_number LIMIT 1`),
-        pool.query(`SELECT account_number FROM gl_accounts WHERE account_type = 'LIABILITIES' AND account_name ILIKE '%tax%' AND is_active = true ORDER BY account_number LIMIT 1`)
+      // Pull ERL (revenue) from account_determination_mapping first (SAP VKOA)
+      const [erlResult, arResult, taxResult] = await Promise.all([
+        pool.query(`
+          SELECT gl.account_number FROM account_determination_mapping adm
+          JOIN gl_accounts gl ON adm.gl_account_id = gl.id
+          WHERE adm.account_key_code = 'ERL' AND adm.is_active = true AND gl.is_active = true
+          ORDER BY adm.id LIMIT 1
+        `),
+        pool.query(`
+          SELECT account_number FROM gl_accounts
+          WHERE account_type = 'ASSETS'
+            AND (account_name ILIKE '%receivable%' OR account_name ILIKE '%AR%')
+            AND is_active = true
+          ORDER BY account_number LIMIT 1
+        `),
+        pool.query(`
+          SELECT account_number FROM gl_accounts
+          WHERE account_type = 'LIABILITIES' AND account_name ILIKE '%tax%' AND is_active = true
+          ORDER BY account_number LIMIT 1
+        `)
       ]);
 
+      // Revenue: ERL from account_determination_mapping → gl_accounts REVENUE type fallback
+      let revenueAccount = erlResult.rows.length > 0
+        ? String(erlResult.rows[0].account_number)
+        : '';
+
+      if (!revenueAccount) {
+        const revFallback = await pool.query(
+          `SELECT account_number FROM gl_accounts WHERE account_type = 'REVENUE' AND is_active = true ORDER BY account_number LIMIT 1`
+        );
+        revenueAccount = revFallback.rows.length > 0 ? String(revFallback.rows[0].account_number) : '';
+      }
+
       const arAccount = arResult.rows.length > 0 ? String(arResult.rows[0].account_number) : '';
-      const revenueAccount = revenueResult.rows.length > 0 ? String(revenueResult.rows[0].account_number) : '';
       const taxAccount = taxResult.rows.length > 0 ? String(taxResult.rows[0].account_number) : '';
 
       if (!arAccount || !revenueAccount) {
-        throw new Error('Required GL accounts not configured. Please set up accounts receivable and revenue accounts.');
+        throw new Error('Required GL accounts not configured. Please set up accounts receivable (AR) and revenue (ERL) accounts.');
       }
 
-      return {
-        arAccount,
-        revenueAccount,
-        taxAccount
-      };
+      console.log(`✅ [DefaultAccounts] AR: ${arAccount} | Revenue (ERL): ${revenueAccount} | Tax: ${taxAccount || 'not configured'}`);
+
+      return { arAccount, revenueAccount, taxAccount };
     } catch (error) {
       console.error('Error getting default accounts:', error);
       throw new Error(`Failed to retrieve default accounts from database: ${error instanceof Error ? error.message : 'Unknown error'}`);

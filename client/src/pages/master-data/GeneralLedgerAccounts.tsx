@@ -16,8 +16,9 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/apiClient";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Edit, Trash2, RefreshCw, ArrowLeft, BookOpen, Search } from "lucide-react";
+import { Plus, Edit, Trash2, RefreshCw, ArrowLeft, BookOpen, Search, Download, Upload, Eye } from "lucide-react";
 import { useLocation } from "wouter";
+import * as XLSX from 'xlsx';
 
 // Schema with all section-wise fields
 const glAccountSchema = z.object({
@@ -83,11 +84,12 @@ interface GLAccountGroup {
   name: string;
   description?: string;
   accountCategory: string;
-  numberRangeStart?: string;
-  numberRangeEnd?: string;
-  accountNumberMinLength?: number;
-  accountNumberMaxLength?: number;
-  accountNumberPattern?: string;
+  numberRangeId?: number;
+  numberRangeCode?: string;
+  numberRangeDescription?: string;
+  numberRangeObject?: string;
+  numberRangeFrom?: string;
+  numberRangeTo?: string;
   isActive: boolean;
 }
 
@@ -95,6 +97,7 @@ export default function GeneralLedgerAccounts() {
   const [, setLocation] = useLocation();
   const [open, setOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<GLAccount | null>(null);
+  const [viewingAccount, setViewingAccount] = useState<GLAccount | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -173,6 +176,15 @@ export default function GeneralLedgerAccounts() {
     },
   });
 
+  // Fetch tax categories
+  const { data: taxCategories = [] } = useQuery({
+    queryKey: ["/api/master-data/tax-categories/active"],
+    queryFn: async () => {
+      const response = await apiGet<any[]>("/api/master-data/tax-categories/active");
+      return response || [];
+    }
+  });
+
   // Fetch Account Types (if available from API, otherwise use default)
   const accountTypes = [
     { value: "assets", label: "Assets" },
@@ -222,7 +234,7 @@ export default function GeneralLedgerAccounts() {
   // Watch the selected GL Account Group ID to get validation rules
   const selectedGLAccountGroupId = form.watch("gl_account_group_id");
   const selectedGLAccountGroup = glAccountGroups.find((g) => g.id === selectedGLAccountGroupId);
-  
+
   // Re-validate account number when GL Account Group changes
   useEffect(() => {
     if (selectedGLAccountGroupId && form.getValues("account_number")) {
@@ -297,10 +309,10 @@ export default function GeneralLedgerAccounts() {
     },
     onError: (error: any) => {
       const errorMessage = error?.response?.data?.error || error?.message || "Failed to create GL account";
-      toast({ 
-        title: "Error", 
-        description: errorMessage, 
-        variant: "destructive" 
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive"
       });
     },
   });
@@ -318,10 +330,10 @@ export default function GeneralLedgerAccounts() {
     },
     onError: (error: any) => {
       const errorMessage = error?.response?.data?.error || error?.message || "Failed to update GL account";
-      toast({ 
-        title: "Error", 
-        description: errorMessage, 
-        variant: "destructive" 
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive"
       });
     },
   });
@@ -334,19 +346,19 @@ export default function GeneralLedgerAccounts() {
     },
     onError: (error: any) => {
       const errorMessage = error?.response?.data?.error || error?.message || "Failed to delete GL account";
-      toast({ 
-        title: "Error", 
-        description: errorMessage, 
-        variant: "destructive" 
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive"
       });
     },
   });
 
   // Mutation for assigning item category
   const assignItemCategoryMutation = useMutation({
-    mutationFn: async ({ glAccountNumber, itemCategoryId, chartOfAccountsId }: { 
-      glAccountNumber: string; 
-      itemCategoryId: number; 
+    mutationFn: async ({ glAccountNumber, itemCategoryId, chartOfAccountsId }: {
+      glAccountNumber: string;
+      itemCategoryId: number;
       chartOfAccountsId?: number;
     }) => {
       return apiPost("/api/master-data/document-splitting/gl-account-categories", {
@@ -374,7 +386,7 @@ export default function GeneralLedgerAccounts() {
       });
       return;
     }
-    
+
     // Validate account number against selected GL Account Group
     const accountNumberError = validateAccountNumber(data.account_number);
     if (accountNumberError) {
@@ -386,14 +398,14 @@ export default function GeneralLedgerAccounts() {
       form.setError("account_number", { message: accountNumberError });
       return;
     }
-    
+
     // Prepare payload - exclude item_category_id from main payload
     const { item_category_id, ...accountPayload } = data;
     const payload = {
       ...accountPayload,
       gl_account_group_id: data.gl_account_group_id,
     };
-    
+
     try {
       // Save GL account first
       if (editingAccount) {
@@ -411,11 +423,11 @@ export default function GeneralLedgerAccounts() {
         });
       }
 
-      toast({ 
-        title: "Success", 
-        description: editingAccount 
-          ? "GL account updated successfully" 
-          : "GL account created successfully" 
+      toast({
+        title: "Success",
+        description: editingAccount
+          ? "GL account updated successfully"
+          : "GL account created successfully"
       });
     } catch (error: any) {
       // Error handling is done in mutations
@@ -474,6 +486,246 @@ export default function GeneralLedgerAccounts() {
     setOpen(true);
   };
 
+  // Excel export function
+  const handleExcelExport = () => {
+    const filteredAccounts = (glAccounts as any[]).filter((account: any) => {
+      if (!searchQuery.trim()) return true;
+      const query = searchQuery.toLowerCase();
+      return (
+        (account.account_number || '').toLowerCase().includes(query) ||
+        (account.account_name || '').toLowerCase().includes(query) ||
+        (account.account_type || '').toLowerCase().includes(query) ||
+        (account.account_group || '').toLowerCase().includes(query) ||
+        (account.company_code || '').toLowerCase().includes(query)
+      );
+    });
+
+    const exportData = filteredAccounts.map((account: any) => {
+      const assignment = glAccountCategories.find(
+        (cat: any) => cat.gl_account_number === account.account_number
+      );
+      const itemCategory = assignment
+        ? itemCategories.find((ic: any) => ic.id === assignment.item_category_id)
+        : null;
+
+      return {
+        // Account Number is system-generated — exported for reference only, not required on import
+        'Account Number (System Generated)': account.account_number || '',
+        'Account Name': account.account_name || '',
+        'Description': account.long_text || '',
+        'Chart of Accounts': account.chart_of_accounts_code || '',
+        'Account Type': account.account_type || '',
+        // GL Account Group drives auto-numbering on import
+        'GL Account Group': account.gl_account_group_code || '',
+        'Company Code': account.company_code || '',
+        'Currency': account.account_currency || '',
+        'Document Split Item Category': itemCategory?.code || '',
+        'Balance Sheet Account': account.balance_sheet_account ? 'Yes' : 'No',
+        'P&L Account': account.pl_account ? 'Yes' : 'No',
+        'Reconciliation Account': account.reconciliation_account ? 'Yes' : 'No',
+        'Cash Account': account.cash_account_indicator ? 'Yes' : 'No',
+        'Block Posting': account.block_posting ? 'Yes' : 'No',
+        'Open Item Management': account.open_item_management ? 'Yes' : 'No',
+        'Line Item Display': account.line_item_display ? 'Yes' : 'No',
+        'Tax Category': account.tax_category || '',
+        'Posting Allowed': account.posting_allowed ? 'Yes' : 'No',
+        'Balance Type': account.balance_type || '',
+        'Active': account.is_active ? 'Yes' : 'No',
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'GL Accounts');
+    XLSX.writeFile(workbook, `gl-accounts-${new Date().toISOString().split('T')[0]}.xlsx`);
+
+    toast({
+      title: "Export Successful",
+      description: `Exported ${exportData.length} GL accounts to Excel`,
+    });
+  };
+
+  // Excel import function — -style: account number is auto-generated from GL Account Group number range
+  const handleExcelImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = e.target?.result;
+        const workbook = XLSX.read(data, { type: 'binary' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+        if (jsonData.length === 0) {
+          toast({
+            title: "Import Error",
+            description: "The Excel file is empty. Please add GL account data.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Map Excel rows to import records
+        const importData = jsonData.map((row: any) => {
+          const toString = (val: any) => val ? String(val).trim() : '';
+
+          const chartCode = toString(row['Chart of Accounts'] || row['chart_of_accounts']);
+          const chart = chartOfAccounts.find(
+            (c) => toString(c.chart_id) === chartCode || toString(c.id) === chartCode
+          );
+
+          const glGroupCode = toString(row['GL Account Group'] || row['gl_account_group']);
+          const glGroup = glAccountGroups.find(
+            (g) => toString(g.code) === glGroupCode || toString(g.id) === glGroupCode
+          );
+
+          const companyCode = toString(row['Company Code'] || row['company_code']);
+          const company = companyCodes.find(
+            (cc) => toString(cc.code) === companyCode || toString(cc.id) === companyCode
+          );
+
+          const itemCategoryCode = toString(row['Document Split Item Category'] || row['item_category']);
+          const itemCategory = itemCategoryCode
+            ? itemCategories.find((ic: any) => toString(ic.code) === itemCategoryCode)
+            : null;
+
+          // Account number from Excel is optional — if GL Group has number range, system assigns it
+          const manualAccountNumber = toString(
+            row['Account Number'] || row['Account Number (System Generated)'] || row['account_number']
+          );
+
+          return {
+            // If provided manually (e.g. external numbering), use it; otherwise will be auto-generated
+            account_number: manualAccountNumber || null,
+            account_name: toString(row['Account Name'] || row['account_name']),
+            long_text: toString(row['Description'] || row['long_text']),
+            chart_of_accounts_id: chart?.id,
+            account_type: (row['Account Type'] || row['account_type'] || 'assets').toLowerCase(),
+            gl_account_group_id: glGroup?.id,
+            gl_account_group_has_range: !!glGroup?.numberRangeId,
+            company_code_id: company?.id,
+            account_currency: toString(row['Currency'] || row['account_currency']),
+            item_category_id: itemCategory?.id,
+            balance_sheet_account: row['Balance Sheet Account'] === 'Yes' || false,
+            pl_account: row['P&L Account'] === 'Yes' || false,
+            reconciliation_account: row['Reconciliation Account'] === 'Yes' || false,
+            cash_account_indicator: row['Cash Account'] === 'Yes' || false,
+            block_posting: row['Block Posting'] === 'Yes' || false,
+            open_item_management: row['Open Item Management'] === 'Yes' || false,
+            line_item_display: row['Line Item Display'] !== 'No',
+            tax_category: toString(row['Tax Category'] || row['tax_category']).toUpperCase(),
+            posting_allowed: row['Posting Allowed'] !== 'No',
+            balance_type: row['Balance Type'] || row['balance_type'] || undefined,
+            is_active: row['Active'] !== 'No',
+            field_status_group: toString(row['Field Status Group'] || row['field_status_group']),
+            sort_key: toString(row['Sort Key'] || row['sort_key']),
+            mark_for_deletion: false,
+            posting_without_tax_allowed: false,
+            interest_calculation_indicator: false,
+            interest_calculation_frequency: '',
+            interest_calculation_date: '',
+            alternative_account_number: '',
+            group_account_number: '',
+            trading_partner: '',
+          };
+        });
+
+        // Validate required fields (account_number not required if group has number range)
+        const invalidRows = importData.filter((item: any) =>
+          !item.account_name || !item.chart_of_accounts_id || !item.gl_account_group_id ||
+          // account_number required only if group has NO number range (external numbering)
+          (!item.gl_account_group_has_range && !item.account_number)
+        );
+
+        if (invalidRows.length > 0) {
+          toast({
+            title: "Validation Error",
+            description: `${invalidRows.length} row(s) missing required fields: Account Name, Chart of Accounts, GL Account Group (or Account Number for groups without number range).`,
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Import accounts sequentially — auto-fetch number from API if needed
+        let successCount = 0;
+        let errorCount = 0;
+        const errors: string[] = [];
+
+        const importAccounts = async () => {
+          for (let i = 0; i < importData.length; i++) {
+            try {
+              const { item_category_id, gl_account_group_has_range, chart_of_accounts_id, ...accountData } = importData[i];
+
+              // If no manual account number and group has a number range, fetch next number from API
+              if (!accountData.account_number && gl_account_group_has_range && accountData.gl_account_group_id) {
+                const res = await fetch(`/api/master-data/gl-account-auto-number/next-number/${accountData.gl_account_group_id}`);
+                const data = await res.json();
+                if (res.ok && data.accountNumber) {
+                  accountData.account_number = data.accountNumber;
+                } else {
+                  throw new Error(data.error || 'Failed to auto-generate account number');
+                }
+              }
+
+              const accountPayload = { ...accountData, chart_of_accounts_id };
+
+              // Create GL account
+              await createMutation.mutateAsync(accountPayload);
+
+              // Assign item category if provided
+              if (item_category_id) {
+                try {
+                  await assignItemCategoryMutation.mutateAsync({
+                    glAccountNumber: accountData.account_number,
+                    itemCategoryId: item_category_id,
+                    chartOfAccountsId: chart_of_accounts_id,
+                  });
+                } catch (catError: any) {
+                  console.warn(`Item category assignment failed for ${accountData.account_number}:`, catError);
+                }
+              }
+
+              successCount++;
+            } catch (error: any) {
+              errorCount++;
+              const errorMsg = error?.response?.data?.error || error?.message || 'Unknown error';
+              errors.push(`Row ${i + 2}: ${importData[i].account_name} - ${errorMsg}`);
+            }
+          }
+
+          if (successCount > 0) {
+            queryClient.invalidateQueries({ queryKey: ["/api/master-data/gl-accounts"] });
+          }
+
+          toast({
+            title: errorCount === 0 ? "Import Successful" : "Import Completed with Errors",
+            description: `Successfully imported ${successCount} account(s). ${errorCount > 0 ? `${errorCount} failed.` : ''}`,
+            variant: errorCount > 0 ? "destructive" : "default",
+          });
+
+          if (errors.length > 0) {
+            console.error("Import errors:", errors);
+          }
+        };
+
+        importAccounts();
+
+      } catch (error) {
+        console.error("Excel import error:", error);
+        toast({
+          title: "Import Error",
+          description: "Failed to parse Excel file. Please ensure it's properly formatted.",
+          variant: "destructive",
+        });
+      }
+    };
+    reader.readAsBinaryString(file);
+    event.target.value = '';
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -492,7 +744,19 @@ export default function GeneralLedgerAccounts() {
           </div>
         </div>
         <div className="flex space-x-2">
-          <Button variant="outline" onClick={() => refetch()}>
+          <Button variant="outline" onClick={handleExcelExport}>
+            <Download className="h-4 w-4 mr-2" />
+            Export to Excel
+          </Button>
+          <Button variant="outline" onClick={() => document.getElementById('excel-import')?.click()}>
+            <Upload className="h-4 w-4 mr-2" />
+            Import from Excel
+          </Button>
+          <Button variant="outline" onClick={() => {
+            refetch();
+            queryClient.invalidateQueries({ queryKey: ["/api/master-data/gl-accounts"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/master-data/gl-account-categories"] });
+          }}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
           </Button>
@@ -524,58 +788,98 @@ export default function GeneralLedgerAccounts() {
                       <TabsTrigger value="relationships">Relationships</TabsTrigger>
                       <TabsTrigger value="splitting">Document Splitting</TabsTrigger>
                     </TabsList>
-                    
+
                     {/* Section 1: Basic Data */}
                     <TabsContent value="basic" className="space-y-4 pt-4">
                       <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="account_number"
-                        render={({ field }) => {
-                          const validationError = validateAccountNumber(field.value);
-                          return (
-                            <FormItem>
-                              <FormLabel>
-                                Account Number *
-                                {selectedGLAccountGroup && selectedGLAccountGroup.numberRangeStart && selectedGLAccountGroup.numberRangeEnd && (
-                                  <span className="text-xs text-muted-foreground ml-2">
-                                    (Range: {selectedGLAccountGroup.numberRangeStart} - {selectedGLAccountGroup.numberRangeEnd})
-                                  </span>
-                                )}
-                              </FormLabel>
-                              <FormControl>
-                                <Input 
-                                  placeholder={
-                                    selectedGLAccountGroup?.numberRangeStart 
-                                      ? `e.g., ${selectedGLAccountGroup.numberRangeStart}`
-                                      : "1000"
-                                  } 
-                                  {...field} 
-                                  maxLength={selectedGLAccountGroup?.accountNumberMaxLength || 20}
-                                  onChange={(e) => {
-                                    field.onChange(e);
-                                    // Set custom error if validation fails
-                                    if (validationError) {
-                                      form.setError("account_number", { 
-                                        type: "manual", 
-                                        message: validationError 
-                                      });
-                                    } else {
-                                      form.clearErrors("account_number");
+                        <FormField
+                          control={form.control}
+                          name="account_number"
+                          render={({ field }) => {
+                            const validationError = validateAccountNumber(field.value);
+
+                            //  Auto-generate account number function
+                            const handleAutoGenerate = async () => {
+                              const glGroupId = form.getValues('gl_account_group_id');
+                              if (!glGroupId) {
+                                toast({
+                                  title: "Select GL Account Group",
+                                  description: "Please select a GL Account Group first to auto-generate account number",
+                                  variant: "destructive",
+                                });
+                                return;
+                              }
+
+                              try {
+                                const res = await fetch(`/api/master-data/gl-account-auto-number/next-number/${glGroupId}`);
+                                const data = await res.json();
+
+                                if (!res.ok) {
+                                  if (data.requiresManualEntry) {
+                                    toast({
+                                      title: "Manual Entry Required",
+                                      description: data.error || "This GL Account Group doesn't have auto-numbering configured",
+                                      variant: "default",
+                                    });
+                                  } else {
+                                    throw new Error(data.error || 'Failed to generate account number');
+                                  }
+                                  return;
+                                }
+
+                                // Set the generated account number
+                                if (data.accountNumber) {
+                                  form.setValue('account_number', data.accountNumber);
+                                  toast({
+                                    title: "Account Number Generated",
+                                    description: `Generated: ${data.accountNumber} (${data.numberRangeCode}). ${data.remaining} numbers remaining.`,
+                                  });
+                                }
+                              } catch (error: any) {
+                                toast({
+                                  title: "Generation Failed",
+                                  description: error.message || "Failed to auto-generate account number",
+                                  variant: "destructive",
+                                });
+                              }
+                            };
+
+                            return (
+                              <FormItem>
+                                <FormLabel>
+                                  Account Number *
+                                  {selectedGLAccountGroup?.numberRangeCode && (
+                                    <span className="text-xs text-muted-foreground ml-2">
+                                      (Auto: {selectedGLAccountGroup.numberRangeCode})
+                                    </span>
+                                  )}
+                                </FormLabel>
+                                <FormControl>
+                                  <Input
+                                    placeholder={
+                                      selectedGLAccountGroup?.numberRangeId
+                                        ? 'Auto-generated from number range'
+                                        : '1000'
                                     }
-                                    // Trigger validation
-                                    form.trigger("account_number");
-                                  }}
-                                />
-                              </FormControl>
-                              {validationError && (
-                                <p className="text-sm font-medium text-destructive">{validationError}</p>
-                              )}
-                              <FormMessage />
-                            </FormItem>
-                          );
-                        }}
-                      />
+                                    {...field}
+                                    maxLength={20}
+                                    readOnly={!!selectedGLAccountGroup?.numberRangeId}
+                                    className={selectedGLAccountGroup?.numberRangeId ? 'bg-muted cursor-not-allowed' : ''}
+                                    onChange={(e) => {
+                                      if (selectedGLAccountGroup?.numberRangeId) return;
+                                      field.onChange(e);
+                                      form.trigger('account_number');
+                                    }}
+                                  />
+                                </FormControl>
+                                {validationError && (
+                                  <p className="text-sm font-medium text-destructive">{validationError}</p>
+                                )}
+                                <FormMessage />
+                              </FormItem>
+                            );
+                          }}
+                        />
                         <FormField
                           control={form.control}
                           name="account_name"
@@ -590,7 +894,7 @@ export default function GeneralLedgerAccounts() {
                           )}
                         />
                       </div>
-                      
+
                       <FormField
                         control={form.control}
                         name="long_text"
@@ -605,7 +909,7 @@ export default function GeneralLedgerAccounts() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <div className="grid grid-cols-2 gap-4">
                         <FormField
                           control={form.control}
@@ -656,7 +960,7 @@ export default function GeneralLedgerAccounts() {
                           )}
                         />
                       </div>
-                      
+
                       <FormField
                         control={form.control}
                         name="gl_account_group_id"
@@ -668,14 +972,29 @@ export default function GeneralLedgerAccounts() {
                                 <Input placeholder="Loading GL account groups..." disabled />
                               </FormControl>
                             ) : glAccountGroups.length > 0 ? (
-                              <Select 
-                                onValueChange={(value) => {
+                              <Select
+                                onValueChange={async (value) => {
                                   field.onChange(value ? parseInt(value) : undefined);
-                                  // Re-validate account number when group changes
-                                  setTimeout(() => {
-                                    form.trigger("account_number");
-                                  }, 100);
-                                }} 
+                                  // Auto-generate account number if group has a number range
+                                  if (value) {
+                                    const selectedGroup = glAccountGroups.find((g) => g.id === parseInt(value));
+                                    if (selectedGroup?.numberRangeId) {
+                                      try {
+                                        const res = await fetch(`/api/master-data/gl-account-auto-number/next-number/${value}`);
+                                        const data = await res.json();
+                                        if (res.ok && data.accountNumber) {
+                                          form.setValue('account_number', data.accountNumber);
+                                          form.clearErrors('account_number');
+                                        }
+                                      } catch (err) {
+                                        console.error('Failed to auto-generate account number:', err);
+                                      }
+                                    } else {
+                                      // No number range — clear so user can type manually
+                                      form.setValue('account_number', '');
+                                    }
+                                  }
+                                }}
                                 value={field.value?.toString() || ""}
                               >
                                 <FormControl>
@@ -707,7 +1026,7 @@ export default function GeneralLedgerAccounts() {
                         )}
                       />
                     </TabsContent>
-                    
+
                     {/* Section 2: Account Characteristics */}
                     <TabsContent value="characteristics" className="space-y-4 pt-4">
                       <div className="grid grid-cols-2 gap-4">
@@ -856,7 +1175,7 @@ export default function GeneralLedgerAccounts() {
                           )}
                         />
                       </div>
-                      
+
                       <FormField
                         control={form.control}
                         name="balance_type"
@@ -879,7 +1198,7 @@ export default function GeneralLedgerAccounts() {
                         )}
                       />
                     </TabsContent>
-                    
+
                     {/* Section 3: Company Code Assignment */}
                     <TabsContent value="company" className="space-y-4 pt-4">
                       <div className="grid grid-cols-2 gap-4">
@@ -889,11 +1208,11 @@ export default function GeneralLedgerAccounts() {
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>Company Code</FormLabel>
-                              <Select 
+                              <Select
                                 onValueChange={(value) => {
                                   const companyCodeId = value === "none" ? undefined : parseInt(value);
                                   field.onChange(companyCodeId);
-                                  
+
                                   // Auto-populate currency from selected company code
                                   if (companyCodeId) {
                                     const selectedCompany = (companyCodes as CompanyCode[]).find(cc => cc.id === companyCodeId);
@@ -903,7 +1222,7 @@ export default function GeneralLedgerAccounts() {
                                   } else {
                                     form.setValue("account_currency", "");
                                   }
-                                }} 
+                                }}
                                 value={field.value?.toString() || "none"}
                               >
                                 <FormControl>
@@ -930,19 +1249,19 @@ export default function GeneralLedgerAccounts() {
                           name="account_currency"
                           render={({ field }) => {
                             const companyCodeId = form.watch("company_code_id");
-                            const selectedCompany = companyCodeId 
+                            const selectedCompany = companyCodeId
                               ? (companyCodes as CompanyCode[]).find(cc => cc.id === companyCodeId)
                               : null;
                             const isAutoPopulated = selectedCompany?.currency === field.value;
-                            
+
                             return (
                               <FormItem>
                                 <FormLabel>Account Currency</FormLabel>
                                 <FormControl>
                                   <div className="relative">
-                                    <Input 
-                                      placeholder="USD" 
-                                      {...field} 
+                                    <Input
+                                      placeholder="USD"
+                                      {...field}
                                       maxLength={3}
                                       readOnly={isAutoPopulated}
                                       className={isAutoPopulated ? "bg-muted" : ""}
@@ -955,7 +1274,7 @@ export default function GeneralLedgerAccounts() {
                                   </div>
                                 </FormControl>
                                 <FormDescription>
-                                  {isAutoPopulated 
+                                  {isAutoPopulated
                                     ? `Currency automatically set from company code: ${selectedCompany?.code} (${field.value})`
                                     : "Currency code (e.g., USD, EUR). Auto-filled when company code is selected."
                                   }
@@ -966,7 +1285,7 @@ export default function GeneralLedgerAccounts() {
                           }}
                         />
                       </div>
-                      
+
                       <div className="grid grid-cols-2 gap-4">
                         <FormField
                           control={form.control}
@@ -997,7 +1316,7 @@ export default function GeneralLedgerAccounts() {
                           )}
                         />
                       </div>
-                      
+
                       <div className="grid grid-cols-2 gap-4">
                         <FormField
                           control={form.control}
@@ -1037,7 +1356,7 @@ export default function GeneralLedgerAccounts() {
                         />
                       </div>
                     </TabsContent>
-                    
+
                     {/* Section 4: Tax Settings */}
                     <TabsContent value="tax" className="space-y-4 pt-4">
                       <div className="grid grid-cols-2 gap-4">
@@ -1047,10 +1366,21 @@ export default function GeneralLedgerAccounts() {
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>Tax Category</FormLabel>
-                              <FormControl>
-                                <Input placeholder="A1" {...field} maxLength={2} />
-                              </FormControl>
-                              <FormDescription>Tax code for tax calculations</FormDescription>
+                              <Select onValueChange={field.onChange} value={field.value || ""}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select tax category (optional)" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {taxCategories.map((taxCat: any) => (
+                                    <SelectItem key={taxCat.id} value={taxCat.tax_category_code}>
+                                      {taxCat.tax_category_code} - {taxCat.description}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormDescription>Tax category for tax calculations</FormDescription>
                               <FormMessage />
                             </FormItem>
                           )}
@@ -1075,7 +1405,7 @@ export default function GeneralLedgerAccounts() {
                         />
                       </div>
                     </TabsContent>
-                    
+
                     {/* Section 5: Interest Calculation */}
                     <TabsContent value="interest" className="space-y-4 pt-4">
                       <FormField
@@ -1096,7 +1426,7 @@ export default function GeneralLedgerAccounts() {
                           </FormItem>
                         )}
                       />
-                      
+
                       <div className="grid grid-cols-2 gap-4">
                         <FormField
                           control={form.control}
@@ -1128,7 +1458,7 @@ export default function GeneralLedgerAccounts() {
                         />
                       </div>
                     </TabsContent>
-                    
+
                     {/* Section 6: Account Relationships */}
                     <TabsContent value="relationships" className="space-y-4 pt-4">
                       <div className="grid grid-cols-2 gap-4">
@@ -1176,7 +1506,7 @@ export default function GeneralLedgerAccounts() {
                         />
                       </div>
                     </TabsContent>
-                    
+
                     {/* Section 8: Document Splitting */}
                     <TabsContent value="splitting" className="space-y-4 pt-4">
                       <div className="rounded-lg border p-4 bg-muted/50">
@@ -1191,7 +1521,7 @@ export default function GeneralLedgerAccounts() {
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>Item Category</FormLabel>
-                              <Select 
+                              <Select
                                 onValueChange={(value) => {
                                   if (value === "none") {
                                     field.onChange(undefined);
@@ -1227,8 +1557,8 @@ export default function GeneralLedgerAccounts() {
                           <div className="mt-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
                             <p className="text-sm text-yellow-800 dark:text-yellow-200">
                               <strong>No item categories available.</strong> Create item categories in{" "}
-                              <a 
-                                href="/master-data/document-splitting" 
+                              <a
+                                href="/master-data/document-splitting"
                                 className="underline font-semibold"
                                 onClick={(e) => {
                                   e.preventDefault();
@@ -1246,16 +1576,16 @@ export default function GeneralLedgerAccounts() {
                   </Tabs>
 
                   <div className="flex justify-end space-x-2 pt-4">
-                    <Button 
-                      type="button" 
-                      variant="outline" 
+                    <Button
+                      type="button"
+                      variant="outline"
                       onClick={() => setOpen(false)}
                       disabled={createMutation.isPending || updateMutation.isPending}
                     >
                       Cancel
                     </Button>
-                    <Button 
-                      type="submit" 
+                    <Button
+                      type="submit"
                       disabled={createMutation.isPending || updateMutation.isPending}
                     >
                       {createMutation.isPending || updateMutation.isPending ? (
@@ -1272,6 +1602,137 @@ export default function GeneralLedgerAccounts() {
                   </div>
                 </form>
               </Form>
+            </DialogContent>
+          </Dialog>
+
+          {/* View GL Account Dialog (Read-Only) */}
+          <Dialog open={!!viewingAccount} onOpenChange={(open) => !open && setViewingAccount(null)}>
+            <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>View GL Account</DialogTitle>
+                <DialogDescription>
+                  Read-only view of GL Account {viewingAccount?.account_number}
+                </DialogDescription>
+              </DialogHeader>
+
+              {viewingAccount && (
+                <Tabs defaultValue="basic" className="w-full">
+                  <TabsList className="grid w-full grid-cols-4">
+                    <TabsTrigger value="basic">Basic Data</TabsTrigger>
+                    <TabsTrigger value="control">Control Data</TabsTrigger>
+                    <TabsTrigger value="flags">Account Flags</TabsTrigger>
+                    <TabsTrigger value="tax">Tax Settings</TabsTrigger>
+                  </TabsList>
+
+                  {/* Section 1: Basic Data */}
+                  <TabsContent value="basic" className="space-y-4 pt-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium text-muted-foreground">Account Number</label>
+                        <p className="text-sm mt-1">{viewingAccount.account_number}</p>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-muted-foreground">Account Name</label>
+                        <p className="text-sm mt-1">{viewingAccount.account_name}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-sm font-medium text-muted-foreground">Long Text / Description</label>
+                        <p className="text-sm mt-1">{viewingAccount.long_text || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-muted-foreground">Chart of Accounts</label>
+                        <p className="text-sm mt-1">{chartOfAccounts.find(c => c.id === viewingAccount.chart_of_accounts_id)?.chart_id || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-muted-foreground">Account Type</label>
+                        <p className="text-sm mt-1 capitalize">{viewingAccount.account_type}</p>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-muted-foreground">GL Account Group</label>
+                        <p className="text-sm mt-1">{glAccountGroups.find(g => g.id === viewingAccount.gl_account_group_id)?.code || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-muted-foreground">Company Code</label>
+                        <p className="text-sm mt-1">{companyCodes.find(cc => cc.id === viewingAccount.company_code_id)?.code || 'N/A'}</p>
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  {/* Section 2: Control Data */}
+                  <TabsContent value="control" className="space-y-4 pt-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium text-muted-foreground">Currency</label>
+                        <p className="text-sm mt-1">{viewingAccount.account_currency || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-muted-foreground">Document Split Item Category</label>
+                        <p className="text-sm mt-1">{itemCategories.find(ic => ic.id === viewingAccount.item_category_id)?.code || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-muted-foreground">Balance Type</label>
+                        <p className="text-sm mt-1">{viewingAccount.balance_type || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-muted-foreground">Status</label>
+                        <p className="text-sm mt-1">{viewingAccount.is_active ? 'Active' : 'Inactive'}</p>
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  {/* Section 3: Account Flags */}
+                  <TabsContent value="flags" className="space-y-4 pt-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="flex items-center space-x-2">
+                        <Checkbox checked={viewingAccount.balance_sheet_account} disabled />
+                        <label className="text-sm font-medium">Balance Sheet Account</label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox checked={viewingAccount.pl_account} disabled />
+                        <label className="text-sm font-medium">P&L Account</label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox checked={viewingAccount.reconciliation_account} disabled />
+                        <label className="text-sm font-medium">Reconciliation Account</label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox checked={viewingAccount.cash_account_indicator} disabled />
+                        <label className="text-sm font-medium">Cash Account</label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox checked={viewingAccount.block_posting} disabled />
+                        <label className="text-sm font-medium">Block Posting</label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox checked={viewingAccount.open_item_management} disabled />
+                        <label className="text-sm font-medium">Open Item Management</label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox checked={viewingAccount.line_item_display} disabled />
+                        <label className="text-sm font-medium">Line Item Display</label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox checked={viewingAccount.posting_allowed} disabled />
+                        <label className="text-sm font-medium">Posting Allowed</label>
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  {/* Section 4: Tax Settings */}
+                  <TabsContent value="tax" className="space-y-4 pt-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium text-muted-foreground">Tax Category</label>
+                        <p className="text-sm mt-1">{viewingAccount.tax_category || 'N/A'}</p>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox checked={viewingAccount.posting_without_tax_allowed} disabled />
+                        <label className="text-sm font-medium">Posting Without Tax Allowed</label>
+                      </div>
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              )}
             </DialogContent>
           </Dialog>
         </div>
@@ -1331,24 +1792,24 @@ export default function GeneralLedgerAccounts() {
                 // Filter accounts based on search query
                 const filteredAccounts = (glAccounts as any[]).filter((account: any) => {
                   if (!searchQuery.trim()) return true;
-                  
+
                   const query = searchQuery.toLowerCase();
                   const accountNumber = (account.account_number || '').toLowerCase();
                   const accountName = (account.account_name || '').toLowerCase();
                   const accountType = (account.account_type || '').toLowerCase();
                   const accountGroup = (account.account_group || '').toLowerCase();
                   const companyCode = (account.company_code || '').toLowerCase();
-                  
+
                   // Get item category for search
                   const assignment = glAccountCategories.find(
                     (cat: any) => cat.gl_account_number === account.account_number
                   );
-                  const category = assignment 
+                  const category = assignment
                     ? itemCategories.find((ic: any) => ic.id === assignment.item_category_id)
                     : null;
                   const categoryCode = category ? (category.code || '').toLowerCase() : '';
                   const categoryName = category ? (category.name || '').toLowerCase() : '';
-                  
+
                   return (
                     accountNumber.includes(query) ||
                     accountName.includes(query) ||
@@ -1359,15 +1820,15 @@ export default function GeneralLedgerAccounts() {
                     categoryName.includes(query)
                   );
                 });
-                
+
                 if (filteredAccounts.length === 0 && searchQuery.trim()) {
                   return (
                     <div className="text-center py-8 text-muted-foreground">
                       <Search className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
                       <p className="text-lg font-medium mb-2">No accounts found</p>
                       <p className="text-sm">Try adjusting your search query</p>
-                      <Button 
-                        variant="outline" 
+                      <Button
+                        variant="outline"
                         className="mt-4"
                         onClick={() => setSearchQuery("")}
                       >
@@ -1376,7 +1837,7 @@ export default function GeneralLedgerAccounts() {
                     </div>
                   );
                 }
-                
+
                 return (
                   <Table>
                     <TableHeader>
@@ -1394,82 +1855,89 @@ export default function GeneralLedgerAccounts() {
                     </TableHeader>
                     <TableBody>
                       {filteredAccounts.map((account: any) => (
-                  <TableRow key={account.id}>
-                    <TableCell className="font-medium">{account.account_number}</TableCell>
-                    <TableCell>{account.account_name}</TableCell>
-                    <TableCell className="capitalize">{account.account_type}</TableCell>
-                    <TableCell>{account.account_group}</TableCell>
-                    <TableCell>{account.chart_of_accounts_code || account.chart_of_accounts_id}</TableCell>
-                    <TableCell>{account.company_code || '-'}</TableCell>
-                    <TableCell>
-                      {(() => {
-                        const assignment = glAccountCategories.find(
-                          (cat: any) => cat.gl_account_number === account.account_number
-                        );
-                        const category = assignment 
-                          ? itemCategories.find((ic: any) => ic.id === assignment.item_category_id)
-                          : null;
-                        return category ? (
-                          <span className="text-xs font-mono bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-200 px-2 py-1 rounded">
-                            {category.code}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">-</span>
-                        );
-                      })()}
-                    </TableCell>
-                    <TableCell>
-                      <span className={`px-2 py-1 rounded-full text-xs ${
-                        account.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-                      }`}>
-                        {account.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleEdit(account)}
-                          disabled={deleteMutation.isPending}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              disabled={deleteMutation.isPending}
-                            >
-                              {deleteMutation.isPending ? (
-                                <RefreshCw className="h-4 w-4 animate-spin" />
+                        <TableRow key={account.id}>
+                          <TableCell className="font-medium">{account.account_number}</TableCell>
+                          <TableCell>{account.account_name}</TableCell>
+                          <TableCell className="capitalize">{account.account_type}</TableCell>
+                          <TableCell>{account.account_group}</TableCell>
+                          <TableCell>{account.chart_of_accounts_code || account.chart_of_accounts_id}</TableCell>
+                          <TableCell>{account.company_code || '-'}</TableCell>
+                          <TableCell>
+                            {(() => {
+                              const assignment = glAccountCategories.find(
+                                (cat: any) => cat.gl_account_number === account.account_number
+                              );
+                              const category = assignment
+                                ? itemCategories.find((ic: any) => ic.id === assignment.item_category_id)
+                                : null;
+                              return category ? (
+                                <span className="text-xs font-mono bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-200 px-2 py-1 rounded">
+                                  {category.code}
+                                </span>
                               ) : (
-                                <Trash2 className="h-4 w-4" />
-                              )}
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                This action cannot be undone. This will permanently delete the GL account "{account.account_number} - {account.account_name}".
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() => deleteMutation.mutate(account.id)}
-                                className="bg-red-600 hover:bg-red-700"
+                                <span className="text-muted-foreground text-xs">-</span>
+                              );
+                            })()}
+                          </TableCell>
+                          <TableCell>
+                            <span className={`px-2 py-1 rounded-full text-xs ${account.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                              }`}>
+                              {account.is_active ? 'Active' : 'Inactive'}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex space-x-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setViewingAccount(account)}
+                                disabled={deleteMutation.isPending}
                               >
-                                Delete
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
-                    </TableCell>
-                  </TableRow>
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleEdit(account)}
+                                disabled={deleteMutation.isPending}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={deleteMutation.isPending}
+                                  >
+                                    {deleteMutation.isPending ? (
+                                      <RefreshCw className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      This action cannot be undone. This will permanently delete the GL account "{account.account_number} - {account.account_name}".
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => deleteMutation.mutate(account.id)}
+                                      className="bg-red-600 hover:bg-red-700"
+                                    >
+                                      Delete
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
                       ))}
                     </TableBody>
                   </Table>
@@ -1479,6 +1947,15 @@ export default function GeneralLedgerAccounts() {
           )}
         </CardContent>
       </Card>
+
+      {/* Hidden file input for Excel import */}
+      <input
+        id="excel-import"
+        type="file"
+        accept=".xlsx,.xls"
+        style={{ display: 'none' }}
+        onChange={handleExcelImport}
+      />
     </div>
   );
 }

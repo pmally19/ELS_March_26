@@ -22,6 +22,7 @@ interface TaxRule {
   ratePercent: string | number;
   jurisdiction?: string;
   taxJurisdictionId?: number;
+  taxCategoryId?: number;
   appliesTo?: string;
   effectiveFrom: string;
   effectiveTo?: string;
@@ -32,6 +33,8 @@ interface TaxRule {
   profileCode?: string;
   taxJurisdictionCode?: string;
   taxJurisdictionName?: string;
+  taxCategoryCode?: string;
+  taxCategoryName?: string;
 }
 
 interface TaxRuleFormData {
@@ -41,6 +44,7 @@ interface TaxRuleFormData {
   ratePercent: number | string;
   jurisdiction?: string;
   taxJurisdictionId?: number;
+  taxCategoryId?: number;
   appliesTo?: string;
   effectiveFrom: string;
   effectiveTo?: string;
@@ -58,6 +62,7 @@ export default function TaxRules() {
     ratePercent: "",
     jurisdiction: "",
     taxJurisdictionId: undefined,
+    taxCategoryId: undefined,
     appliesTo: "",
     effectiveFrom: "",
     effectiveTo: "",
@@ -90,6 +95,9 @@ export default function TaxRules() {
         profileCode: tr.profileCode || tr.profile_code || "",
         taxJurisdictionCode: tr.taxJurisdictionCode || tr.tax_jurisdiction_code || null,
         taxJurisdictionName: tr.taxJurisdictionName || tr.tax_jurisdiction_name || null,
+        taxCategoryId: tr.taxCategoryId || tr.tax_category_id || null,
+        taxCategoryCode: tr.taxCategoryCode || tr.tax_category_code || null,
+        taxCategoryName: tr.taxCategoryName || tr.tax_category_name || null,
       })) : [];
     },
   });
@@ -126,6 +134,20 @@ export default function TaxRules() {
           jurisdictionName: tj.jurisdictionName || tj.jurisdiction_name || "",
           isActive: tj.isActive !== undefined ? tj.isActive : (tj.is_active !== undefined ? tj.is_active : true),
         })).filter((tj: any) => tj.isActive) : [];
+      } catch {
+        return [];
+      }
+    },
+  });
+
+  // Fetch tax categories for dropdown
+  const { data: taxCategories = [] } = useQuery<any[]>({
+    queryKey: ['/api/master-data/tax-rules/tax-categories'],
+    queryFn: async () => {
+      try {
+        const response = await apiRequest('/api/master-data/tax-rules/tax-categories');
+        const data = await response.json();
+        return Array.isArray(data) ? data : [];
       } catch {
         return [];
       }
@@ -182,6 +204,7 @@ export default function TaxRules() {
       ratePercent: "",
       jurisdiction: "",
       taxJurisdictionId: undefined,
+      taxCategoryId: undefined,
       appliesTo: "",
       effectiveFrom: "",
       effectiveTo: "",
@@ -212,6 +235,7 @@ export default function TaxRules() {
       ratePercent: rule.ratePercent,
       jurisdiction: rule.jurisdiction || "",
       taxJurisdictionId: rule.taxJurisdictionId || undefined,
+      taxCategoryId: rule.taxCategoryId || undefined,
       appliesTo: rule.appliesTo || "",
       effectiveFrom: rule.effectiveFrom ? rule.effectiveFrom.split('T')[0] : "",
       effectiveTo: rule.effectiveTo ? rule.effectiveTo.split('T')[0] : "",
@@ -241,8 +265,8 @@ export default function TaxRules() {
     <div className="space-y-6">
       {/* Back Button Header */}
       <div className="flex items-center gap-4 mb-4">
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           size="sm"
           onClick={() => window.history.back()}
           className="flex items-center gap-2"
@@ -386,6 +410,27 @@ export default function TaxRules() {
                       maxLength={50}
                     />
                   </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="taxCategoryId">Tax Category</Label>
+                    <Select
+                      value={formData.taxCategoryId?.toString() || "__none__"}
+                      onValueChange={(value) => setFormData({ ...formData, taxCategoryId: value === "__none__" ? undefined : parseInt(value) })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select tax category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">None</SelectItem>
+                        {taxCategories.map((tc: any) => (
+                          <SelectItem key={tc.id} value={tc.id.toString()}>
+                            {tc.tax_category_code} - {tc.description}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="space-y-2">
                     <Label htmlFor="appliesTo">Applies To</Label>
                     <Input
@@ -458,6 +503,7 @@ export default function TaxRules() {
                   <TableHead>Tax Profile</TableHead>
                   <TableHead>Rate %</TableHead>
                   <TableHead>Tax Jurisdiction</TableHead>
+                  <TableHead>Tax Category</TableHead>
                   <TableHead>Effective From</TableHead>
                   <TableHead>Effective To</TableHead>
                   <TableHead>Status</TableHead>
@@ -472,6 +518,7 @@ export default function TaxRules() {
                     <TableCell>{rule.profileCode || "-"}</TableCell>
                     <TableCell>{typeof rule.ratePercent === 'number' ? rule.ratePercent.toFixed(2) : parseFloat(String(rule.ratePercent)).toFixed(2)}%</TableCell>
                     <TableCell>{rule.taxJurisdictionName ? `${rule.taxJurisdictionCode} - ${rule.taxJurisdictionName}` : (rule.jurisdiction || "-")}</TableCell>
+                    <TableCell>{rule.taxCategoryName ? `${rule.taxCategoryCode} - ${rule.taxCategoryName}` : "-"}</TableCell>
                     <TableCell>{rule.effectiveFrom ? new Date(rule.effectiveFrom).toLocaleDateString() : "-"}</TableCell>
                     <TableCell>{rule.effectiveTo ? new Date(rule.effectiveTo).toLocaleDateString() : "-"}</TableCell>
                     <TableCell>

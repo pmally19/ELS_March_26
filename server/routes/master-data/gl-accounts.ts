@@ -395,6 +395,36 @@ router.post('/', async (req: Request, res: Response) => {
       balance_type || null,
     ]);
 
+    // After successful creation, update current_number in number_ranges if group has one
+    if (gl_account_group_id && account_number) {
+      try {
+        const nrResult = await pool.query(`
+          SELECT nr.id, nr.range_from, nr.range_to, nr.current_number
+          FROM gl_account_groups gag
+          JOIN number_ranges nr ON gag.number_range_id = nr.id
+          WHERE gag.id = $1
+        `, [gl_account_group_id]);
+
+        if (nrResult.rows.length > 0) {
+          const nr = nrResult.rows[0];
+          const accountNum = parseInt(account_number);
+          const currentNum = parseInt(nr.current_number || nr.range_from);
+
+          // Only update if the new account number is >= current tracked number
+          if (!isNaN(accountNum) && accountNum >= currentNum) {
+            await pool.query(`
+              UPDATE number_ranges
+              SET current_number = $1, updated_at = NOW()
+              WHERE id = $2
+            `, [accountNum.toString(), nr.id]);
+          }
+        }
+      } catch (nrError) {
+        // Non-fatal: account was created, just log the number range update failure
+        console.warn('Could not update number range current_number:', nrError);
+      }
+    }
+
     res.status(201).json(result.rows[0]);
   } catch (error: any) {
     console.error('Error creating GL account:', error);
@@ -581,7 +611,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       posting_without_tax_allowed,
       interest_calculation_indicator,
       interest_calculation_frequency,
-      interest_calculation_date,
+      interest_calculation_date: rawInterestCalculationDate,
       alternative_account_number,
       group_account_number,
       trading_partner,
@@ -695,6 +725,9 @@ router.put('/:id', async (req: Request, res: Response) => {
         }
       }
     }
+
+    // Convert empty string dates to null for date fields
+    const interest_calculation_date = rawInterestCalculationDate === '' ? null : rawInterestCalculationDate;
 
     // Update account
     const result = await pool.query(`

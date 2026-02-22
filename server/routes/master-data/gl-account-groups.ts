@@ -11,12 +11,7 @@ const createGlAccountGroupSchema = z.object({
   description: z.string().optional(),
   accountCategory: z.enum(["ASSETS", "LIABILITIES", "EQUITY", "REVENUE", "EXPENSES"]),
   accountSubcategory: z.string().max(50).optional(),
-  accountNumberPattern: z.string().max(50).optional(),
-  accountNumberMinLength: z.number().int().min(1).max(20).default(4),
-  accountNumberMaxLength: z.number().int().min(1).max(20).default(10),
-  numberRangeStart: z.string().max(20).optional(),
-  numberRangeEnd: z.string().max(20).optional(),
-  fieldControlGroup: z.string().max(10).optional(),
+  numberRangeId: z.number().int().positive().optional(),
   accountNameRequired: z.boolean().default(true),
   descriptionRequired: z.boolean().default(false),
   currencyRequired: z.boolean().default(true),
@@ -35,28 +30,37 @@ const createGlAccountGroupSchema = z.object({
 router.get("/", async (req: Request, res: Response) => {
   try {
     const { category, active } = req.query;
-    
+
     let query = `
-      SELECT * FROM gl_account_groups
+      SELECT 
+        gag.*,
+        nr.id as nr_id,
+        nr.number_range_code,
+        nr.description as nr_description,
+        nr.number_range_object,
+        nr.range_from as nr_range_from,
+        nr.range_to as nr_range_to
+      FROM gl_account_groups gag
+      LEFT JOIN number_ranges nr ON gag.number_range_id = nr.id
       WHERE 1=1
     `;
     const params: any[] = [];
     let paramCount = 1;
-    
+
     if (category) {
-      query += ` AND account_category = $${paramCount++}`;
+      query += ` AND gag.account_category = $${paramCount++}`;
       params.push(category);
     }
-    
+
     if (active !== undefined) {
-      query += ` AND is_active = $${paramCount++}`;
+      query += ` AND gag.is_active = $${paramCount++}`;
       params.push(active === 'true');
     }
-    
-    query += ` ORDER BY sort_order, code`;
-    
+
+    query += ` ORDER BY gag.sort_order, gag.code`;
+
     const result = await pool.query(query, params);
-    
+
     const formatted = result.rows.map((row: any) => ({
       id: row.id,
       code: row.code,
@@ -64,12 +68,12 @@ router.get("/", async (req: Request, res: Response) => {
       description: row.description,
       accountCategory: row.account_category,
       accountSubcategory: row.account_subcategory,
-      accountNumberPattern: row.account_number_pattern,
-      accountNumberMinLength: row.account_number_min_length,
-      accountNumberMaxLength: row.account_number_max_length,
-      numberRangeStart: row.number_range_start,
-      numberRangeEnd: row.number_range_end,
-      fieldControlGroup: row.field_control_group,
+      numberRangeId: row.nr_id,
+      numberRangeCode: row.number_range_code,
+      numberRangeDescription: row.nr_description,
+      numberRangeObject: row.number_range_object,
+      numberRangeFrom: row.nr_range_from,
+      numberRangeTo: row.nr_range_to,
       accountNameRequired: row.account_name_required,
       descriptionRequired: row.description_required,
       currencyRequired: row.currency_required,
@@ -85,7 +89,7 @@ router.get("/", async (req: Request, res: Response) => {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
-    
+
     return res.status(200).json(formatted);
   } catch (error) {
     console.error("Error fetching GL account groups:", error);
@@ -100,16 +104,26 @@ router.get("/:id", async (req: Request, res: Response) => {
     if (isNaN(id)) {
       return res.status(400).json({ message: "Invalid ID format" });
     }
-    
-    const result = await pool.query(
-      `SELECT * FROM gl_account_groups WHERE id = $1`,
-      [id]
-    );
-    
+
+    const result = await pool.query(`
+      SELECT 
+        gag.*,
+        nr.id as number_range_id,
+        nr.number_range_code,
+        nr.description as number_range_description,
+        nr.number_range_object,
+        nr.range_from as number_range_from,
+        nr.range_to as number_range_to
+      FROM gl_account_groups gag
+      LEFT JOIN number_ranges nr ON gag.number_range_id = nr.id
+      WHERE gag.id = $1
+      ORDER BY gag.sort_order, gag.code
+    `, [id]);
+
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "GL account group not found" });
     }
-    
+
     const row = result.rows[0];
     const formatted = {
       id: row.id,
@@ -139,7 +153,7 @@ router.get("/:id", async (req: Request, res: Response) => {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
-    
+
     return res.status(200).json(formatted);
   } catch (error) {
     console.error("Error fetching GL account group:", error);
@@ -151,27 +165,26 @@ router.get("/:id", async (req: Request, res: Response) => {
 router.post("/", async (req: Request, res: Response) => {
   try {
     const validatedData = createGlAccountGroupSchema.parse(req.body);
-    
+
     // Check if code already exists
     const existingCheck = await pool.query(
       `SELECT id FROM gl_account_groups WHERE code = $1`,
       [validatedData.code]
     );
-    
+
     if (existingCheck.rows.length > 0) {
       return res.status(409).json({ message: "GL account group code already exists" });
     }
-    
+
     const result = await pool.query(`
       INSERT INTO gl_account_groups (
         code, name, description, account_category, account_subcategory,
-        account_number_pattern, account_number_min_length, account_number_max_length,
-        number_range_start, number_range_end, field_control_group,
+        number_range_id,
         account_name_required, description_required, currency_required, tax_settings_required,
         allow_posting, requires_reconciliation, allow_cash_posting,
         requires_cost_center, requires_profit_center, display_layout, sort_order, is_active
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
       )
       RETURNING *
     `, [
@@ -180,12 +193,7 @@ router.post("/", async (req: Request, res: Response) => {
       validatedData.description || null,
       validatedData.accountCategory,
       validatedData.accountSubcategory || null,
-      validatedData.accountNumberPattern || null,
-      validatedData.accountNumberMinLength,
-      validatedData.accountNumberMaxLength,
-      validatedData.numberRangeStart || null,
-      validatedData.numberRangeEnd || null,
-      validatedData.fieldControlGroup || null,
+      validatedData.numberRangeId || null,
       validatedData.accountNameRequired,
       validatedData.descriptionRequired,
       validatedData.currencyRequired,
@@ -199,7 +207,7 @@ router.post("/", async (req: Request, res: Response) => {
       validatedData.sortOrder,
       validatedData.isActive,
     ]);
-    
+
     const row = result.rows[0];
     const formatted = {
       id: row.id,
@@ -208,12 +216,7 @@ router.post("/", async (req: Request, res: Response) => {
       description: row.description,
       accountCategory: row.account_category,
       accountSubcategory: row.account_subcategory,
-      accountNumberPattern: row.account_number_pattern,
-      accountNumberMinLength: row.account_number_min_length,
-      accountNumberMaxLength: row.account_number_max_length,
-      numberRangeStart: row.number_range_start,
-      numberRangeEnd: row.number_range_end,
-      fieldControlGroup: row.field_control_group,
+      numberRangeId: row.number_range_id,
       accountNameRequired: row.account_name_required,
       descriptionRequired: row.description_required,
       currencyRequired: row.currency_required,
@@ -229,7 +232,7 @@ router.post("/", async (req: Request, res: Response) => {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
-    
+
     return res.status(201).json(formatted);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -250,37 +253,37 @@ router.put("/:id", async (req: Request, res: Response) => {
     if (isNaN(id)) {
       return res.status(400).json({ message: "Invalid ID format" });
     }
-    
+
     const updateSchema = createGlAccountGroupSchema.partial();
     const validatedData = updateSchema.parse(req.body);
-    
+
     // Check if exists
     const existingCheck = await pool.query(
       `SELECT id FROM gl_account_groups WHERE id = $1`,
       [id]
     );
-    
+
     if (existingCheck.rows.length === 0) {
       return res.status(404).json({ message: "GL account group not found" });
     }
-    
+
     // Check code uniqueness if code is being updated
     if (validatedData.code) {
       const codeCheck = await pool.query(
         `SELECT id FROM gl_account_groups WHERE code = $1 AND id != $2`,
         [validatedData.code, id]
       );
-      
+
       if (codeCheck.rows.length > 0) {
         return res.status(409).json({ message: "GL account group code already exists" });
       }
     }
-    
+
     // Build dynamic update query
     const updates: string[] = [];
     const values: any[] = [];
     let paramCount = 1;
-    
+
     Object.entries(validatedData).forEach(([key, value]) => {
       if (value !== undefined) {
         const dbKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
@@ -288,23 +291,23 @@ router.put("/:id", async (req: Request, res: Response) => {
         values.push(value);
       }
     });
-    
+
     if (updates.length === 0) {
       return res.status(400).json({ message: "No fields to update" });
     }
-    
+
     updates.push(`updated_at = NOW()`);
     values.push(id);
-    
+
     const query = `
       UPDATE gl_account_groups
       SET ${updates.join(', ')}
       WHERE id = $${paramCount}
       RETURNING *
     `;
-    
+
     const result = await pool.query(query, values);
-    
+
     const row = result.rows[0];
     const formatted = {
       id: row.id,
@@ -313,12 +316,7 @@ router.put("/:id", async (req: Request, res: Response) => {
       description: row.description,
       accountCategory: row.account_category,
       accountSubcategory: row.account_subcategory,
-      accountNumberPattern: row.account_number_pattern,
-      accountNumberMinLength: row.account_number_min_length,
-      accountNumberMaxLength: row.account_number_max_length,
-      numberRangeStart: row.number_range_start,
-      numberRangeEnd: row.number_range_end,
-      fieldControlGroup: row.field_control_group,
+      numberRangeId: row.number_range_id,
       accountNameRequired: row.account_name_required,
       descriptionRequired: row.description_required,
       currencyRequired: row.currency_required,
@@ -334,7 +332,7 @@ router.put("/:id", async (req: Request, res: Response) => {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
-    
+
     return res.status(200).json(formatted);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -352,30 +350,30 @@ router.delete("/:id", async (req: Request, res: Response) => {
     if (isNaN(id)) {
       return res.status(400).json({ message: "Invalid ID format" });
     }
-    
+
     // Check if any GL accounts are using this group
     const accountsCheck = await pool.query(
       `SELECT COUNT(*) as count FROM gl_accounts WHERE account_group = (SELECT code FROM gl_account_groups WHERE id = $1)`,
       [id]
     );
-    
+
     const accountCount = parseInt(accountsCheck.rows[0].count);
     if (accountCount > 0) {
-      return res.status(400).json({ 
-        message: `Cannot delete GL account group. It is used by ${accountCount} GL account(s).` 
+      return res.status(400).json({
+        message: `Cannot delete GL account group. It is used by ${accountCount} GL account(s).`
       });
     }
-    
+
     const result = await pool.query(
       `DELETE FROM gl_account_groups WHERE id = $1 RETURNING id, code, name`,
       [id]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "GL account group not found" });
     }
-    
-    return res.status(200).json({ 
+
+    return res.status(200).json({
       message: "GL account group deleted successfully",
       deleted: result.rows[0]
     });

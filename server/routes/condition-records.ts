@@ -3,13 +3,19 @@ import { pool } from '../db';
 
 const router = express.Router();
 
+/**
+ * Condition Records CRUD
+ * Actual DB columns: id, condition_type, material_id, customer_id, sales_organization,
+ *   valid_from, valid_to, amount, currency, unit, is_active, created_at
+ */
+
 // Get all condition records with optional filters
 router.get('/', async (req, res) => {
     try {
         const {
             condition_type,
-            material_code,
-            customer_code,
+            material_id,
+            customer_id,
             is_active = 'true'
         } = req.query;
 
@@ -17,30 +23,30 @@ router.get('/', async (req, res) => {
       SELECT 
         cr.*,
         ct.condition_name,
-        ct.condition_class
+        ct.condition_category as condition_class
       FROM condition_records cr
-      LEFT JOIN condition_types ct ON cr.condition_type_code = ct.condition_code
+      LEFT JOIN condition_types ct ON cr.condition_type = ct.condition_code
       WHERE 1=1
     `;
 
-        const params = [];
+        const params: any[] = [];
         let paramCount = 1;
 
         if (condition_type) {
-            query += ` AND cr.condition_type_code = $${paramCount}`;
+            query += ` AND cr.condition_type = $${paramCount}`;
             params.push(condition_type);
             paramCount++;
         }
 
-        if (material_code) {
-            query += ` AND cr.material_code = $${paramCount}`;
-            params.push(material_code);
+        if (material_id) {
+            query += ` AND cr.material_id = $${paramCount}`;
+            params.push(material_id);
             paramCount++;
         }
 
-        if (customer_code) {
-            query += ` AND cr.customer_code = $${paramCount}`;
-            params.push(customer_code);
+        if (customer_id) {
+            query += ` AND cr.customer_id = $${paramCount}`;
+            params.push(customer_id);
             paramCount++;
         }
 
@@ -48,7 +54,7 @@ router.get('/', async (req, res) => {
             query += ` AND cr.is_active = true`;
         }
 
-        query += ` ORDER BY cr.condition_type_code, cr.created_at DESC`;
+        query += ` ORDER BY cr.condition_type, cr.created_at DESC`;
 
         const result = await pool.query(query, params);
         res.json(result.rows);
@@ -67,9 +73,9 @@ router.get('/:id', async (req, res) => {
       SELECT 
         cr.*,
         ct.condition_name,
-        ct.condition_class
+        ct.condition_category as condition_class
       FROM condition_records cr
-      LEFT JOIN condition_types ct ON cr.condition_type_code = ct.condition_code
+      LEFT JOIN condition_types ct ON cr.condition_type = ct.condition_code
       WHERE cr.id = $1
     `, [id]);
 
@@ -88,62 +94,40 @@ router.get('/:id', async (req, res) => {
 router.post('/search', async (req, res) => {
     try {
         const {
-            condition_type_code,
-            material_code,
-            customer_code,
-            sales_org_id,
-            distribution_channel_id,
-            division_id,
-            material_group,
-            customer_group,
-            quantity
+            condition_type,
+            material_id,
+            customer_id,
         } = req.body;
 
         // Find most specific matching record (cascading specificity)
         const result = await pool.query(`
       SELECT *
       FROM condition_records
-      WHERE condition_type_code = $1
+      WHERE condition_type = $1
         AND is_active = true
         AND valid_from <= CURRENT_DATE
         AND valid_to >= CURRENT_DATE
         AND (
-          -- Exact match on all keys (highest priority)
-          (customer_code = $2 AND material_code = $3) OR
-          -- Match on customer only
-          (customer_code = $2 AND material_code IS NULL) OR
-          -- Match on material only
-          (customer_code IS NULL AND material_code = $3) OR
-          -- Match on groups
-          (customer_group = $4 AND material_group = $5) OR
-          -- Generic (no specific assignment)
-          (customer_code IS NULL AND material_code IS NULL AND customer_group IS NULL AND material_group IS NULL)
-        )
-        -- Handle scale pricing if quantity provided
-        AND (
-          $6::decimal IS NULL OR
-          scale_quantity_from IS NULL OR
-          ($6 >= scale_quantity_from AND $6 <= scale_quantity_to)
+          (customer_id = $2 AND material_id = $3) OR
+          (customer_id = $2 AND material_id IS NULL) OR
+          (customer_id IS NULL AND material_id = $3) OR
+          (customer_id IS NULL AND material_id IS NULL)
         )
       ORDER BY
-        -- Prioritize more specific records
         CASE
-          WHEN customer_code IS NOT NULL AND material_code IS NOT NULL THEN 1
-          WHEN customer_code IS NOT NULL THEN 2
-          WHEN material_code IS NOT NULL THEN 3
-          WHEN customer_group IS NOT NULL AND material_group IS NOT NULL THEN 4
-          ELSE 5
+          WHEN customer_id IS NOT NULL AND material_id IS NOT NULL THEN 1
+          WHEN customer_id IS NOT NULL THEN 2
+          WHEN material_id IS NOT NULL THEN 3
+          ELSE 4
         END,
-        -- Within same specificity, prefer scale records for exact quantity match
-        CASE WHEN scale_quantity_from IS NOT NULL THEN 1 ELSE 2 END,
         created_at DESC
       LIMIT 1
-    `, [condition_type_code, customer_code, material_code, customer_group, material_group, quantity]);
+    `, [condition_type, customer_id || null, material_id || null]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({
                 error: 'No matching condition record found',
-                condition_type_code
+                condition_type
             });
         }
 
@@ -158,50 +142,45 @@ router.post('/search', async (req, res) => {
 router.post('/', async (req, res) => {
     try {
         const {
+            condition_type,
+            // Also accept legacy field name from frontend
             condition_type_code,
-            company_code_id,
-            sales_org_id,
-            distribution_channel_id,
-            division_id,
-            customer_code,
-            material_code,
-            material_group,
-            customer_group,
+            material_id,
+            customer_id,
+            sales_organization,
+            amount,
+            // Also accept legacy field name
             condition_value,
-            currency = 'INR',
-            per_unit = 1,
-            unit_of_measure,
-            calculation_type = 'A',
+            currency = 'USD',
+            unit,
             valid_from,
-            valid_to = '9999-12-31',
-            scale_quantity_from,
-            scale_quantity_to,
+            valid_to = '2099-12-31',
             is_active = true,
-            created_by
         } = req.body;
 
+        const actualConditionType = condition_type || condition_type_code;
+        const actualAmount = amount || condition_value;
+
         // Validation
-        if (!condition_type_code || !condition_value || !valid_from) {
+        if (!actualConditionType || !actualAmount || !valid_from) {
             return res.status(400).json({
-                error: 'Missing required fields: condition_type_code, condition_value, valid_from'
+                error: 'Missing required fields: condition_type, amount, valid_from'
             });
         }
 
         const result = await pool.query(`
       INSERT INTO condition_records (
-        condition_type_code, company_code_id, sales_org_id, distribution_channel_id, division_id,
-        customer_code, material_code, material_group, customer_group,
-        condition_value, currency, per_unit, unit_of_measure, calculation_type,
-        valid_from, valid_to, scale_quantity_from, scale_quantity_to, is_active, created_by
+        condition_type, material_id, customer_id, sales_organization,
+        amount, currency, unit,
+        valid_from, valid_to, is_active
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
       )
       RETURNING *
     `, [
-            condition_type_code, company_code_id, sales_org_id, distribution_channel_id, division_id,
-            customer_code, material_code, material_group, customer_group,
-            condition_value, currency, per_unit, unit_of_measure, calculation_type,
-            valid_from, valid_to, scale_quantity_from, scale_quantity_to, is_active, created_by
+            actualConditionType, material_id || null, customer_id || null, sales_organization || null,
+            actualAmount, currency, unit || null,
+            valid_from, valid_to, is_active
         ]);
 
         res.status(201).json(result.rows[0]);
@@ -216,37 +195,31 @@ router.put('/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const {
+            amount,
             condition_value,
             currency,
-            per_unit,
-            unit_of_measure,
-            calculation_type,
+            unit,
             valid_from,
             valid_to,
-            scale_quantity_from,
-            scale_quantity_to,
             is_active
         } = req.body;
+
+        const actualAmount = amount || condition_value;
 
         const result = await pool.query(`
       UPDATE condition_records
       SET 
-        condition_value = COALESCE($1, condition_value),
+        amount = COALESCE($1, amount),
         currency = COALESCE($2, currency),
-        per_unit = COALESCE($3, per_unit),
-        unit_of_measure = COALESCE($4, unit_of_measure),
-        calculation_type = COALESCE($5, calculation_type),
-        valid_from = COALESCE($6, valid_from),
-        valid_to = COALESCE($7, valid_to),
-        scale_quantity_from = $8,
-        scale_quantity_to = $9,
-        is_active = COALESCE($10, is_active),
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = $11
+        unit = COALESCE($3, unit),
+        valid_from = COALESCE($4, valid_from),
+        valid_to = COALESCE($5, valid_to),
+        is_active = COALESCE($6, is_active)
+      WHERE id = $7
       RETURNING *
     `, [
-            condition_value, currency, per_unit, unit_of_measure, calculation_type,
-            valid_from, valid_to, scale_quantity_from, scale_quantity_to, is_active, id
+            actualAmount, currency, unit,
+            valid_from, valid_to, is_active, id
         ]);
 
         if (result.rows.length === 0) {

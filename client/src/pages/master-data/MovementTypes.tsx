@@ -59,6 +59,7 @@ interface MovementType {
   movementClass: string;
   transactionType: string;
   transactionKey?: string;
+  transactionKeys: string[];          // multiple transaction keys (UI: Posting Keys)
   inventoryDirection: string;
   specialStockIndicator?: string;
   valuationImpact: boolean;
@@ -76,7 +77,7 @@ const movementTypeSchema = z.object({
   description: z.string().min(1, "Description is required").max(100),
   movementClass: z.string().min(1, "Movement class is required"),
   transactionType: z.string().min(1, "Transaction type is required"),
-  transactionKey: z.string().optional(),
+  transactionKeys: z.array(z.string()).default([]),  // multiple transaction keys
   inventoryDirection: z.string().min(1, "Inventory direction is required"),
   specialStockIndicator: z.string().optional(),
   valuationImpact: z.boolean().default(true),
@@ -154,6 +155,7 @@ export default function MovementTypes() {
           movementClass: item.movement_class,
           transactionType: item.transaction_type,
           transactionKey: item.transaction_key || '',
+          transactionKeys: Array.isArray(item.transaction_keys) ? item.transaction_keys : [],
           inventoryDirection: item.inventory_direction,
           specialStockIndicator: item.special_stock_indicator || '',
           valuationImpact: !!item.valuation_impact,
@@ -215,7 +217,7 @@ export default function MovementTypes() {
       description: "",
       movementClass: "receipt",
       transactionType: "purchase",
-      transactionKey: "",
+      transactionKeys: [],
       inventoryDirection: "increase",
       specialStockIndicator: "",
       valuationImpact: true,
@@ -234,7 +236,7 @@ export default function MovementTypes() {
         description: editingMovementType.description,
         movementClass: editingMovementType.movementClass,
         transactionType: editingMovementType.transactionType,
-        transactionKey: editingMovementType.transactionKey || "",
+        transactionKeys: editingMovementType.transactionKeys || [],
         inventoryDirection: editingMovementType.inventoryDirection,
         specialStockIndicator: editingMovementType.specialStockIndicator || "",
         valuationImpact: editingMovementType.valuationImpact,
@@ -249,7 +251,7 @@ export default function MovementTypes() {
         description: "",
         movementClass: "receipt",
         transactionType: "purchase",
-        transactionKey: "",
+        transactionKeys: [],
         inventoryDirection: "increase",
         specialStockIndicator: "",
         valuationImpact: true,
@@ -267,7 +269,11 @@ export default function MovementTypes() {
       return apiRequest(`/api/master-data-crud/movement-types`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({
+          ...data,
+          transactionKeys: data.transactionKeys || [],
+          transactionKey: (data.transactionKeys || [])[0] || null,
+        }),
       }).then(res => res.json());
     },
     onSuccess: () => {
@@ -294,7 +300,11 @@ export default function MovementTypes() {
       return apiRequest(`/api/master-data-crud/movement-types/${data.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data.movementType),
+        body: JSON.stringify({
+          ...data.movementType,
+          transactionKeys: data.movementType.transactionKeys || [],
+          transactionKey: (data.movementType.transactionKeys || [])[0] || null,
+        }),
       }).then(res => res.json());
     },
     onSuccess: () => {
@@ -490,7 +500,7 @@ export default function MovementTypes() {
                   <TableHead>Description</TableHead>
                   <TableHead>Movement Class</TableHead>
                   <TableHead>Transaction Type</TableHead>
-                  <TableHead>Trans. Key</TableHead>
+                  <TableHead>Posting Key</TableHead>
                   <TableHead>Direction</TableHead>
                   <TableHead>Impact</TableHead>
                   <TableHead>Status</TableHead>
@@ -519,7 +529,16 @@ export default function MovementTypes() {
                       <TableCell>{mt.description}</TableCell>
                       <TableCell className="capitalize">{mt.movementClass}</TableCell>
                       <TableCell className="capitalize">{mt.transactionType}</TableCell>
-                      <TableCell>{mt.transactionKey}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {(mt.transactionKeys || []).length > 0
+                            ? (mt.transactionKeys || []).map(k => (
+                              <Badge key={k} variant="outline" className="font-mono text-xs">{k}</Badge>
+                            ))
+                            : <span className="text-muted-foreground text-xs">—</span>
+                          }
+                        </div>
+                      </TableCell>
                       <TableCell className="capitalize">{mt.inventoryDirection}</TableCell>
                       <TableCell>
                         <div className="text-sm space-y-1">
@@ -657,29 +676,58 @@ export default function MovementTypes() {
                 />
               </div>
 
+              {/* Multi-select Transaction Keys (labeled as Posting Keys) */}
+              <FormField
+                control={form.control}
+                name="transactionKeys"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Posting Key</FormLabel>
+                    <FormDescription>Select one or more posting keys for this movement type</FormDescription>
+                    <div className="border rounded-md p-3 max-h-48 overflow-y-auto space-y-2">
+                      {transactionKeys.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No posting keys available</p>
+                      ) : (
+                        transactionKeys.map((tk: any) => {
+                          const checked = (field.value || []).includes(tk.code);
+                          return (
+                            <div key={tk.code} className="flex items-center space-x-2">
+                              <Checkbox
+                                id={`ak-${tk.code}`}
+                                checked={checked}
+                                onCheckedChange={(val) => {
+                                  const current: string[] = field.value || [];
+                                  if (val) {
+                                    field.onChange([...current, tk.code]);
+                                  } else {
+                                    field.onChange(current.filter((k: string) => k !== tk.code));
+                                  }
+                                }}
+                              />
+                              <label
+                                htmlFor={`ak-${tk.code}`}
+                                className="text-sm font-mono cursor-pointer select-none"
+                              >
+                                {tk.name}
+                              </label>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                    {(field.value || []).length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {(field.value || []).map((k: string) => (
+                          <Badge key={k} variant="secondary" className="font-mono text-xs">{k}</Badge>
+                        ))}
+                      </div>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
               <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="transactionKey"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Transaction Key</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select key" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {transactionKeys.map((tk: any) => (
-                            <SelectItem key={tk.code} value={tk.code}>{tk.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
                 <FormField
                   control={form.control}
                   name="inventoryDirection"
@@ -833,8 +881,16 @@ export default function MovementTypes() {
                       </Badge>
                     </div>
                     <div className="col-span-2">
-                      <p className="text-sm font-medium text-muted-foreground">Transaction Key</p>
-                      <p className="text-base">{viewingMovementType.transactionKey || '-'}</p>
+                      <p className="text-sm font-medium text-muted-foreground">Posting Key</p>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {(viewingMovementType.transactionKeys || []).length > 0 ? (
+                          viewingMovementType.transactionKeys.map(k => (
+                            <Badge key={k} variant="secondary" className="font-mono">{k}</Badge>
+                          ))
+                        ) : (
+                          <p className="text-base">-</p>
+                        )}
+                      </div>
                     </div>
                     <div className="col-span-2">
                       <p className="text-sm font-medium text-muted-foreground">Description</p>
@@ -947,6 +1003,6 @@ export default function MovementTypes() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </div >
   );
 }

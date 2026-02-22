@@ -368,7 +368,7 @@ export function registerProductionMasterDataRoutes(app: Express) {
           sales_org_code: row.sales_org_code,
           distribution_channel_code: row.distribution_channel_code,
           division_code: row.division_code,
-          shipping_conditions: row.shipping_conditions,
+          shipping_condition_key: row.shipping_condition_key,
           delivery_priority: row.delivery_priority,
           sales_district: row.sales_district,
           sales_office_code: row.sales_office_code,
@@ -411,7 +411,7 @@ export function registerProductionMasterDataRoutes(app: Express) {
         reconciliation_account_code,
         language_code,
         sales_org_code, distribution_channel_code, division_code,
-        shipping_conditions, delivery_priority, sales_district,
+        shipping_condition_key, delivery_priority, sales_district,
         sales_office_code, sales_group_code, price_list,
         // Financial fields
         dunning_procedure, dunning_block, payment_block,
@@ -670,7 +670,7 @@ export function registerProductionMasterDataRoutes(app: Express) {
           reconciliation_account_code,
           language_code,
           sales_org_code, distribution_channel_code, division_code,
-          shipping_conditions, delivery_priority, sales_district,
+          shipping_condition_key, delivery_priority, sales_district,
           sales_office_code, sales_group_code, price_list,
           dunning_procedure, dunning_block, payment_block,
           credit_control_area, risk_category, credit_limit_currency, credit_exposure, credit_check_procedure,
@@ -689,7 +689,7 @@ export function registerProductionMasterDataRoutes(app: Express) {
         reconciliation_account_code || null,
         language_code || null,
         sales_org_code || null, distribution_channel_code || null, division_code || null,
-        shipping_conditions || null, delivery_priority || null, sales_district || null,
+        shipping_condition_key || null, delivery_priority || null, sales_district || null,
         sales_office_code || null, sales_group_code || null, price_list || null,
         dunning_procedure || null, dunning_block || false, payment_block || false,
         credit_control_area || null, risk_category || null, credit_limit_currency || null, credit_exposure || null, credit_check_procedure || null,
@@ -746,7 +746,7 @@ export function registerProductionMasterDataRoutes(app: Express) {
         sales_org_code: c.sales_org_code,
         distribution_channel_code: c.distribution_channel_code,
         division_code: c.division_code,
-        shipping_conditions: c.shipping_conditions,
+        shipping_condition_key: c.shipping_condition_key,
         delivery_priority: c.delivery_priority,
         sales_district: c.sales_district,
         sales_office_code: c.sales_office_code,
@@ -796,7 +796,7 @@ export function registerProductionMasterDataRoutes(app: Express) {
         reconciliation_account_code,
         language_code,
         sales_org_code, distribution_channel_code, division_code,
-        shipping_conditions, delivery_priority, sales_district,
+        shipping_condition_key, delivery_priority, sales_district,
         sales_office_code, sales_group_code, price_list,
         // Additional financial fields
         payment_method, credit_rating, discount_group, price_group, incoterms,
@@ -865,7 +865,7 @@ export function registerProductionMasterDataRoutes(app: Express) {
         payment_terms, credit_limit, currency, company_code_id,
         language_code,
         sales_org_code, distribution_channel_code, division_code,
-        shipping_conditions, delivery_priority, sales_district,
+        shipping_condition_key, delivery_priority, sales_district,
         sales_office_code, sales_group_code, price_list
       } = req.body;
 
@@ -876,7 +876,7 @@ export function registerProductionMasterDataRoutes(app: Express) {
         payment_terms, credit_limit, currency, company_code_id,
         language_code,
         sales_org_code, distribution_channel_code, division_code,
-        shipping_conditions, delivery_priority, sales_district,
+        shipping_condition_key, delivery_priority, sales_district,
         sales_office_code, sales_group_code, price_list,
         created_at, updated_at
         ) VALUES (
@@ -890,7 +890,7 @@ export function registerProductionMasterDataRoutes(app: Express) {
         is_active, payment_terms, credit_limit, currency, company_code_id,
         language_code || null,
         sales_org_code || null, distribution_channel_code || null, division_code || null,
-        shipping_conditions || null, delivery_priority || null, sales_district || null,
+        shipping_condition_key || null, delivery_priority || null, sales_district || null,
         sales_office_code || null, sales_group_code || null, price_list || null
       ]);
 

@@ -4850,6 +4850,61 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
     ]
   });
 
+  // Derive the selected procedure's ID — must be after orderData is defined
+  const selectedProcedureId = (() => {
+    if (!orderData.pricing_procedure) return null;
+    const found = (pricingProcedures as any[]).find(
+      (pp: any) => pp.procedure_code === orderData.pricing_procedure || String(pp.id) === orderData.pricing_procedure
+    );
+    return found ? found.id : null;
+  })();
+
+  const { data: procedureSteps = [], isLoading: procedureStepsLoading } = useQuery({
+    queryKey: ['/api/pricing-procedures/steps', selectedProcedureId],
+    enabled: !!selectedProcedureId,
+    queryFn: async () => {
+      try {
+        const response = await apiRequest(`/api/pricing-procedures/${selectedProcedureId}/steps`);
+        const data = await response.json();
+        return Array.isArray(data) ? data : [];
+      } catch (error) {
+        console.error('Error fetching procedure steps:', error);
+        return [];
+      }
+    },
+  });
+
+  // Live pricing preview — runs the pricing engine with current items + context
+  const hasItemsForPreview = orderData.items?.some((item: any) =>
+    item.material_id && parseFloat(item.quantity || 0) > 0 && parseFloat(item.unit_price || 0) > 0
+  );
+  const { data: pricingPreview, isLoading: pricingPreviewLoading } = useQuery({
+    queryKey: ['/api/pricing-procedures/preview', orderData.pricing_procedure, orderData.customer_id,
+      orderData.sales_org_id, orderData.distribution_channel_id, orderData.division_id,
+      JSON.stringify(orderData.items?.map((i: any) => ({ mid: i.material_id, q: i.quantity, p: i.unit_price })))],
+    enabled: !!orderData.pricing_procedure && !!hasItemsForPreview,
+    queryFn: async () => {
+      try {
+        const response = await apiRequest(`/api/pricing-procedures/${orderData.pricing_procedure}/preview`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: orderData.items?.filter((i: any) => i.material_id && parseFloat(i.quantity || 0) > 0),
+            customerId: orderData.customer_id,
+            salesOrgId: orderData.sales_org_id,
+            distributionChannelId: orderData.distribution_channel_id,
+            divisionId: orderData.division_id,
+          }),
+        });
+        const data = await response.json();
+        return data;
+      } catch (error) {
+        console.error('Error fetching pricing preview:', error);
+        return null;
+      }
+    },
+  });
+
   // Workflow state for comprehensive sales order creation
   const [workflowStep, setWorkflowStep] = useState<'validation' | 'approval' | 'creation' | 'completed'>('validation');
   const [validationResults, setValidationResults] = useState({
@@ -5010,43 +5065,24 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
       return;
     }
 
+    // pricing_procedure is optional — server will auto-determine from pricing_procedure_determinations
+    // if not provided. Show a soft notice but don’t block.
     if (!orderData.pricing_procedure || orderData.pricing_procedure === '') {
-      alert('Pricing procedure is required');
-      return;
-    }
-
-    // Validate that the selected pricing procedure actually exists in master data
-    if (pricingProcedures.length > 0) {
-      const isValidProcedure = pricingProcedures.some((pp: any) =>
-        String(pp.procedure_code) === String(orderData.pricing_procedure) ||
-        String(pp.id) === String(orderData.pricing_procedure)
-      );
-
-      if (!isValidProcedure) {
-        alert(`Invalid Pricing Procedure: "${orderData.pricing_procedure}". Please select a valid option from the list.`);
-        return;
-      }
+      // allowed — server will determine
+      console.log('ℹ️ No pricing procedure selected — server will auto-determine.');
     }
 
     if (!orderData.tax_code || orderData.tax_code === '') {
-      alert('Tax code is required');
-      return;
-    }
-
-    if (!orderData.sold_to_address_id || orderData.sold_to_address_id === '') {
-      alert('Please select a sold to address');
-      return;
-    }
-
-    if (!orderData.bill_to_address_id || orderData.bill_to_address_id === '') {
-      alert('Please select a bill to address');
-      return;
+      // allowed — tax will be determined from condition records
+      console.log('ℹ️ No tax code selected — server will determine from condition records.');
     }
 
     if (!orderData.ship_to_address_id || orderData.ship_to_address_id === '') {
       alert('Please select a ship to address');
       return;
     }
+
+    // payer_to is optional — defaults to ship_to if not set
 
     if (orderData.items.some(item => !item.material_id || item.material_id === '')) {
       alert('Please select products for all items');
@@ -5068,12 +5104,14 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
       return;
     }
 
-    // Calculate totals
+    // Frontend calculates an estimated subtotal for display / credit check.
+    // The backend pricing engine will recalculate the final amounts.
     const subtotal = orderData.items.reduce((sum, item) =>
       sum + (parseFloat(String(item.quantity) || '0') * parseFloat(String(item.unit_price) || '0')), 0
     );
 
-    // Calculate tax based on tax rules (same as in order summary)
+    // Frontend tax estimate (from customer taxRules loaded earlier).
+    // Backend will override with pricing-engine values.
     const taxBreakdown = taxRules.map(rule => ({
       id: rule.id,
       rule_code: rule.rule_code,
@@ -5082,23 +5120,25 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
       amount: subtotal * (rule.rate_percent / 100)
     }));
 
-    const taxAmount = taxBreakdown.reduce((sum, tax) => sum + tax.amount, 0);
+    const taxAmountEstimate = taxBreakdown.reduce((sum, tax) => sum + tax.amount, 0);
     const shippingAmount = parseFloat(String(orderData.shipping_amount)) || 0;
-    const totalAmount = subtotal + taxAmount + shippingAmount;
+    // estimated total for credit check only — backend will persist final
+    const estimatedTotal = subtotal + taxAmountEstimate + shippingAmount;
 
-    // Check credit limit before submitting
-    if (customerCreditInfo.creditLimit > 0 && totalAmount > customerCreditInfo.availableCredit) {
-      const exceededBy = totalAmount - customerCreditInfo.availableCredit;
-      alert(`Order amount ($${totalAmount.toFixed(2)}) exceeds available credit ($${customerCreditInfo.availableCredit.toFixed(2)}) by $${exceededBy.toFixed(2)}. Please reduce the order amount or contact the credit manager.`);
+    // Credit-check using estimated total (conservative approach)
+    if (customerCreditInfo.creditLimit > 0 && estimatedTotal > customerCreditInfo.availableCredit) {
+      const exceededBy = estimatedTotal - customerCreditInfo.availableCredit;
+      alert(`Estimated order amount ($${estimatedTotal.toFixed(2)}) exceeds available credit ($${customerCreditInfo.availableCredit.toFixed(2)}) by $${exceededBy.toFixed(2)}. Please reduce the order or contact the credit manager.`);
       return;
     }
 
     const finalData = {
       ...orderData,
       customer_id: parseInt(orderData.customer_id),
-      total_amount: totalAmount,
+      // Estimated totals — backend pricing engine will recalculate and override
+      total_amount: estimatedTotal,
       subtotal: subtotal,
-      tax_amount: taxAmount,
+      tax_amount: taxAmountEstimate,
       shipping_amount: shippingAmount,
       created_by: 1,
       // Required fields
@@ -5106,13 +5146,17 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
       sales_org_id: orderData.sales_org_id ? parseInt(orderData.sales_org_id) : null,
       distribution_channel_id: orderData.distribution_channel_id ? parseInt(orderData.distribution_channel_id) : null,
       division_id: orderData.division_id ? parseInt(orderData.division_id) : null,
-      pricing_procedure: orderData.pricing_procedure || null,
-      tax_code: orderData.tax_code || null,
+      pricing_procedure: orderData.pricing_procedure || null,   // optional — server determines if missing
+      tax_code: orderData.tax_code || null,                     // optional — server determines if missing
+      // customer_pricing_procedure for server-side procedure determination
+      customer_pricing_procedure: (orderData as any).customer_pricing_procedure || null,
       // Partner functions
       sold_to_address_id: orderData.sold_to_address_id ? parseInt(orderData.sold_to_address_id) : null,
       bill_to_address_id: orderData.bill_to_address_id ? parseInt(orderData.bill_to_address_id) : null,
       ship_to_address_id: orderData.ship_to_address_id ? parseInt(orderData.ship_to_address_id) : null,
-      payer_to_address_id: orderData.payer_to_address_id ? parseInt(orderData.payer_to_address_id) : null,
+      payer_to_address_id: orderData.payer_to_address_id
+        ? parseInt(orderData.payer_to_address_id)
+        : (orderData.ship_to_address_id ? parseInt(orderData.ship_to_address_id) : null), // default payer = ship-to
       // High priority fields
       sales_office_id: orderData.sales_office_id ? parseInt(orderData.sales_office_id) : null,
       sales_group_id: orderData.sales_group_id ? parseInt(orderData.sales_group_id) : null,
@@ -5124,17 +5168,16 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
       customer_po_date: orderData.customer_po_date || null,
       order_reason: orderData.order_reason || null,
       sales_district: orderData.sales_district || null,
-      // Tax information
-      tax_rules: taxRules, // Include tax rules for backend calculation
-      tax_profile_id: orderData.tax_profile_id, // Include tax profile ID
-      company_code_id: orderData.company_code_id ? parseInt(orderData.company_code_id) : null, // Include company_code_id from customer master
+      // Tax information (server-side engine will re-calculate; these are hints)
+      tax_rules: taxRules,
+      tax_profile_id: orderData.tax_profile_id,
+      company_code_id: orderData.company_code_id ? parseInt(orderData.company_code_id) : null,
       items: orderData.items.map(item => ({
         ...item,
         material_id: parseInt(item.material_id),
         quantity: parseInt(item.quantity),
         unit_price: parseFloat(item.unit_price),
         subtotal: parseFloat(item.quantity) * parseFloat(item.unit_price),
-        // Include all auto-filled fields
         plant_id: item.plant_id ? parseInt(item.plant_id) : null,
         plant_code: item.plant_code || null,
         storage_location_id: item.storage_location_id ? parseInt(item.storage_location_id) : null,
@@ -5243,9 +5286,9 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 }
 
                 // Shipping and delivery fields
-                if (customer?.shipping_conditions || customer?.shippingConditions) {
+                if (customer?.shipping_condition_key || customer?.shippingConditions) {
                   if (isEmpty(orderData.shipping_condition) || isCustomerChanging) {
-                    const shippingCondition = customer?.shipping_conditions || customer?.shippingConditions || '';
+                    const shippingCondition = customer?.shipping_condition_key || customer?.shippingConditions || '';
                     updatedData.shipping_condition = shippingCondition;
                     fieldsAutoFilled.add('shipping_condition');
 
@@ -6647,11 +6690,12 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
             const subtotal = orderData.items.reduce((sum, item) =>
               sum + ((parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0)), 0
             );
-            const taxAmount = subtotal * 0.1; // 10% tax
+            const taxBreakdownOuter = (taxRules || []).map((rule: any) => subtotal * (rule.rate_percent / 100));
+            const taxAmountOuter = taxBreakdownOuter.reduce((s: number, a: number) => s + a, 0);
             const shippingAmount = parseFloat(String(orderData.shipping_amount)) || 0;
-            const orderTotal = subtotal + taxAmount + shippingAmount;
+            const orderTotal = subtotal + taxAmountOuter + shippingAmount;
             const exceedsCredit = customerCreditInfo.creditLimit > 0 && orderTotal > customerCreditInfo.availableCredit;
-            return exceedsCredit ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200';
+            return exceedsCredit ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200';
           })()}`}>
             {(() => {
               const subtotal = orderData.items.reduce((sum, item) =>
@@ -6676,127 +6720,278 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
               const creditUtilization = customerCreditInfo.creditLimit > 0 ? (orderTotal / customerCreditInfo.creditLimit) * 100 : 0;
 
               return (
-                <div className="space-y-3">
+                <div className="space-y-4">
+                  {/* Header */}
                   <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-gray-900">Order Summary</h3>
+                    <h3 className="text-lg font-bold text-gray-900">Order Summary</h3>
                     {customerCreditInfo.creditLimit > 0 && (
-                      <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${exceedsCredit
-                        ? 'bg-red-100 text-red-800'
-                        : creditUtilization > 80
-                          ? 'bg-yellow-100 text-yellow-800'
-                          : 'bg-green-100 text-green-800'
+                      <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${exceedsCredit ? 'bg-red-100 text-red-800' :
+                        creditUtilization > 80 ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-green-100 text-green-800'
                         }`}>
-                        {exceedsCredit ? (
-                          <>
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                            </svg>
-                            Credit Exceeded
-                          </>
-                        ) : creditUtilization > 80 ? (
-                          <>
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                            </svg>
-                            High Usage
-                          </>
-                        ) : (
-                          <>
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            Within Limit
-                          </>
-                        )}
+                        {exceedsCredit ? '⚠ Credit Exceeded' : creditUtilization > 80 ? '⚠ High Usage' : '✓ Within Limit'}
                       </div>
                     )}
                   </div>
 
+                  {/* Per-Item Line Breakdown */}
+                  {orderData.items.filter((item: any) => item.material_id).length > 0 && (
+                    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+                      <div className="grid grid-cols-12 gap-1 px-3 py-2 bg-slate-100 text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                        <span className="col-span-5">Item</span>
+                        <span className="col-span-2 text-center">Qty</span>
+                        <span className="col-span-2 text-right">Price</span>
+                        <span className="col-span-3 text-right">Total</span>
+                      </div>
+                      {orderData.items.map((item: any, idx: number) => {
+                        const qty = parseFloat(item.quantity) || 0;
+                        const price = parseFloat(item.unit_price) || 0;
+                        if (!item.material_id) return null;
+                        return (
+                          <div key={idx} className={`grid grid-cols-12 gap-1 px-3 py-2 text-sm border-t border-slate-100 ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
+                            <span className="col-span-5 text-slate-700 truncate" title={item.material_description || item.material_id}>
+                              {item.material_description || `Item ${idx + 1}`}
+                            </span>
+                            <span className="col-span-2 text-center text-slate-500">{qty} {item.unit || 'PC'}</span>
+                            <span className="col-span-2 text-right text-slate-500">${price.toFixed(2)}</span>
+                            <span className="col-span-3 text-right font-semibold text-slate-800">${(qty * price).toFixed(2)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Totals */}
                   <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Subtotal:</span>
+                    <div className="flex justify-between text-gray-700">
+                      <span>Subtotal</span>
                       <span className="font-medium">${subtotal.toFixed(2)}</span>
                     </div>
 
                     {/* Tax Breakdown by Rule */}
                     {taxBreakdown.length > 0 ? (
                       <div className="bg-purple-50 p-3 rounded-lg border border-purple-200">
-                        <div className="flex justify-between items-center mb-2">
-                          <span className="text-gray-700 font-medium flex items-center gap-1">
-                            <svg className="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                            </svg>
-                            Tax Breakdown:
-                          </span>
+                        <div className="flex justify-between items-center mb-1.5">
+                          <span className="text-purple-800 font-medium text-xs uppercase tracking-wide">Tax (Estimated)</span>
                           <span className="font-semibold text-purple-900">${taxAmount.toFixed(2)}</span>
                         </div>
-                        <div className="space-y-1 pl-2">
+                        <div className="space-y-1">
                           {taxBreakdown.map((tax, index) => (
-                            <div key={index} className="flex justify-between items-center text-xs">
-                              <span className="text-gray-600">
-                                <span className="font-medium text-purple-700">{tax.rule_code}</span> - {tax.title} ({tax.rate_percent}%)
-                              </span>
-                              <span className="font-medium text-purple-900">${tax.amount.toFixed(2)}</span>
+                            <div key={index} className="flex justify-between text-xs text-purple-700">
+                              <span><span className="font-semibold">{tax.rule_code}</span> — {tax.title} ({tax.rate_percent}%)</span>
+                              <span>${tax.amount.toFixed(2)}</span>
                             </div>
                           ))}
                         </div>
                       </div>
                     ) : (
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Tax:</span>
-                        <span className="font-medium">$0.00</span>
+                      <div className="flex justify-between text-slate-500">
+                        <span className="flex items-center gap-1">
+                          Tax
+                          <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">server-calculated</span>
+                        </span>
+                        <span>—</span>
                       </div>
                     )}
 
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Shipping:</span>
-                      <span className="font-medium">${shippingAmount.toFixed(2)}</span>
-                    </div>
+                    {shippingAmount > 0 && (
+                      <div className="flex justify-between text-gray-700">
+                        <span>Shipping</span>
+                        <span className="font-medium">${shippingAmount.toFixed(2)}</span>
+                      </div>
+                    )}
 
                     {customerCreditInfo.creditLimit > 0 && (
-                      <div className="flex justify-between pt-2 border-t">
-                        <span className="text-gray-600">Available Credit:</span>
+                      <div className="flex justify-between pt-1 border-t border-slate-200 text-slate-600">
+                        <span>Available Credit</span>
                         <span className="font-medium text-green-600">${customerCreditInfo.availableCredit.toFixed(2)}</span>
                       </div>
                     )}
+
+                    <div className="flex justify-between text-xl font-bold border-t-2 border-slate-300 pt-3 mt-1">
+                      <span className="text-slate-800">Estimated Total</span>
+                      <span className={exceedsCredit ? 'text-red-600' : 'text-blue-700'}>${orderTotal.toFixed(2)}</span>
+                    </div>
+
+                    <p className="text-xs text-slate-400 flex items-center gap-1">
+                      <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Final amounts recalculated by pricing engine after submission.
+                    </p>
                   </div>
 
-                  <div className="flex justify-between text-xl font-bold border-t pt-3">
-                    <span>Total:</span>
-                    <span className={exceedsCredit ? 'text-red-600' : 'text-gray-900'}>${orderTotal.toFixed(2)}</span>
-                  </div>
-
+                  {/* Credit utilization */}
                   {customerCreditInfo.creditLimit > 0 && (
-                    <div className={`p-3 rounded-lg ${exceedsCredit
-                      ? 'bg-red-100 border border-red-200'
-                      : creditUtilization > 80
-                        ? 'bg-yellow-100 border border-yellow-200'
-                        : 'bg-green-100 border border-green-200'
+                    <div className={`p-3 rounded-lg ${exceedsCredit ? 'bg-red-100 border border-red-200' :
+                      creditUtilization > 80 ? 'bg-yellow-100 border border-yellow-200' :
+                        'bg-green-100 border border-green-200'
                       }`}>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="font-medium">
-                          {exceedsCredit ? 'Credit Limit Exceeded' : 'Credit Utilization'}
-                        </span>
-                        <span className="font-bold">
-                          {exceedsCredit ? `-$${exceededBy.toFixed(2)}` : `${creditUtilization.toFixed(1)}%`}
+                      <div className="flex items-center justify-between text-sm font-medium mb-1.5">
+                        <span>{exceedsCredit ? 'Credit Limit Exceeded' : 'Credit Utilization'}</span>
+                        <span>{exceedsCredit ? `-$${exceededBy.toFixed(2)}` : `${creditUtilization.toFixed(1)}%`}</span>
+                      </div>
+                      <div className="w-full bg-white rounded-full h-2 mb-1">
+                        <div
+                          className={`h-2 rounded-full transition-all ${exceedsCredit ? 'bg-red-500' : creditUtilization > 80 ? 'bg-yellow-500' : 'bg-green-500'}`}
+                          style={{ width: `${Math.min(creditUtilization, 100)}%` }}
+                        />
+                      </div>
+                      <p className={`text-xs ${exceedsCredit ? 'text-red-700' : creditUtilization > 80 ? 'text-yellow-700' : 'text-green-700'
+                        }`}>
+                        {exceedsCredit
+                          ? `Order exceeds available credit by $${exceededBy.toFixed(2)}.`
+                          : creditUtilization > 80
+                            ? 'High credit utilization. Consider reviewing the order amount.'
+                            : 'Order is within credit limit and can be processed.'}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* ── SAP-style Pricing Analysis ── */}
+                  {orderData.pricing_procedure && (
+                    <div className="mt-1 border border-blue-200 rounded-lg overflow-hidden">
+                      {/* Panel header */}
+                      <div className="flex items-center justify-between bg-blue-600 px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <svg className="w-4 h-4 text-blue-100" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                          </svg>
+                          <span className="text-sm font-bold text-white">Pricing Analysis</span>
+                        </div>
+                        <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded font-mono font-semibold">
+                          {orderData.pricing_procedure}
                         </span>
                       </div>
-                      {exceedsCredit ? (
-                        <p className="text-red-700 text-sm mt-1">
-                          Order exceeds available credit by ${exceededBy.toFixed(2)}. Please reduce the order amount.
-                        </p>
-                      ) : creditUtilization > 80 ? (
-                        <p className="text-yellow-700 text-sm mt-1">
-                          High credit utilization. Consider reviewing the order amount.
-                        </p>
+
+                      {/* Procedure name */}
+                      {(() => {
+                        const pp = (pricingProcedures as any[]).find(
+                          (p: any) => p.procedure_code === orderData.pricing_procedure || String(p.id) === orderData.pricing_procedure
+                        );
+                        return pp ? (
+                          <div className="px-3 py-1.5 bg-blue-50 border-b border-blue-100 text-xs text-blue-800 flex items-center gap-1">
+                            <span className="font-medium">{pp.procedure_name || pp.description}</span>
+                            {pp.description && pp.procedure_name && (
+                              <span className="text-blue-500">— {pp.description}</span>
+                            )}
+                          </div>
+                        ) : null;
+                      })()}
+
+                      {/* Steps table */}
+                      {procedureStepsLoading ? (
+                        <div className="flex items-center gap-2 px-3 py-3 text-xs text-slate-500">
+                          <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500" />
+                          Loading procedure steps…
+                        </div>
+                      ) : (procedureSteps as any[]).length === 0 ? (
+                        <div className="px-3 py-3 text-xs text-slate-400 italic">
+                          No condition steps defined for this procedure.
+                        </div>
                       ) : (
-                        <p className="text-green-700 text-sm mt-1">
-                          Order is within credit limit and can be processed.
-                        </p>
+                        <div className="overflow-x-auto">
+                          {/* Column headers */}
+                          <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide bg-slate-50 border-b border-slate-200 px-2 py-1.5"
+                            style={{ gridTemplateColumns: '32px 32px 60px 1fr 72px 80px 32px 44px' }}>
+                            <span>Step</span>
+                            <span>Ctr</span>
+                            <span>CType</span>
+                            <span>Description</span>
+                            <span className="text-right">Rate</span>
+                            <span className="text-right">Amount</span>
+                            <span className="text-center">Req</span>
+                            <span className="text-right">Acct</span>
+                          </div>
+                          {/* Loading indicator for pricing preview */}
+                          {pricingPreviewLoading && (
+                            <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 border-b border-amber-100 text-xs text-amber-600">
+                              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-amber-500" />
+                              Calculating prices…
+                            </div>
+                          )}
+                          {/* Rows */}
+                          {(procedureSteps as any[]).map((step: any, i: number) => {
+                            const isTax = step.condition_type_code?.includes('TAX') ||
+                              step.condition_type_code?.includes('VAT') ||
+                              step.condition_type_code?.includes('GST') ||
+                              step.condition_type_code?.includes('IGST') ||
+                              step.condition_type_code?.includes('CGST') ||
+                              step.condition_type_code?.includes('SGST') ||
+                              step.condition_type_code?.includes('MWST');
+                            const isPrice = step.condition_type_code?.startsWith('PR') || step.condition_type_code?.startsWith('PB');
+                            const isDiscount = step.condition_type_code?.startsWith('K') || step.condition_type_code?.startsWith('RB');
+                            const rowColor = isTax ? 'bg-purple-50' : isPrice ? 'bg-green-50' : isDiscount ? 'bg-orange-50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50';
+
+                            // Match with pricing preview condition by step number
+                            const previewCond = pricingPreview?.conditions?.find((c: any) => c.step === (step.step_number || step.counter));
+                            const rate = previewCond?.rate;
+                            const amount = previewCond?.calculatedValue;
+                            const calcType = previewCond?.calculationType;
+
+                            return (
+                              <div
+                                key={step.id || i}
+                                className={`grid text-xs border-b border-slate-100 px-2 py-1.5 hover:bg-blue-50 transition-colors ${rowColor}`}
+                                style={{ gridTemplateColumns: '32px 32px 60px 1fr 72px 80px 32px 44px' }}
+                              >
+                                <span className="text-slate-500 font-mono">{step.step_number || step.counter}</span>
+                                <span className="text-slate-400 font-mono">{step.counter}</span>
+                                <span className={`font-bold font-mono ${isTax ? 'text-purple-700' : isPrice ? 'text-green-700' : isDiscount ? 'text-orange-700' : 'text-blue-700'}`}>
+                                  {step.condition_type_code || '—'}
+                                </span>
+                                <span className="text-slate-700 truncate" title={step.condition_name || step.description}>
+                                  {step.condition_name || step.description || '—'}
+                                </span>
+                                {/* Rate */}
+                                <span className="text-right font-mono text-slate-600">
+                                  {rate != null && rate !== 0
+                                    ? (calcType === '%' ? `${rate.toFixed(1)}%` : `$${rate.toFixed(2)}`)
+                                    : <span className="text-slate-300">—</span>}
+                                </span>
+                                {/* Amount */}
+                                <span className={`text-right font-mono font-semibold ${amount < 0 ? 'text-red-600' : amount > 0 ? 'text-emerald-700' : 'text-slate-300'}`}>
+                                  {amount != null && amount !== 0
+                                    ? `${amount < 0 ? '-' : ''}$${Math.abs(amount).toFixed(2)}`
+                                    : '—'}
+                                </span>
+                                {/* Mandatory */}
+                                <span className="text-center">
+                                  {step.is_mandatory
+                                    ? <span className="text-red-600 font-bold" title="Mandatory">●</span>
+                                    : <span className="text-slate-300" title="Optional">○</span>}
+                                </span>
+                                <span className="text-right font-mono text-slate-500 text-[10px]">{step.account_key || '—'}</span>
+                              </div>
+                            );
+                          })}
+                          {/* Totals row from pricing preview */}
+                          {pricingPreview && pricingPreview.grandTotal != null && pricingPreview.grandTotal !== 0 && (
+                            <div className="grid text-xs font-bold border-t-2 border-blue-300 bg-blue-50 px-2 py-2"
+                              style={{ gridTemplateColumns: '32px 32px 60px 1fr 72px 80px 32px 44px' }}>
+                              <span></span><span></span><span></span>
+                              <span className="text-blue-900 uppercase tracking-wide">Grand Total</span>
+                              <span></span>
+                              <span className="text-right font-mono text-blue-900 text-sm">
+                                ${pricingPreview.grandTotal.toFixed(2)}
+                              </span>
+                              <span></span><span></span>
+                            </div>
+                          )}
+                        </div>
                       )}
+
+                      {/* Legend */}
+                      <div className="flex items-center gap-3 px-3 py-1.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-400">
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-green-300 inline-block" /> Price</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-orange-300 inline-block" /> Discount</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-purple-300 inline-block" /> Tax</span>
+                        <span className="flex items-center gap-1"><span className="text-red-600">●</span> Mandatory</span>
+                      </div>
                     </div>
                   )}
                 </div>
+
               );
             })()}
           </div>

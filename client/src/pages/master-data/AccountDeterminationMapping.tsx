@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect, useRef } from "react";
+import * as XLSX from "xlsx";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,7 +36,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Edit, Trash2, RefreshCw, ArrowLeft, Eye, Search, MoreHorizontal, MapPin } from "lucide-react";
+import { Plus, Edit, Trash2, RefreshCw, ArrowLeft, Eye, Search, MoreHorizontal, MapPin, Download, Upload } from "lucide-react";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 
@@ -137,6 +138,8 @@ export default function AccountDeterminationMapping() {
     const [filterActive, setFilterActive] = useState<string>("all");
     const [filterSalesArea, setFilterSalesArea] = useState<string>("all");
     const [selectedSalesAreaId, setSelectedSalesAreaId] = useState<number | null>(null);
+    const [isImporting, setIsImporting] = useState(false);
+    const importFileRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
     const queryClient = useQueryClient();
 
@@ -411,6 +414,171 @@ export default function AccountDeterminationMapping() {
         });
     };
 
+    // ─── Excel Export ───────────────────────────────────────────────────────────
+    const handleExport = () => {
+        const exportData = filteredMappings.map((m) => ({
+            "Account Key": m.account_key_code,
+            "Key Name": m.account_key_name || "",
+            "Account Type": m.account_type || "",
+            "Business Scenario": m.business_scenario,
+            "Sales Org": m.sales_org_code || "",
+            "Distribution Channel": m.distribution_channel_code || "",
+            "Division": m.division_code || "",
+            "Customer Assignment Group": m.customer_assignment_group_code || "",
+            "Material Assignment Group": m.material_assignment_group_code || "",
+            "Condition Type": m.condition_type_code || "",
+            "GL Account Number": m.account_number || "",
+            "GL Account Name": m.account_name || "",
+            "Description": m.description || "",
+            "Active": m.is_active ? "Yes" : "No",
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(exportData);
+        // Auto-width columns
+        const colWidths = Object.keys(exportData[0] || {}).map((key) => ({
+            wch: Math.max(key.length, 15),
+        }));
+        ws["!cols"] = colWidths;
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Account Determination");
+
+        // Add a template sheet with instructions
+        const templateData = [{
+            "Account Key": "ERL",
+            "Business Scenario": "Standard Revenue",
+            "Sales Org": "",
+            "Distribution Channel": "",
+            "Division": "",
+            "Customer Assignment Group Code": "",
+            "Material Assignment Group Code": "",
+            "Condition Type Code": "",
+            "GL Account Number": "15002",
+            "Description": "",
+            "Active": "Yes",
+        }];
+        const wsTemplate = XLSX.utils.json_to_sheet(templateData);
+        XLSX.utils.book_append_sheet(wb, wsTemplate, "Import Template");
+
+        XLSX.writeFile(wb, `account-determination-mapping-${new Date().toISOString().split('T')[0]}.xlsx`);
+        toast({ title: "Exported", description: `${exportData.length} mappings exported to Excel.` });
+    };
+
+    // ─── Excel Import ───────────────────────────────────────────────────────────
+    const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setIsImporting(true);
+
+        try {
+            const buffer = await file.arrayBuffer();
+            const wb = XLSX.read(buffer, { type: "array" });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+            if (rows.length === 0) {
+                toast({ title: "Empty File", description: "No rows found in the uploaded file.", variant: "destructive" });
+                return;
+            }
+
+            let successCount = 0;
+            let errorCount = 0;
+            const errors: string[] = [];
+
+            for (const row of rows) {
+                const accountKeyCode = String(row["Account Key"] || row["account_key_code"] || "").trim();
+                const businessScenario = String(row["Business Scenario"] || row["business_scenario"] || "").trim();
+                const glAccountNumber = String(row["GL Account Number"] || row["gl_account_number"] || "").trim();
+
+                // ── Resolve GL Account ID (no validation - pass null if not found) ─
+                const glAcct = glAccounts.find((g) => g.account_number === glAccountNumber);
+                const glAccountId = glAcct?.id ?? 0;
+
+                // ── Resolve Sales Area ID from Sales Org + Channel + Division ─────
+                const salesOrgCode = String(row["Sales Org"] || "").trim();
+                const distChannelCode = String(row["Distribution Channel"] || "").trim();
+                const divisionCode = String(row["Division"] || "").trim();
+                let salesAreaId: number | null = null;
+                if (salesOrgCode && distChannelCode && divisionCode) {
+                    const area = salesAreas.find(
+                        (a) =>
+                            String(a.sales_org_code) === salesOrgCode &&
+                            String(a.distribution_channel_code) === distChannelCode &&
+                            String(a.division_code) === divisionCode
+                    );
+                    if (area) {
+                        salesAreaId = area.id;
+                    } else {
+                        errors.push(`Warning: Sales Area ${salesOrgCode}-${distChannelCode}-${divisionCode} not found for '${accountKeyCode}' — imported without sales area`);
+                    }
+                }
+
+                // ── Resolve Customer Assignment Group ID ──────────────────────────
+                const custGroupCode = String(row["Customer Assignment Group"] || row["Customer Assignment Group Code"] || "").trim();
+                let customerAssignmentGroupId: number | null = null;
+                if (custGroupCode) {
+                    const grp = customerAssignmentGroups.find((g) => g.code === custGroupCode);
+                    if (grp) {
+                        customerAssignmentGroupId = grp.id;
+                    } else {
+                        errors.push(`Warning: Customer Group '${custGroupCode}' not found — imported without it`);
+                    }
+                }
+
+                // ── Resolve Material Assignment Group ID ──────────────────────────
+                const matGroupCode = String(row["Material Assignment Group"] || row["Material Assignment Group Code"] || "").trim();
+                let materialAssignmentGroupId: number | null = null;
+                if (matGroupCode) {
+                    const grp = materialAssignmentGroups.find((g) => g.code === matGroupCode);
+                    if (grp) {
+                        materialAssignmentGroupId = grp.id;
+                    } else {
+                        errors.push(`Warning: Material Group '${matGroupCode}' not found — imported without it`);
+                    }
+                }
+
+                try {
+                    const response = await apiRequest("/api/master-data/account-determination-mapping", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            account_key_code: accountKeyCode,
+                            business_scenario: businessScenario,
+                            gl_account_id: glAccountId,
+                            description: String(row["Description"] || "").trim(),
+                            is_active: String(row["Active"] || "Yes").toLowerCase() !== "no",
+                            sales_area_id: salesAreaId,
+                            customer_assignment_group_id: customerAssignmentGroupId,
+                            material_assignment_group_id: materialAssignmentGroupId,
+                        }),
+                    });
+                    if (response.ok) {
+                        successCount++;
+                    } else {
+                        const err = await response.json();
+                        errorCount++;
+                        errors.push(`Row '${accountKeyCode}': ${err.message || "Failed"}`);
+                    }
+                } catch (err: any) {
+                    errorCount++;
+                    errors.push(`Row '${accountKeyCode}': ${err.message}`);
+                }
+            }
+
+            queryClient.invalidateQueries({ queryKey: ["/api/master-data/account-determination-mapping"] });
+            toast({
+                title: `Import Complete: ${successCount} imported, ${errorCount} failed`,
+                description: errors.length > 0 ? errors.slice(0, 3).join(" | ") : "All rows imported successfully.",
+                variant: errorCount > 0 ? "destructive" : "default",
+            });
+        } catch (err: any) {
+            toast({ title: "Import Error", description: err.message, variant: "destructive" });
+        } finally {
+            setIsImporting(false);
+            if (importFileRef.current) importFileRef.current.value = "";
+        }
+    };
+
     return (
         <div className="space-y-6">
             {/* Page Header */}
@@ -427,6 +595,32 @@ export default function AccountDeterminationMapping() {
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
+                    {/* Hidden file input for import */}
+                    <input
+                        ref={importFileRef}
+                        type="file"
+                        accept=".xlsx,.xls,.csv"
+                        className="hidden"
+                        onChange={handleImportFile}
+                    />
+                    <Button
+                        variant="outline"
+                        onClick={() => importFileRef.current?.click()}
+                        disabled={isImporting}
+                        title="Import mappings from Excel (.xlsx / .csv)"
+                    >
+                        <Upload className="mr-2 h-4 w-4" />
+                        {isImporting ? "Importing..." : "Import Excel"}
+                    </Button>
+                    <Button
+                        variant="outline"
+                        onClick={handleExport}
+                        disabled={filteredMappings.length === 0}
+                        title="Export current mappings to Excel"
+                    >
+                        <Download className="mr-2 h-4 w-4" />
+                        Export Excel
+                    </Button>
                     <Button onClick={() => setOpen(true)}>
                         <Plus className="mr-2 h-4 w-4" />
                         New Mapping

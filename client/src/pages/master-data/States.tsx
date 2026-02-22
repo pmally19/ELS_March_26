@@ -122,6 +122,25 @@ export default function States() {
     },
   });
 
+  // Fetch regions for dropdown selection
+  const { data: regions = [], isLoading: regionsLoading } = useQuery<any[]>({
+    queryKey: ['/api/master-data/regions'],
+    queryFn: async () => {
+      try {
+        const response = await apiRequest('/api/master-data/regions');
+        const data = await response.json();
+        return Array.isArray(data) ? data.map((r: any) => ({
+          id: r.id,
+          code: r.code,
+          name: r.name,
+          isActive: r.isActive !== undefined ? r.isActive : (r.is_active !== undefined ? r.is_active : true),
+        })).filter((r: any) => r.isActive) : [];
+      } catch {
+        return [];
+      }
+    },
+  });
+
   // Create state mutation
   const createMutation = useMutation({
     mutationFn: (data: StateFormData) => apiRequest("/api/master-data/states", { method: "POST", body: JSON.stringify(data) }),
@@ -173,9 +192,9 @@ export default function States() {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/master-data/states"] });
-      toast({ 
-        title: "Import Successful", 
-        description: `Imported ${data.imported} states. ${data.errors?.length || 0} errors.` 
+      toast({
+        title: "Import Successful",
+        description: `Imported ${data.imported} states. ${data.errors?.length || 0} errors.`
       });
     },
     onError: () => {
@@ -276,8 +295,8 @@ export default function States() {
     <div className="space-y-6">
       {/* Back Button Header */}
       <div className="flex items-center gap-4 mb-4">
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           size="sm"
           onClick={() => window.history.back()}
           className="flex items-center gap-2"
@@ -398,13 +417,30 @@ export default function States() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="region">Region</Label>
-                    <Input
-                      id="region"
-                      value={formData.region}
-                      onChange={(e) => setFormData({ ...formData, region: e.target.value })}
-                      placeholder="West Coast, Northeast"
-                      maxLength={50}
-                    />
+                    <Select
+                      value={formData.region || ""}
+                      onValueChange={(value) => setFormData({ ...formData, region: value === "__none__" ? "" : value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select region" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {regions.length > 0 ? (
+                          regions.map((r: any) => (
+                            <SelectItem key={r.id} value={r.name}>
+                              {r.code} - {r.name}
+                            </SelectItem>
+                          ))
+                        ) : (
+                          <SelectItem value="__none__" disabled>
+                            {regionsLoading ? "Loading regions..." : "No regions available"}
+                          </SelectItem>
+                        )}
+                        {regions.length > 0 && (
+                          <SelectItem value="__none__">None</SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -499,13 +535,13 @@ export default function States() {
                     <TableCell className="font-medium">{state.code}</TableCell>
                     <TableCell>{state.name}</TableCell>
                     <TableCell>
-                      {state.countryCode 
+                      {state.countryCode
                         ? `${state.countryCode}${state.countryName ? ` - ${state.countryName}` : ""}`
                         : "-"}
                     </TableCell>
                     <TableCell>{state.region || "-"}</TableCell>
                     <TableCell>
-                      {state.taxJurisdictionCode 
+                      {state.taxJurisdictionCode
                         ? `${state.taxJurisdictionCode}${state.taxJurisdictionName ? ` - ${state.taxJurisdictionName}` : ""}`
                         : "-"}
                     </TableCell>

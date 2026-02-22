@@ -221,16 +221,7 @@ export const TILE_CATALOG: TileConfig[] = [
     businessProcess: "Financial Setup",
     functionalArea: "Master Data"
   },
-    icon: "FileText",
-    requiredRoles: ["admin", "master_data_manager"],
-    moduleGroup: "finance",
-    isActive: true,
-    alphabeticPrefix: "A",
-    processSequence: 11,
-    isCustomized: false,
-    businessProcess: "Master Data Setup",
-    functionalArea: "Master Data"
-  },
+
   {
     id: "ledgers",
     number: "A012",
@@ -284,7 +275,7 @@ export const TILE_CATALOG: TileConfig[] = [
   },
   {
     id: "plant",
-    number: "A003", 
+    number: "A003",
     title: "Plant",
     category: "Master Data",
     description: "Manufacturing and storage locations - Third step in setup",
@@ -303,7 +294,7 @@ export const TILE_CATALOG: TileConfig[] = [
     id: "storage-location",
     number: "A004",
     title: "Storage Location",
-    category: "Master Data", 
+    category: "Master Data",
     description: "Warehouse storage areas - Fourth step after plant setup",
     route: "/master-data/storage-location",
     icon: "Package",
@@ -339,7 +330,7 @@ export const TILE_CATALOG: TileConfig[] = [
     title: "Cost Centers",
     category: "Master Data",
     description: "Organizational units for cost allocation - Sixth step in setup",
-    route: "/master-data/cost-centers", 
+    route: "/master-data/cost-centers",
     icon: "BarChart2",
     requiredRoles: ["admin", "finance_manager", "controlling_manager"],
     moduleGroup: "controlling",
@@ -463,7 +454,7 @@ export const TILE_CATALOG: TileConfig[] = [
   {
     id: "purchase-order",
     number: "P001",
-    title: "Purchase Order", 
+    title: "Purchase Order",
     category: "Transactions",
     description: "Supplier order management - First step in procurement",
     route: "/transactions/purchase-order",
@@ -481,7 +472,7 @@ export const TILE_CATALOG: TileConfig[] = [
     id: "goods-receipt",
     number: "P002",
     title: "Goods Receipt",
-    category: "Transactions", 
+    category: "Transactions",
     description: "Incoming material processing - Second step after PO",
     route: "/transactions/goods-receipt",
     icon: "Package",
@@ -531,7 +522,7 @@ export const TILE_CATALOG: TileConfig[] = [
     functionalArea: "Transactions"
   },
   {
-    id: "accounts-receivable", 
+    id: "accounts-receivable",
     number: "F002",
     title: "Accounts Receivable",
     category: "Transactions",
@@ -539,7 +530,7 @@ export const TILE_CATALOG: TileConfig[] = [
     route: "/transactions/accounts-receivable",
     icon: "DollarSign",
     requiredRoles: ["admin", "finance_manager", "ar_clerk"],
-    moduleGroup: "finance", 
+    moduleGroup: "finance",
     isActive: true,
     alphabeticPrefix: "F",
     processSequence: 2,
@@ -553,7 +544,7 @@ export const TILE_CATALOG: TileConfig[] = [
     title: "Payment Processing",
     category: "Transactions",
     description: "Payment execution and management - Third step in finance",
-    route: "/transactions/payment-processing", 
+    route: "/transactions/payment-processing",
     icon: "CreditCard",
     requiredRoles: ["admin", "finance_manager", "payment_clerk"],
     moduleGroup: "finance",
@@ -571,7 +562,7 @@ export const TILE_CATALOG: TileConfig[] = [
     number: "I001",
     title: "Goods Issue",
     category: "Transactions",
-    description: "Outgoing material processing - First step in inventory movement", 
+    description: "Outgoing material processing - First step in inventory movement",
     route: "/transactions/goods-issue",
     icon: "Package",
     requiredRoles: ["admin", "warehouse_manager", "warehouse_clerk"],
@@ -644,7 +635,7 @@ export const DEFAULT_WORKSPACES = {
     tiles: ["A002", "A005", "A006", "F001", "F002", "F003", "P003"]
   },
   SALES_MANAGER: {
-    name: "Sales Manager Workspace", 
+    name: "Sales Manager Workspace",
     tiles: ["B001", "S001", "S002", "S003", "SC001"]
   },
   PROCUREMENT_MANAGER: {
@@ -753,7 +744,7 @@ export const DEFAULT_WORKSPACES = {
  */
 
 export function getTilesByRole(userRole: string): TileConfig[] {
-  return TILE_CATALOG.filter(tile => 
+  return TILE_CATALOG.filter(tile =>
     tile.requiredRoles.includes(userRole) || tile.requiredRoles.includes("all")
   );
 }
