@@ -1,17 +1,32 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Edit, Trash2, ArrowLeft, Calendar, Search, Lock, Unlock, CheckCircle, XCircle, Filter } from "lucide-react";
+import {
+  Plus, Edit, Trash2, ArrowLeft, Calendar, Search, RefreshCw, Eye, MoreHorizontal,
+  CheckCircle, XCircle, Lock, Unlock
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow
+} from "@/components/ui/table";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { Link } from "wouter";
 
 interface PostingPeriodControl {
   id: number;
@@ -34,20 +49,14 @@ interface PostingPeriodControl {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  createdBy?: number;
+  updatedBy?: number;
+  tenantId?: string;
   module: "ALL" | "ASSETS" | "CUSTOMERS" | "VENDORS" | "INVENTORY" | "GL";
 }
 
-interface CompanyCode {
-  id: number;
-  code: string;
-  name: string;
-}
-
-interface FiscalYearVariant {
-  id: number;
-  variant_id: string;
-  description: string;
-}
+interface CompanyCode { id: number; code: string; name: string; }
+interface FiscalYearVariant { id: number; variant_id: string; description: string; }
 
 const MODULES = [
   { value: "ALL", label: "All Modules" },
@@ -58,9 +67,24 @@ const MODULES = [
   { value: "GL", label: "General Ledger" }
 ];
 
+const STATUS_STYLES: Record<string, string> = {
+  OPEN: "bg-green-100 text-green-800",
+  CLOSED: "bg-yellow-100 text-yellow-800",
+  LOCKED: "bg-red-100 text-red-800",
+};
+
+const StatusIcon = ({ status }: { status: string }) => {
+  if (status === "OPEN") return <Unlock className="h-3 w-3 mr-1 inline" />;
+  if (status === "LOCKED") return <Lock className="h-3 w-3 mr-1 inline" />;
+  return null;
+};
+
 export default function PostingPeriodControls() {
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingControl, setEditingControl] = useState<PostingPeriodControl | null>(null);
+  const [viewingControl, setViewingControl] = useState<PostingPeriodControl | null>(null);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [showAdminData, setShowAdminData] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [companyFilter, setCompanyFilter] = useState<string>("all");
@@ -70,7 +94,6 @@ export default function PostingPeriodControls() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Fetch company codes
   const { data: companyCodes = [] } = useQuery<CompanyCode[]>({
     queryKey: ['/api/master-data/company-codes'],
     queryFn: async () => {
@@ -81,7 +104,6 @@ export default function PostingPeriodControls() {
     },
   });
 
-  // Fetch fiscal year variants
   const { data: fiscalYearVariants = [] } = useQuery<FiscalYearVariant[]>({
     queryKey: ['/api/master-data/fiscal-year-variants'],
     queryFn: async () => {
@@ -92,12 +114,11 @@ export default function PostingPeriodControls() {
     },
   });
 
-  // Fetch posting period controls
-  const { data: controls = [], isLoading } = useQuery<PostingPeriodControl[]>({
+  const { data: controls = [], isLoading, refetch } = useQuery<PostingPeriodControl[]>({
     queryKey: ['/api/master-data/posting-period-controls'],
     queryFn: async () => {
       const res = await fetch('/api/master-data/posting-period-controls');
-      if (!res.ok) throw new Error('Failed to fetch posting period controls');
+      if (!res.ok) throw new Error('Failed to fetch');
       return res.json();
     },
   });
@@ -108,22 +129,16 @@ export default function PostingPeriodControls() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
-      }).then(res => {
-        if (!res.ok) throw new Error('Failed to create posting period control');
+      }).then(async res => {
+        if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
         return res.json();
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/master-data/posting-period-controls'] });
-      setIsAddDialogOpen(false);
+      setIsFormOpen(false); setEditingControl(null);
       toast({ title: "Posting period control created successfully" });
     },
-    onError: (error: any) => {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to create posting period control",
-        variant: "destructive"
-      });
-    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const updateMutation = useMutation({
@@ -132,22 +147,16 @@ export default function PostingPeriodControls() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
-      }).then(res => {
-        if (!res.ok) throw new Error('Failed to update posting period control');
+      }).then(async res => {
+        if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
         return res.json();
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/master-data/posting-period-controls'] });
-      setEditingControl(null);
+      setIsFormOpen(false); setEditingControl(null);
       toast({ title: "Posting period control updated successfully" });
     },
-    onError: (error: any) => {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to update posting period control",
-        variant: "destructive"
-      });
-    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -158,23 +167,43 @@ export default function PostingPeriodControls() {
       setDeletingId(null);
       toast({ title: "Posting period control deleted successfully" });
     },
-    onError: (error: any) => {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to delete posting period control",
-        variant: "destructive"
-      });
-    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const handleEdit = (control: PostingPeriodControl) => {
+    setEditingControl(control);
+    setIsFormOpen(true);
+  };
+
+  const openDetails = (control: PostingPeriodControl) => {
+    setViewingControl(control);
+    setShowAdminData(false);
+    setIsDetailsOpen(true);
+  };
+
+  const filteredControls = controls.filter((c) => {
+    const matchesSearch =
+      (c.companyCode || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (c.companyName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.fiscalYear.toString().includes(searchTerm);
+    const matchesCompany = companyFilter === "all" || c.companyCodeId.toString() === companyFilter;
+    const matchesYear = yearFilter === "all" || c.fiscalYear.toString() === yearFilter;
+    const matchesStatus = statusFilter === "all" || c.postingStatus === statusFilter;
+    const matchesModule = moduleFilter === "all" || c.module === moduleFilter;
+    return matchesSearch && matchesCompany && matchesYear && matchesStatus && matchesModule;
+  });
+
+  const uniqueYears = [...new Set(controls.map(c => c.fiscalYear))].sort((a, b) => b - a);
+
+  // ─── Inline Form ─────────────────────────────────────────────
   const ControlForm = ({ control, onSubmit, onCancel }: {
     control?: PostingPeriodControl;
     onSubmit: (data: Partial<PostingPeriodControl>) => void;
     onCancel: () => void;
   }) => {
     const [formData, setFormData] = useState<Partial<PostingPeriodControl>>({
-      companyCodeId: control?.companyCodeId || undefined,
-      fiscalYearVariantId: control?.fiscalYearVariantId || undefined,
+      companyCodeId: control?.companyCodeId,
+      fiscalYearVariantId: control?.fiscalYearVariantId,
       fiscalYear: control?.fiscalYear || new Date().getFullYear(),
       periodFrom: control?.periodFrom || 1,
       periodTo: control?.periodTo || 12,
@@ -187,128 +216,88 @@ export default function PostingPeriodControls() {
       module: control?.module || "ALL",
     });
 
-    const handleSubmit = (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!formData.companyCodeId || !formData.fiscalYear) {
-        toast({
-          title: "Validation Error",
-          description: "Company Code and Fiscal Year are required",
-          variant: "destructive"
-        });
-        return;
-      }
-      onSubmit(formData);
-    };
-
     return (
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={(e) => {
+        e.preventDefault();
+        if (!formData.companyCodeId) {
+          toast({ title: "Validation Error", description: "Company Code is required", variant: "destructive" });
+          return;
+        }
+        onSubmit(formData);
+      }} className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
-          <div>
-            <Label htmlFor="companyCodeId">Company Code *</Label>
+          <div className="space-y-1">
+            <Label>Company Code *</Label>
             <Select
               value={formData.companyCodeId?.toString()}
-              onValueChange={(value) => setFormData({ ...formData, companyCodeId: parseInt(value) })}
+              onValueChange={(v) => setFormData({ ...formData, companyCodeId: parseInt(v) })}
             >
-              <SelectTrigger>
-                <SelectValue placeholder="Select company code" />
-              </SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Select company code" /></SelectTrigger>
               <SelectContent>
                 {companyCodes.map((cc) => (
-                  <SelectItem key={cc.id} value={cc.id.toString()}>
-                    {cc.code} - {cc.name}
-                  </SelectItem>
+                  <SelectItem key={cc.id} value={cc.id.toString()}>{cc.code} - {cc.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
-          <div>
-            <Label htmlFor="module">Module *</Label>
+          <div className="space-y-1">
+            <Label>Module *</Label>
             <Select
               value={formData.module}
-              onValueChange={(value: any) => setFormData({ ...formData, module: value })}
+              onValueChange={(v: any) => setFormData({ ...formData, module: v })}
             >
-              <SelectTrigger>
-                <SelectValue placeholder="Select Module" />
-              </SelectTrigger>
+              <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {MODULES.map((m) => (
-                  <SelectItem key={m.value} value={m.value}>
-                    {m.label}
-                  </SelectItem>
-                ))}
+                {MODULES.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
         </div>
 
         <div className="grid grid-cols-3 gap-4">
-          <div>
-            <Label htmlFor="fiscalYear">Fiscal Year *</Label>
-            <Input
-              id="fiscalYear"
-              type="number"
-              value={formData.fiscalYear}
+          <div className="space-y-1">
+            <Label>Fiscal Year *</Label>
+            <Input type="number" value={formData.fiscalYear}
               onChange={(e) => setFormData({ ...formData, fiscalYear: parseInt(e.target.value) })}
-              min={1900}
-              max={9999}
-              required
-            />
+              min={1900} max={9999} required />
           </div>
-          <div>
-            <Label htmlFor="periodFrom">Period From *</Label>
-            <Input
-              id="periodFrom"
-              type="number"
-              value={formData.periodFrom}
+          <div className="space-y-1">
+            <Label>Period From *</Label>
+            <Input type="number" value={formData.periodFrom}
               onChange={(e) => setFormData({ ...formData, periodFrom: parseInt(e.target.value) })}
-              min={1}
-              max={16}
-              required
-            />
+              min={1} max={16} required />
           </div>
-          <div>
-            <Label htmlFor="periodTo">Period To *</Label>
-            <Input
-              id="periodTo"
-              type="number"
-              value={formData.periodTo}
+          <div className="space-y-1">
+            <Label>Period To *</Label>
+            <Input type="number" value={formData.periodTo}
               onChange={(e) => setFormData({ ...formData, periodTo: parseInt(e.target.value) })}
-              min={1}
-              max={16}
-              required
-            />
+              min={1} max={16} required />
           </div>
         </div>
 
-        <div>
-          <Label htmlFor="fiscalYearVariantId">Fiscal Year Variant (Optional)</Label>
+        <div className="space-y-1">
+          <Label>Fiscal Year Variant (Optional)</Label>
           <Select
             value={formData.fiscalYearVariantId?.toString() || "none"}
-            onValueChange={(value) => setFormData({ ...formData, fiscalYearVariantId: value === "none" ? undefined : parseInt(value) })}
+            onValueChange={(v) => setFormData({ ...formData, fiscalYearVariantId: v === "none" ? undefined : parseInt(v) })}
           >
-            <SelectTrigger>
-              <SelectValue placeholder="Select fiscal year variant" />
-            </SelectTrigger>
+            <SelectTrigger><SelectValue placeholder="Select fiscal year variant" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="none">None</SelectItem>
               {fiscalYearVariants.map((fyv) => (
-                <SelectItem key={fyv.id} value={fyv.id.toString()}>
-                  {fyv.variant_id} - {fyv.description}
-                </SelectItem>
+                <SelectItem key={fyv.id} value={fyv.id.toString()}>{fyv.variant_id} - {fyv.description}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
 
-        <div>
-          <Label htmlFor="postingStatus">Posting Status *</Label>
+        <div className="space-y-1">
+          <Label>Posting Status *</Label>
           <Select
             value={formData.postingStatus}
-            onValueChange={(value: any) => setFormData({ ...formData, postingStatus: value })}
+            onValueChange={(v: any) => setFormData({ ...formData, postingStatus: v })}
           >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
+            <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="OPEN">Open</SelectItem>
               <SelectItem value="CLOSED">Closed</SelectItem>
@@ -317,179 +306,93 @@ export default function PostingPeriodControls() {
           </Select>
         </div>
 
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="allowPosting">Allow Posting</Label>
-            <Switch
-              id="allowPosting"
-              checked={formData.allowPosting}
-              onCheckedChange={(checked) => setFormData({ ...formData, allowPosting: checked })}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <Label htmlFor="allowAdjustments">Allow Adjustments</Label>
-            <Switch
-              id="allowAdjustments"
-              checked={formData.allowAdjustments}
-              onCheckedChange={(checked) => setFormData({ ...formData, allowAdjustments: checked })}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <Label htmlFor="allowReversals">Allow Reversals</Label>
-            <Switch
-              id="allowReversals"
-              checked={formData.allowReversals}
-              onCheckedChange={(checked) => setFormData({ ...formData, allowReversals: checked })}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <Label htmlFor="isActive">Active</Label>
-            <Switch
-              id="isActive"
-              checked={formData.isActive}
-              onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
-            />
-          </div>
+        <div className="rounded-lg border p-3 space-y-3">
+          {[
+            { key: 'allowPosting', label: 'Allow Posting' },
+            { key: 'allowAdjustments', label: 'Allow Adjustments' },
+            { key: 'allowReversals', label: 'Allow Reversals' },
+            { key: 'isActive', label: 'Active' },
+          ].map(({ key, label }) => (
+            <div key={key} className="flex items-center justify-between">
+              <Label>{label}</Label>
+              <Switch
+                checked={(formData as any)[key]}
+                onCheckedChange={(v) => setFormData({ ...formData, [key]: v })}
+              />
+            </div>
+          ))}
         </div>
 
-        <div>
-          <Label htmlFor="controlReason">Control Reason</Label>
+        <div className="space-y-1">
+          <Label>Control Reason</Label>
           <Textarea
-            id="controlReason"
             value={formData.controlReason}
             onChange={(e) => setFormData({ ...formData, controlReason: e.target.value })}
             placeholder="Reason for closing or locking this period"
+            rows={2}
           />
         </div>
 
-        <div className="flex justify-end space-x-2 pt-4">
-          <Button type="button" variant="outline" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button type="submit">
-            {control ? 'Update' : 'Create'} Control
-          </Button>
-        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
+          <Button type="submit">{control ? 'Update' : 'Create'} Control</Button>
+        </DialogFooter>
       </form>
     );
   };
 
-  const filteredControls = controls.filter((control) => {
-    const matchesSearch =
-      (control.companyCode || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (control.companyName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      control.fiscalYear.toString().includes(searchTerm);
-    const matchesCompany = companyFilter === "all" || control.companyCodeId.toString() === companyFilter;
-    const matchesYear = yearFilter === "all" || control.fiscalYear.toString() === yearFilter;
-    const matchesStatus = statusFilter === "all" || control.postingStatus === statusFilter;
-    const matchesModule = moduleFilter === "all" || control.module === moduleFilter;
-
-    return matchesSearch && matchesCompany && matchesYear && matchesStatus && matchesModule;
-  });
-
-  const uniqueYears = [...new Set(controls.map(c => c.fiscalYear))].sort((a, b) => b - a);
-
-  if (isLoading) {
-    return <div className="flex justify-center p-8">Loading posting period controls...</div>;
-  }
-
+  // ─── Render ───────────────────────────────────────────────────
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4 mb-6">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => window.history.back()}
-          className="flex items-center gap-2"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Button>
-        <div className="text-sm text-gray-500">
-          Master Data → Posting Period Controls
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Calendar className="h-8 w-8 text-blue-600" />
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center">
+          <Link href="/master-data" className="mr-4 p-2 rounded-md hover:bg-gray-100">
+            <ArrowLeft className="h-5 w-5" />
+          </Link>
           <div>
-            <h1 className="text-3xl font-bold">Posting Period Controls</h1>
-            <p className="text-gray-600">Control when transactions can be posted to the general ledger</p>
+            <h1 className="text-2xl font-bold">Posting Period Controls</h1>
+            <p className="text-sm text-muted-foreground">
+              Control when transactions can be posted to the general ledger
+            </p>
           </div>
         </div>
-        <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="flex items-center gap-2">
-              <Plus className="h-4 w-4" />
-              Add Control
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Create Posting Period Control</DialogTitle>
-            </DialogHeader>
-            <ControlForm
-              onSubmit={(data) => createMutation.mutate(data)}
-              onCancel={() => setIsAddDialogOpen(false)}
-            />
-          </DialogContent>
-        </Dialog>
+        <Button onClick={() => { setEditingControl(null); setIsFormOpen(true); }}>
+          <Plus className="mr-2 h-4 w-4" />
+          New Control
+        </Button>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-4">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-          <Input
-            placeholder="Search by company, year..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
-          />
+      <div className="flex flex-wrap gap-2">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Search by company, year..." className="pl-8"
+            value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
         </div>
         <Select value={companyFilter} onValueChange={setCompanyFilter}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Company" />
-          </SelectTrigger>
+          <SelectTrigger className="w-[160px]"><SelectValue placeholder="Company" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Companies</SelectItem>
-            {companyCodes.map((cc) => (
-              <SelectItem key={cc.id} value={cc.id.toString()}>
-                {cc.code}
-              </SelectItem>
-            ))}
+            {companyCodes.map((cc) => <SelectItem key={cc.id} value={cc.id.toString()}>{cc.code}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={moduleFilter} onValueChange={setModuleFilter}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Module" />
-          </SelectTrigger>
+          <SelectTrigger className="w-[160px]"><SelectValue placeholder="Module" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Modules</SelectItem>
-            {MODULES.map(m => (
-              <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-            ))}
+            {MODULES.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={yearFilter} onValueChange={setYearFilter}>
-          <SelectTrigger className="w-[120px]">
-            <SelectValue placeholder="Year" />
-          </SelectTrigger>
+          <SelectTrigger className="w-[110px]"><SelectValue placeholder="Year" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Years</SelectItem>
-            {uniqueYears.map((year) => (
-              <SelectItem key={year} value={year.toString()}>
-                {year}
-              </SelectItem>
-            ))}
+            {uniqueYears.map(y => <SelectItem key={y} value={y.toString()}>{y}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[120px]">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
+          <SelectTrigger className="w-[110px]"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
             <SelectItem value="OPEN">Open</SelectItem>
@@ -497,118 +400,281 @@ export default function PostingPeriodControls() {
             <SelectItem value="LOCKED">Locked</SelectItem>
           </SelectContent>
         </Select>
+        <Button variant="outline" size="icon" onClick={() => refetch()} title="Refresh">
+          <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+        </Button>
       </div>
 
-      {/* Controls List */}
-      <div className="grid gap-4">
-        {filteredControls.map((control) => (
-          <Card key={control.id}>
-            <CardHeader className="pb-3">
-              <div className="flex items-start justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <CardTitle className="text-lg">
-                      {control.companyCode} - {control.companyName}
-                    </CardTitle>
-                    <Badge variant="outline" className="ml-2 font-normal">
-                      {control.module === 'ALL' ? 'All Modules' : control.module}
-                    </Badge>
-                  </div>
-                  <CardDescription>
-                    Fiscal Year {control.fiscalYear} • Periods {control.periodFrom} - {control.periodTo}
-                  </CardDescription>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <Badge variant={control.postingStatus === "OPEN" ? "default" : control.postingStatus === "CLOSED" ? "secondary" : "destructive"}>
-                    {control.postingStatus}
-                  </Badge>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setEditingControl(control)}
-                  >
-                    <Edit className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setDeletingId(control.id)}
-                  >
-                    <Trash2 className="h-4 w-4 text-red-500" />
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-2">
-                <div className="flex items-center gap-2">
-                  {control.allowPosting ? (
-                    <CheckCircle className="h-4 w-4 text-green-600" />
+      {/* Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Posting Period Controls</CardTitle>
+          <CardDescription>Manage when posting is allowed per company code, year, and module</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-md border">
+            <div className="max-h-[500px] overflow-y-auto">
+              <Table>
+                <TableHeader className="sticky top-0 bg-white z-10">
+                  <TableRow>
+                    <TableHead>Company</TableHead>
+                    <TableHead>Fiscal Year</TableHead>
+                    <TableHead>Periods</TableHead>
+                    <TableHead className="hidden sm:table-cell">Module</TableHead>
+                    <TableHead className="hidden md:table-cell">Posting</TableHead>
+                    <TableHead className="text-center w-[100px]">Status</TableHead>
+                    <TableHead className="text-right w-[80px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isLoading ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center h-24">Loading...</TableCell>
+                    </TableRow>
+                  ) : filteredControls.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center h-24">
+                        <div className="flex flex-col items-center gap-2">
+                          <Calendar className="h-8 w-8 text-muted-foreground/40" />
+                          <p>No posting period controls found.{searchTerm ? " Try a different search." : ""}</p>
+                        </div>
+                      </TableCell>
+                    </TableRow>
                   ) : (
-                    <XCircle className="h-4 w-4 text-red-600" />
+                    filteredControls.map((control) => (
+                      <TableRow
+                        key={control.id}
+                        className="cursor-pointer hover:bg-gray-50"
+                        onClick={() => openDetails(control)}
+                      >
+                        <TableCell>
+                          <div className="font-medium">{control.companyCode}</div>
+                          <div className="text-xs text-muted-foreground">{control.companyName}</div>
+                        </TableCell>
+                        <TableCell className="font-medium">{control.fiscalYear}</TableCell>
+                        <TableCell>
+                          <span className="text-sm">{control.periodFrom} – {control.periodTo}</span>
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-800">
+                            {control.module}
+                          </span>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          {control.allowPosting ? (
+                            <span className="flex items-center text-green-700 text-xs">
+                              <CheckCircle className="h-3 w-3 mr-1" /> Allowed
+                            </span>
+                          ) : (
+                            <span className="flex items-center text-red-700 text-xs">
+                              <XCircle className="h-3 w-3 mr-1" /> Blocked
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${STATUS_STYLES[control.postingStatus]}`}>
+                            <StatusIcon status={control.postingStatus} />
+                            {control.postingStatus}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm">
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => openDetails(control)}>
+                                <Eye className="mr-2 h-4 w-4" /> View
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleEdit(control)}>
+                                <Edit className="mr-2 h-4 w-4" /> Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="text-red-600"
+                                onClick={() => setDeletingId(control.id)}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" /> Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))
                   )}
-                  <span className="text-gray-600">Posting</span>
-                </div>
-                <div>
-                  <span className="text-gray-500 block text-xs uppercase">Adjustments</span>
-                  <span className={control.allowAdjustments ? "text-green-600 font-medium" : "text-gray-600"}>
-                    {control.allowAdjustments ? "Allowed" : "No"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-500 block text-xs uppercase">Reversals</span>
-                  <span className={control.allowReversals ? "text-green-600 font-medium" : "text-gray-600"}>
-                    {control.allowReversals ? "Allowed" : "No"}
-                  </span>
-                </div>
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
-                {control.controlReason && (
-                  <div className="col-span-2 md:col-span-4 mt-2 bg-gray-50 p-2 rounded text-xs text-gray-600">
-                    <span className="font-semibold">Note:</span> {control.controlReason}
+      {/* Create / Edit Dialog */}
+      <Dialog open={isFormOpen} onOpenChange={(open) => { setIsFormOpen(open); if (!open) setEditingControl(null); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {editingControl ? "Edit Posting Period Control" : "Create Posting Period Control"}
+            </DialogTitle>
+            <DialogDescription>
+              {editingControl
+                ? `Editing control for ${editingControl.companyCode} — FY ${editingControl.fiscalYear}`
+                : "Configure posting period restrictions for a company code"}
+            </DialogDescription>
+          </DialogHeader>
+          <ControlForm
+            control={editingControl || undefined}
+            onSubmit={(data) => {
+              if (editingControl) {
+                updateMutation.mutate({ id: editingControl.id, data });
+              } else {
+                createMutation.mutate(data);
+              }
+            }}
+            onCancel={() => { setIsFormOpen(false); setEditingControl(null); }}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={isDetailsOpen} onOpenChange={(open) => { setIsDetailsOpen(open); if (!open) setShowAdminData(false); }}>
+        <DialogContent className="sm:max-w-[560px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Posting Period Control Details</DialogTitle>
+            <DialogDescription>
+              {viewingControl?.companyCode} — FY {viewingControl?.fiscalYear} | Periods {viewingControl?.periodFrom}–{viewingControl?.periodTo}
+            </DialogDescription>
+          </DialogHeader>
+          {viewingControl && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Company Code</p>
+                  <p className="text-sm font-semibold">{viewingControl.companyCode}</p>
+                  <p className="text-xs text-muted-foreground">{viewingControl.companyName}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Status</p>
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${STATUS_STYLES[viewingControl.postingStatus]}`}>
+                    <StatusIcon status={viewingControl.postingStatus} />
+                    {viewingControl.postingStatus}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Fiscal Year</p>
+                  <p className="text-sm">{viewingControl.fiscalYear}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Period Range</p>
+                  <p className="text-sm">{viewingControl.periodFrom} — {viewingControl.periodTo}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Module</p>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-800">
+                    {viewingControl.module}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Fiscal Year Variant</p>
+                  <p className="text-sm">{viewingControl.fiscalYearVariantCode || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Active</p>
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewingControl.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                    {viewingControl.isActive ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Posting flags */}
+              <div>
+                <p className="text-sm font-medium text-gray-500 mb-2">Posting Permissions</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: 'Allow Posting', val: viewingControl.allowPosting },
+                    { label: 'Allow Adjustments', val: viewingControl.allowAdjustments },
+                    { label: 'Allow Reversals', val: viewingControl.allowReversals },
+                  ].map(({ label, val }) => (
+                    <div key={label} className="flex flex-col items-center p-2 rounded border text-center">
+                      {val
+                        ? <CheckCircle className="h-5 w-5 text-green-600 mb-1" />
+                        : <XCircle className="h-5 w-5 text-red-500 mb-1" />}
+                      <span className="text-xs text-gray-600">{label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {viewingControl.controlReason && (
+                <div className="bg-gray-50 rounded p-3">
+                  <p className="text-sm font-medium text-gray-500">Control Reason</p>
+                  <p className="text-sm">{viewingControl.controlReason}</p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Created</p>
+                  <p className="text-sm">{viewingControl.createdAt ? new Date(viewingControl.createdAt).toLocaleString() : '—'}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Last Updated</p>
+                  <p className="text-sm">{viewingControl.updatedAt ? new Date(viewingControl.updatedAt).toLocaleString() : '—'}</p>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Administrative Data - collapsible */}
+              <div
+                className="cursor-pointer flex justify-between items-center select-none py-1"
+                onClick={() => setShowAdminData(!showAdminData)}
+              >
+                <p className="font-semibold text-sm text-gray-700">Administrative Data</p>
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ transform: showAdminData ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </div>
+              {showAdminData && (
+                <dl className="grid grid-cols-2 gap-3">
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Created By</dt>
+                    <dd className="text-sm text-gray-900">{viewingControl.createdBy ?? '—'}</dd>
                   </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Updated By</dt>
+                    <dd className="text-sm text-gray-900">{viewingControl.updatedBy ?? viewingControl.createdBy ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Controlled By</dt>
+                    <dd className="text-sm text-gray-900">{viewingControl.controlledBy ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Controlled At</dt>
+                    <dd className="text-sm text-gray-900">{viewingControl.controlledAt ? new Date(viewingControl.controlledAt).toLocaleString() : '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Tenant ID</dt>
+                    <dd className="text-sm text-gray-900">{viewingControl.tenantId ?? '—'}</dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setIsDetailsOpen(false); if (viewingControl) handleEdit(viewingControl); }}>
+              <Edit className="h-4 w-4 mr-1" /> Edit
+            </Button>
+            <Button onClick={() => setIsDetailsOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-        {filteredControls.length === 0 && (
-          <Card>
-            <CardContent className="text-center py-12">
-              <div className="bg-gray-100 rounded-full h-16 w-16 flex items-center justify-center mx-auto mb-4">
-                <Filter className="h-8 w-8 text-gray-400" />
-              </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No Controls Found</h3>
-              <p className="text-gray-500 mb-6 max-w-sm mx-auto">
-                No posting period controls match your current filters. Try adjusting them or create a new control.
-              </p>
-              <Button onClick={() => setIsAddDialogOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add Control
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      {/* Edit Dialog */}
-      {editingControl && (
-        <Dialog open={true} onOpenChange={() => setEditingControl(null)}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Edit Posting Period Control</DialogTitle>
-            </DialogHeader>
-            <ControlForm
-              control={editingControl}
-              onSubmit={(data) => updateMutation.mutate({ id: editingControl.id, data })}
-              onCancel={() => setEditingControl(null)}
-            />
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {/* Delete Dialog */}
+      {/* Delete Confirmation */}
       <AlertDialog open={deletingId !== null} onOpenChange={() => setDeletingId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -622,9 +688,7 @@ export default function PostingPeriodControls() {
             <AlertDialogAction
               onClick={() => deletingId && deleteMutation.mutate(deletingId)}
               className="bg-red-600 hover:bg-red-700"
-            >
-              Delete
-            </AlertDialogAction>
+            >Delete</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

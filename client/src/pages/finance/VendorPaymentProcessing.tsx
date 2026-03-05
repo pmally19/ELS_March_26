@@ -78,8 +78,9 @@ export default function VendorPaymentProcessing() {
   const [bankAccountId, setBankAccountId] = useState<number | null>(null);
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
+  const [paymentDocumentTypeId, setPaymentDocumentTypeId] = useState('');
 
-  // Fetch accounts payable invoices (unpaid)
+  // Fetch AP invoices (unpaid)
   const { data: apInvoices, isLoading: isLoadingInvoices, refetch: refetchInvoices } = useQuery({
     queryKey: ['/api/finance/ap/invoices'],
     queryFn: async () => {
@@ -152,6 +153,21 @@ export default function VendorPaymentProcessing() {
           const data = await response.json();
           return data.bankAccount ? [data.bankAccount] : [];
         }
+        return [];
+      }
+    },
+  });
+
+  // Fetch document types for payment dialog
+  const { data: paymentDocumentTypes = [] } = useQuery<any[]>({
+    queryKey: ['/api/master-data/document-types'],
+    queryFn: async () => {
+      try {
+        const response = await fetch('/api/master-data/document-types');
+        if (!response.ok) return [];
+        const data = await response.json();
+        return Array.isArray(data) ? data : [];
+      } catch {
         return [];
       }
     },
@@ -266,6 +282,7 @@ export default function VendorPaymentProcessing() {
     setBankAccountId(null);
     setReference('');
     setNotes('');
+    setPaymentDocumentTypeId('');
   };
 
   // Toggle selection for a single payment
@@ -693,7 +710,7 @@ export default function VendorPaymentProcessing() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Invoice Number</TableHead>
+
                       <TableHead>Vendor</TableHead>
                       <TableHead>Amount</TableHead>
                       <TableHead>Net Amount</TableHead>
@@ -941,6 +958,23 @@ export default function VendorPaymentProcessing() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              {/* Document Type */}
+              <div className="space-y-2">
+                <Label>Document Type</Label>
+                <Select value={paymentDocumentTypeId} onValueChange={setPaymentDocumentTypeId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="ZP (Auto-determined if empty)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentDocumentTypes.map((dt: any) => (
+                      <SelectItem key={dt.id} value={String(dt.id)}>
+                        {dt.document_type_code} - {dt.description}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

@@ -45,7 +45,8 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Plus, Search, Edit, Trash2, Download, ArrowLeft, RefreshCw, MoreHorizontal, PowerOff } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Plus, Search, Edit, Trash2, Download, ArrowLeft, RefreshCw, MoreHorizontal, PowerOff, Eye, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { useAgentPermissions } from "@/hooks/useAgentPermissions";
@@ -59,6 +60,9 @@ type IndustrySector = {
     active: boolean;
     created_at: string;
     updated_at: string;
+    _tenantId?: string;
+    createdBy?: number | null;
+    updatedBy?: number | null;
 };
 
 // Form schema
@@ -73,6 +77,9 @@ export default function IndustrySectorPage() {
     const [searchQuery, setSearchQuery] = useState("");
     const [showDialog, setShowDialog] = useState(false);
     const [editingSector, setEditingSector] = useState<IndustrySector | null>(null);
+    const [viewingSector, setViewingSector] = useState<IndustrySector | null>(null);
+    const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+    const [adminDataOpen, setAdminDataOpen] = useState(false);
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const permissions = useAgentPermissions();
@@ -418,6 +425,13 @@ export default function IndustrySectorPage() {
                                                             </Button>
                                                         </DropdownMenuTrigger>
                                                         <DropdownMenuContent align="end">
+                                                            <DropdownMenuItem onClick={() => {
+                                                                setViewingSector(sector);
+                                                                setIsViewDialogOpen(true);
+                                                            }}>
+                                                                <Eye className="mr-2 h-4 w-4" />
+                                                                View Details
+                                                            </DropdownMenuItem>
                                                             <DropdownMenuItem onClick={() => handleEdit(sector)}>
                                                                 <Edit className="mr-2 h-4 w-4" />
                                                                 Edit
@@ -445,6 +459,100 @@ export default function IndustrySectorPage() {
                     </div>
                 </CardContent>
             </Card>
+
+            {/* View Details Dialog */}
+            <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+                <DialogContent className="sm:max-w-[600px]">
+                    {viewingSector && (
+                        <>
+                            <DialogHeader>
+                                <div className="flex items-center justify-between">
+                                    <DialogTitle>Industry Sector Details</DialogTitle>
+                                    <div className="flex gap-2">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => {
+                                                setIsViewDialogOpen(false);
+                                                handleEdit(viewingSector);
+                                            }}
+                                        >
+                                            <Edit className="h-3 w-3 mr-1" />
+                                            Edit
+                                        </Button>
+                                    </div>
+                                </div>
+                                <DialogDescription>
+                                    Detailed information for industry sector {viewingSector.code}
+                                </DialogDescription>
+                            </DialogHeader>
+
+                            <div className="space-y-6">
+                                <div className="bg-muted/50 p-4 rounded-lg flex items-start justify-between">
+                                    <div>
+                                        <h3 className="font-semibold text-lg">{viewingSector.name}</h3>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border bg-white">{viewingSector.code}</span>
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewingSector.active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"}`}>
+                                                {viewingSector.active ? "Active" : "Inactive"}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <Card>
+                                    <CardHeader className="pb-2">
+                                        <CardTitle className="text-sm font-medium text-muted-foreground">General Information</CardTitle>
+                                    </CardHeader>
+                                    <CardContent className="space-y-2">
+                                        <div>
+                                            <span className="text-sm text-muted-foreground">Description</span>
+                                            <p className="font-medium mt-1">
+                                                {viewingSector.description || "No description provided."}
+                                            </p>
+                                        </div>
+                                    </CardContent>
+                                </Card>
+
+                                <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                                    <div>
+                                        <h4 className="font-medium text-sm text-gray-500">Created At</h4>
+                                        <p>{viewingSector.created_at ? new Date(viewingSector.created_at).toLocaleString() : "—"}</p>
+                                    </div>
+                                    <div>
+                                        <h4 className="font-medium text-sm text-gray-500">Updated At</h4>
+                                        <p>{viewingSector.updated_at ? new Date(viewingSector.updated_at).toLocaleString() : "—"}</p>
+                                    </div>
+                                </div>
+
+                                {/* Collapsible Administrative Data */}
+                                <div className="border-t pt-3">
+                                    <button
+                                        type="button"
+                                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 focus:outline-none"
+                                        onClick={() => setAdminDataOpen(o => !o)}
+                                    >
+                                        {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                        <Info className="h-3 w-3" />
+                                        Administrative Data
+                                    </button>
+                                    {adminDataOpen && (
+                                        <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                                            <div><dt className="font-medium inline">Created By (ID): </dt><dd className="inline">{viewingSector.createdBy ?? "—"}</dd></div>
+                                            <div><dt className="font-medium inline">Updated By (ID): </dt><dd className="inline">{viewingSector.updatedBy ?? "—"}</dd></div>
+                                            <div><dt className="font-medium inline">Tenant ID: </dt><dd className="inline">{viewingSector._tenantId ?? "—"}</dd></div>
+                                        </dl>
+                                    )}
+                                </div>
+                            </div>
+
+                            <DialogFooter>
+                                <Button onClick={() => setIsViewDialogOpen(false)}>Close</Button>
+                            </DialogFooter>
+                        </>
+                    )}
+                </DialogContent>
+            </Dialog>
 
             {/* Add/Edit Dialog */}
             <Dialog open={showDialog} onOpenChange={(open) => {

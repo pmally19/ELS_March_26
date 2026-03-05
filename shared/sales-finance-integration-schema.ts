@@ -161,7 +161,6 @@ export const accountingDocuments = pgTable("accounting_documents", {
   sourceModule: varchar("source_module", { length: 10 }).notNull(), // SALES, INVENTORY, FINANCE
   sourceDocumentId: integer("source_document_id"),
   sourceDocumentType: varchar("source_document_type", { length: 20 }),
-  reversalStatus: varchar("reversal_status", { length: 20 }).default("ACTIVE").notNull(),
   createdBy: integer("created_by").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

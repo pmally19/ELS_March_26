@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Search, ArrowRight, ArrowLeft, Edit } from "lucide-react";
+import { Plus, Trash2, Search, ArrowRight, ArrowLeft, Edit, Eye, Info, ChevronDown, ChevronRight, ListFilter } from "lucide-react";
 import { useForm, Controller } from "react-hook-form";
 import { useLocation } from "wouter";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -59,6 +59,9 @@ export default function PricingProcedureDetermination() {
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
     const [editingItem, setEditingItem] = useState<any | null>(null);
+    const [viewingItem, setViewingItem] = useState<any | null>(null);
+    const [showViewDialog, setShowViewDialog] = useState(false);
+    const [adminDataOpen, setAdminDataOpen] = useState(false);
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const [, setLocation] = useLocation();
@@ -172,6 +175,12 @@ export default function PricingProcedureDetermination() {
         setIsDialogOpen(false);
         setEditingItem(null);
         form.reset();
+    };
+
+    const handleViewDetails = (item: any) => {
+        setViewingItem(item);
+        setShowViewDialog(true);
+        setAdminDataOpen(false);
     };
 
     // Filter logic
@@ -384,6 +393,120 @@ export default function PricingProcedureDetermination() {
                         </form>
                     </DialogContent>
                 </Dialog>
+
+                {/* View Details Dialog */}
+                <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+                    <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-hidden flex flex-col p-0">
+                        <DialogHeader className="p-6 pb-2">
+                            <DialogTitle>Pricing Procedure Determination Details</DialogTitle>
+                            <DialogDescription>
+                                Rule resolving Pricing Procedures relative to Sales Area Contexts.
+                            </DialogDescription>
+                        </DialogHeader>
+
+                        {viewingItem && (
+                            <div className="flex-1 overflow-y-auto space-y-6 p-6 pt-2">
+                                <Card>
+                                    <CardHeader className="pb-2">
+                                        <CardTitle className="text-lg flex items-center">
+                                            <ListFilter className="h-4 w-4 mr-2" />
+                                            Determined References
+                                        </CardTitle>
+                                    </CardHeader>
+                                    <CardContent>
+                                        <dl className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <dt className="text-sm font-medium text-gray-500">Sales Area</dt>
+                                                <dd className="text-sm font-bold text-gray-900 mt-1">
+                                                    {viewingItem.sales_org_code} / {viewingItem.distribution_channel_code} / {viewingItem.division_code}
+                                                </dd>
+                                            </div>
+                                            <div>
+                                                <dt className="text-sm font-medium text-gray-500">Target Pricing Procedure</dt>
+                                                <dd className="text-sm font-bold text-blue-700 mt-1">{viewingItem.pricing_procedure_code} - {viewingItem.pricing_procedure_name}</dd>
+                                            </div>
+                                            <div>
+                                                <dt className="text-sm font-medium text-gray-500">Customer Proc.</dt>
+                                                <dd className="text-sm text-gray-900"><Badge variant="secondary">{viewingItem.customer_pricing_procedure_code}</Badge></dd>
+                                            </div>
+                                            <div>
+                                                <dt className="text-sm font-medium text-gray-500">Document Proc.</dt>
+                                                <dd className="text-sm text-gray-900"><Badge variant="secondary">{viewingItem.document_pricing_procedure_code}</Badge></dd>
+                                            </div>
+                                        </dl>
+                                    </CardContent>
+                                </Card>
+
+                                {/* ── Administrative Data (SAP ECC style) ────────────────── */}
+                                <div className="border rounded-md overflow-hidden bg-white">
+                                    <button
+                                        type="button"
+                                        onClick={() => setAdminDataOpen(o => !o)}
+                                        className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                                    >
+                                        <span className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                            <Info className="h-3.5 w-3.5" />
+                                            Administrative Data
+                                        </span>
+                                        {adminDataOpen
+                                            ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                                            : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                                    </button>
+
+                                    {adminDataOpen && (
+                                        <dl className="px-4 py-3 space-y-2 bg-white">
+                                            <div className="flex justify-between items-center">
+                                                <dt className="text-xs text-gray-400">Created on</dt>
+                                                <dd className="text-xs text-gray-500">
+                                                    {viewingItem.created_at
+                                                        ? new Date(viewingItem.created_at).toLocaleString()
+                                                        : '—'}
+                                                </dd>
+                                            </div>
+                                            <div className="flex justify-between items-center">
+                                                <dt className="text-xs text-gray-400">Created by (User ID)</dt>
+                                                <dd className="text-xs text-gray-500">
+                                                    {viewingItem.created_by ?? '—'}
+                                                </dd>
+                                            </div>
+                                            <div className="flex justify-between items-center">
+                                                <dt className="text-xs text-gray-400">Last changed on</dt>
+                                                <dd className="text-xs text-gray-500">
+                                                    {viewingItem.updated_at
+                                                        ? new Date(viewingItem.updated_at).toLocaleString()
+                                                        : '—'}
+                                                </dd>
+                                            </div>
+                                            <div className="flex justify-between items-center">
+                                                <dt className="text-xs text-gray-400">Last changed by (User ID)</dt>
+                                                <dd className="text-xs text-gray-500">
+                                                    {viewingItem.updated_by ?? '—'}
+                                                </dd>
+                                            </div>
+                                            <div className="flex justify-between items-center">
+                                                <dt className="text-xs text-gray-400">Tenant ID</dt>
+                                                <dd className="text-xs text-gray-500">
+                                                    {viewingItem.tenant_id ?? '—'}
+                                                </dd>
+                                            </div>
+                                            {viewingItem._deletedAt && (
+                                                <div className="flex justify-between items-center">
+                                                    <dt className="text-xs text-red-500 font-medium">Deleted on</dt>
+                                                    <dd className="text-xs text-red-500 font-medium">
+                                                        {new Date(viewingItem._deletedAt).toLocaleString()}
+                                                    </dd>
+                                                </div>
+                                            )}
+                                        </dl>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                        <div className="p-4 border-t bg-gray-50 flex justify-end">
+                            <Button variant="outline" onClick={() => setShowViewDialog(false)}>Close</Button>
+                        </div>
+                    </DialogContent>
+                </Dialog>
             </div>
 
             <Card>
@@ -450,6 +573,14 @@ export default function PricingProcedureDetermination() {
                                             </TableCell>
                                             <TableCell>
                                                 <div className="flex gap-2">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        onClick={() => handleViewDetails(item)}
+                                                        title="View Details"
+                                                    >
+                                                        <Eye className="h-4 w-4 text-blue-600" />
+                                                    </Button>
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"

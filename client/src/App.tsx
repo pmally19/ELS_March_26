@@ -137,7 +137,6 @@ import TransportAdmin from "@/pages/TransportAdmin";
 import GitHubSetup from "@/pages/GitHubSetup";
 import GitHubIntegration from "@/pages/GitHubIntegration";
 import Plant from "@/pages/master-data/Plant";
-import Currency from "@/pages/master-data/Currency";
 import StorageLocation from "@/pages/master-data/StorageLocation";
 import ShippingPoint from "@/pages/master-data/ShippingPoint";
 import SalesOrganization from "@/pages/master-data/SalesOrganization";
@@ -151,6 +150,7 @@ import MaterialMaster from "@/pages/master-data/MaterialMaster";
 import MRPControllers from "@/pages/master-data/MRPControllers";
 import SDDocumentTypes from "@/pages/master-data/SDDocumentTypes";
 import SalesDocumentCategories from "@/pages/master-data/SalesDocumentCategories";
+import FieldStatusVariants from "@/pages/master-data/FieldStatusVariants";
 import MasterDataChartOfAccounts from "@/pages/master-data/ChartOfAccounts";
 
 import CustomerMaster from "@/pages/master-data/CustomerMaster";
@@ -183,9 +183,11 @@ import ItemCategories from "@/pages/master-data/ItemCategories";
 import PurchasingItemCategories from "@/pages/master-data/PurchasingItemCategories";
 import ConditionCategories from "@/pages/master-data/ConditionCategories";
 import ConditionClasses from "@/pages/master-data/ConditionClasses";
+import ConditionRecords from "@/pages/master-data/ConditionRecords";
 import CalculationMethods from "@/pages/master-data/CalculationMethods";
 import InterestCalculators from "@/pages/master-data/InterestCalculators";
 import ItemCategoryGroups from "@/pages/master-data/ItemCategoryGroups";
+
 import ItemCategoryDetermination from "@/pages/master-data/ItemCategoryDetermination";
 import SalesProcessTypes from "@/pages/master-data/SalesProcessTypes";
 import FiscalYearVariant from "@/pages/master-data/FiscalYearVariant";
@@ -473,14 +475,7 @@ const MasterDataDashboard = () => {
       linkText: "Access Finance Currency System →",
       onClick: navigate("/master-data/finance-currencies")
     },
-    {
-      id: "supply-types",
-      title: "Supply Types",
-      icon: <Truck className="h-5 w-5 text-blue-600" />,
-      description: "Procurement supply type classifications",
-      linkText: "Manage Supply Types →",
-      onClick: navigate("/master-data/supply-types")
-    },
+
     {
       id: "chart-of-accounts",
       title: "Chart of Accounts",
@@ -616,6 +611,14 @@ const MasterDataDashboard = () => {
       description: "Condition class groupings (A=Discount, B=Prices, D=Taxes)",
       linkText: "Manage Condition Classes →",
       onClick: navigate("/master-data/condition-classes")
+    },
+    {
+      id: "condition-records",
+      title: "Condition Records ",
+      icon: <Calculator className="h-5 w-5 text-indigo-600" />,
+      description: "Manage pricing condition records, discounts, and surcharges",
+      linkText: "Manage Condition Records →",
+      onClick: navigate("/master-data/condition-records")
     },
     {
       id: "customer-pricing-procedures",
@@ -761,14 +764,7 @@ const MasterDataDashboard = () => {
       linkText: "Manage Regions →",
       onClick: () => window.location.pathname = "/master-data/regions"
     },
-    {
-      id: "posting-keys",
-      title: "Posting Keys",
-      icon: <Key className="h-5 w-5 text-blue-600" />,
-      description: "Universal posting keys for automatic account determination",
-      linkText: "Manage Posting Keys →",
-      onClick: () => window.location.pathname = "/master-data/posting-keys"
-    },
+
     {
       id: "purchasing-item-categories",
       title: "Purchase Item Categories",
@@ -816,14 +812,6 @@ const MasterDataDashboard = () => {
       description: "Define transportation groups (SAP OVLK)",
       linkText: "Manage Transportation Groups →",
       onClick: () => window.location.pathname = "/master-data/transportation-groups"
-    },
-    {
-      id: "movement-classes",
-      title: "Movement Classes",
-      icon: <SettingsIcon className="h-5 w-5 text-blue-600" />,
-      description: "Technical inventory movement logic and control parameters",
-      linkText: "Manage Movement Classes →",
-      onClick: () => window.location.pathname = "/master-data/movement-classes"
     },
     {
       id: "document-types",
@@ -1280,6 +1268,24 @@ const MasterDataDashboard = () => {
       onClick: () => window.location.pathname = "/master-data/sales-process-types"
     },
     {
+      id: "posting-keys",
+      title: "Posting Keys ",
+      icon: <Key className="h-5 w-5 text-blue-600" />,
+      description: "Define debit/credit posting keys for automatic account determination",
+      linkText: "Manage Posting Keys →",
+      category: "Finance",
+      onClick: () => window.location.pathname = "/master-data/posting-keys"
+    },
+    {
+      id: "field-status-variants",
+      title: "Field Status ",
+      icon: <SettingsIcon className="h-5 w-5 text-indigo-600" />,
+      description: "Configure field status variants and groups — control which fields are required/optional/suppressed during GL posting",
+      linkText: "Manage Field Status →",
+      category: "Finance",
+      onClick: () => window.location.pathname = "/master-data/field-status-variants"
+    },
+    {
       id: "countries",
       title: "Countries",
       icon: <Globe className="h-5 w-5 text-blue-600" />,
@@ -1649,7 +1655,7 @@ function Router() {
             <Route path="/sales/pricing-procedures" component={PricingProcedures} />
             <Route path="/master-data/industry-sector" component={IndustrySector} />
             <Route path="/master-data/plant" component={Plant} />
-            <Route path="/master-data/currency" component={Currency} />
+            <Route path="/master-data/currency" component={Currencies} />
             <Route path="/master-data/storage-location" component={StorageLocation} />
             <Route path="/master-data/sales-organization" component={SalesOrganization} />
             <Route path="/master-data/sales-office" component={SalesOffice} />
@@ -1691,6 +1697,7 @@ function Router() {
             <Route path="/master-data/depreciation-areas" component={DepreciationAreas} />
             <Route path="/master-data/regions" component={Regions} />
             <Route path="/master-data/posting-keys" component={PostingKeys} />
+            <Route path="/master-data/field-status-variants" component={FieldStatusVariants} />
             <Route path="/master-data/purchasing-item-categories" component={PurchasingItemCategories} />
             <Route path="/master-data/currencies" component={Currencies} />
             <Route path="/master-data/finance-currencies" component={FinanceCurrencies} />
@@ -2072,6 +2079,9 @@ function Router() {
             {/* Master Data - Condition Classes */}
             <Route path="/master-data/condition-classes" component={ConditionClasses} />
 
+            {/* Master Data - Condition Records */}
+            <Route path="/master-data/condition-records" component={ConditionRecords} />
+
             {/* Master Data - Calculation Methods */}
             <Route path="/master-data/calculation-methods" component={CalculationMethods} />
 
@@ -2080,6 +2090,9 @@ function Router() {
 
             {/* Master Data - Item Category Groups */}
             <Route path="/master-data/item-category-groups" component={ItemCategoryGroups} />
+
+            {/* Master Data - Item Categories */}
+            <Route path="/master-data/item-categories" component={ItemCategories} />
 
             {/* Master Data - Item Category Determination */}
             <Route path="/master-data/item-category-determination" component={ItemCategoryDetermination} />

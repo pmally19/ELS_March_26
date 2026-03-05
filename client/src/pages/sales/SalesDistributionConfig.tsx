@@ -15,21 +15,26 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  Building2, 
-  Truck, 
-  Package, 
-  Settings, 
-  Plus, 
-  CheckCircle, 
-  XCircle, 
+import {
+  Building2,
+  Truck,
+  Package,
+  Settings,
+  Plus,
+  CheckCircle,
+  XCircle,
   AlertCircle,
   Factory,
   Users,
   FileText,
   Calculator,
   DollarSign,
-  Network
+  Network,
+  Trash2,
+  ChevronDown,
+  ChevronRight,
+  ArrowRight,
+  Copy
 } from "lucide-react";
 
 // Form Schemas
@@ -66,6 +71,463 @@ const documentTypeSchema = z.object({
   category: z.enum(["ORDER", "DELIVERY", "BILLING"]),
   numberRange: z.string().optional(),
 });
+
+// ─── Copy Control Panel Component ─────────────────────────────────────────────
+
+const copyControlHeaderSchema = z.object({
+  sourceDocType: z.string().min(1, 'Source document type is required'),
+  targetDocType: z.string().min(1, 'Target document type is required'),
+  copyRequirements: z.string().default('001'),
+  dataTransfer: z.string().default('001'),
+});
+
+const copyControlItemSchema = z.object({
+  sourceDocType: z.string().min(1),
+  targetDocType: z.string().min(1),
+  sourceItemCategory: z.string().min(1, 'Source item category required'),
+  targetItemCategory: z.string().min(1, 'Target item category required'),
+  copyRequirements: z.string().default('101'),
+  dataTransfer: z.string().default('101'),
+});
+
+function CopyControlPanel({ documentTypes }: { documentTypes: any[] }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [expandedHeader, setExpandedHeader] = useState<number | null>(null);
+  const [showHeaderForm, setShowHeaderForm] = useState(false);
+  const [showItemForm, setShowItemForm] = useState<{ headerId: number; sourceDoc: string; targetDoc: string } | null>(null);
+
+  // Fetch item categories for dropdowns
+  const { data: itemCategories = [] } = useQuery({
+    queryKey: ['/api/sales-distribution/item-categories-list'],
+    queryFn: async () => {
+      const res = await fetch('/api/sales-distribution/item-categories-list');
+      if (!res.ok) {
+        // Fallback — fetch from sd_item_categories via a direct query
+        return [];
+      }
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
+  });
+
+  // Fetch copy control headers
+  const { data: headers = [], isLoading: headersLoading } = useQuery({
+    queryKey: ['/api/sales-distribution/copy-control-headers'],
+    queryFn: async () => {
+      const res = await fetch('/api/sales-distribution/copy-control-headers');
+      if (!res.ok) throw new Error('Failed to fetch');
+      return res.json();
+    },
+  });
+
+  // Fetch copy control items
+  const { data: allItems = [] } = useQuery({
+    queryKey: ['/api/sales-distribution/copy-control-items'],
+    queryFn: async () => {
+      const res = await fetch('/api/sales-distribution/copy-control-items');
+      if (!res.ok) throw new Error('Failed to fetch');
+      return res.json();
+    },
+  });
+
+  const headerForm = useForm({
+    resolver: zodResolver(copyControlHeaderSchema),
+    defaultValues: { sourceDocType: '', targetDocType: '', copyRequirements: '001', dataTransfer: '001' },
+  });
+
+  const itemForm = useForm({
+    resolver: zodResolver(copyControlItemSchema),
+    defaultValues: { sourceDocType: '', targetDocType: '', sourceItemCategory: '', targetItemCategory: '', copyRequirements: '101', dataTransfer: '101' },
+  });
+
+  const createHeaderMutation = useMutation({
+    mutationFn: async (data: z.infer<typeof copyControlHeaderSchema>) => {
+      const res = await fetch('/api/sales-distribution/copy-control-headers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: 'Header Rule Created', description: 'Copy control header rule added.' });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-distribution/copy-control-headers'] });
+      headerForm.reset();
+      setShowHeaderForm(false);
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const deleteHeaderMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/sales-distribution/copy-control-headers/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete');
+    },
+    onSuccess: () => {
+      toast({ title: 'Deleted', description: 'Header rule removed.' });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-distribution/copy-control-headers'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-distribution/copy-control-items'] });
+      setExpandedHeader(null);
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const createItemMutation = useMutation({
+    mutationFn: async (data: z.infer<typeof copyControlItemSchema>) => {
+      const res = await fetch('/api/sales-distribution/copy-control-items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: 'Item Rule Created', description: 'Item category mapping added.' });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-distribution/copy-control-items'] });
+      itemForm.reset();
+      setShowItemForm(null);
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const deleteItemMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/sales-distribution/copy-control-items/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete');
+    },
+    onSuccess: () => {
+      toast({ title: 'Deleted', description: 'Item rule removed.' });
+      queryClient.invalidateQueries({ queryKey: ['/api/sales-distribution/copy-control-items'] });
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const orderDocTypes = documentTypes.filter((dt: any) => (dt.category || '').toUpperCase() === 'ORDER' || dt.category === 'SALES');
+  const deliveryDocTypes = documentTypes.filter((dt: any) => (dt.category || '').toUpperCase() === 'DELIVERY');
+  const billingDocTypes = documentTypes.filter((dt: any) => (dt.category || '').toUpperCase() === 'BILLING');
+
+  // Common item categories hardcoded as fallback
+  const itemCatOptions = itemCategories.length > 0
+    ? itemCategories
+    : [
+      { code: 'TAN', name: 'Standard Item' },
+      { code: 'ZTAN', name: 'Delivery Sales Order' },
+      { code: 'TANN', name: 'Free of Charge Item' },
+      { code: 'TATX', name: 'Text Item' },
+      { code: 'ZAG1', name: 'Delivery Sales Quote' },
+      { code: 'ZTAS', name: 'Third Party Sales' },
+    ];
+
+  return (
+    <div className="space-y-6">
+      {/* Overview Card */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Copy className="h-5 w-5" />
+                Copy Control
+              </CardTitle>
+              <CardDescription>
+                Define how data is copied when creating a delivery or billing from a sales order.
+                Each header rule has item-level category mappings below it.
+              </CardDescription>
+            </div>
+            <Button onClick={() => setShowHeaderForm(true)} size="sm">
+              <Plus className="h-4 w-4 mr-2" />
+              Add Header Rule
+            </Button>
+          </div>
+        </CardHeader>
+      </Card>
+
+      {/* Create Header Form */}
+      {showHeaderForm && (
+        <Card className="border-blue-200 bg-blue-50">
+          <CardHeader>
+            <CardTitle className="text-base">New Copy Control Header Rule</CardTitle>
+            <CardDescription>Define the source → target document type relationship</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={headerForm.handleSubmit((d) => createHeaderMutation.mutate(d))} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Source Document Type <span className="text-red-500">*</span></Label>
+                  <Select onValueChange={(v) => headerForm.setValue('sourceDocType', v)}>
+                    <SelectTrigger><SelectValue placeholder="e.g. OR" /></SelectTrigger>
+                    <SelectContent>
+                      {documentTypes.map((dt: any) => (
+                        <SelectItem key={dt.code} value={dt.code}>{dt.code} — {dt.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {headerForm.formState.errors.sourceDocType && (
+                    <p className="text-xs text-red-500 mt-1">{headerForm.formState.errors.sourceDocType.message}</p>
+                  )}
+                </div>
+                <div>
+                  <Label>Target Document Type <span className="text-red-500">*</span></Label>
+                  <Select onValueChange={(v) => headerForm.setValue('targetDocType', v)}>
+                    <SelectTrigger><SelectValue placeholder="e.g. LF" /></SelectTrigger>
+                    <SelectContent>
+                      {documentTypes.map((dt: any) => (
+                        <SelectItem key={dt.code} value={dt.code}>{dt.code} — {dt.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {headerForm.formState.errors.targetDocType && (
+                    <p className="text-xs text-red-500 mt-1">{headerForm.formState.errors.targetDocType.message}</p>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Copy Requirements</Label>
+                  <Select defaultValue="001" onValueChange={(v) => headerForm.setValue('copyRequirements', v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="001">001 — Standard (All active orders)</SelectItem>
+                      <SelectItem value="002">002 — Confirmed orders only</SelectItem>
+                      <SelectItem value="003">003 — Open quantity only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Data Transfer Routine</Label>
+                  <Select defaultValue="001" onValueChange={(v) => headerForm.setValue('dataTransfer', v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="001">001 — Copy all header fields</SelectItem>
+                      <SelectItem value="002">002 — Copy without pricing</SelectItem>
+                      <SelectItem value="003">003 — Copy addresses only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button type="button" variant="outline" onClick={() => { setShowHeaderForm(false); headerForm.reset(); }}>Cancel</Button>
+                <Button type="submit" disabled={createHeaderMutation.isPending}>
+                  {createHeaderMutation.isPending ? 'Creating...' : 'Create Header Rule'}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Headers List */}
+      {headersLoading ? (
+        <Card><CardContent className="py-8 text-center text-muted-foreground">Loading copy control rules...</CardContent></Card>
+      ) : headers.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <Copy className="h-12 w-12 mx-auto text-gray-300 mb-3" />
+            <p className="text-muted-foreground font-medium">No copy control rules configured</p>
+            <p className="text-sm text-muted-foreground mt-1">Add a header rule above to define document flow (e.g., Sales Order → Delivery)</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {headers.map((hdr: any) => {
+            const hdrItems = allItems.filter(
+              (it: any) => it.source_doc_type === hdr.source_doc_type && it.target_doc_type === hdr.target_doc_type
+            );
+            const isExpanded = expandedHeader === hdr.id;
+
+            return (
+              <Card key={hdr.id} className="overflow-hidden">
+                {/* Header Row */}
+                <div
+                  className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                  onClick={() => setExpandedHeader(isExpanded ? null : hdr.id)}
+                >
+                  <div className="flex items-center gap-3">
+                    {isExpanded ? <ChevronDown className="h-4 w-4 text-gray-500" /> : <ChevronRight className="h-4 w-4 text-gray-500" />}
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="font-mono font-bold text-blue-700 bg-blue-50 border-blue-200">
+                        {hdr.source_doc_type}
+                      </Badge>
+                      <ArrowRight className="h-4 w-4 text-gray-400" />
+                      <Badge variant="outline" className="font-mono font-bold text-green-700 bg-green-50 border-green-200">
+                        {hdr.target_doc_type}
+                      </Badge>
+                    </div>
+                    <div className="text-sm text-muted-foreground ml-2">
+                      Copy: <span className="font-medium">{hdr.copy_requirements}</span>
+                      {' · '}
+                      Transfer: <span className="font-medium">{hdr.data_transfer}</span>
+                      {' · '}
+                      <span className="text-blue-600">{hdrItems.length} item rule{hdrItems.length !== 1 ? 's' : ''}</span>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                    onClick={(e) => { e.stopPropagation(); deleteHeaderMutation.mutate(hdr.id); }}
+                    disabled={deleteHeaderMutation.isPending}
+                    title="Delete this header rule"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                {/* Expanded: Item Rules */}
+                {isExpanded && (
+                  <div className="border-t bg-gray-50/50">
+                    <div className="p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-semibold text-gray-700">Item Category Mapping Rules</h4>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setShowItemForm({ headerId: hdr.id, sourceDoc: hdr.source_doc_type, targetDoc: hdr.target_doc_type });
+                            itemForm.setValue('sourceDocType', hdr.source_doc_type);
+                            itemForm.setValue('targetDocType', hdr.target_doc_type);
+                          }}
+                        >
+                          <Plus className="h-3 w-3 mr-1" />
+                          Add Item Rule
+                        </Button>
+                      </div>
+
+                      {/* Add Item Rule Form */}
+                      {showItemForm?.headerId === hdr.id && (
+                        <div className="mb-4 p-3 bg-white border rounded-lg">
+                          <p className="text-xs font-medium text-gray-600 mb-3">
+                            Add item category mapping for {hdr.source_doc_type} → {hdr.target_doc_type}
+                          </p>
+                          <form onSubmit={itemForm.handleSubmit((d) => createItemMutation.mutate(d))} className="space-y-3">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <Label className="text-xs">Source Item Category</Label>
+                                <Select onValueChange={(v) => itemForm.setValue('sourceItemCategory', v)}>
+                                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="e.g. TAN" /></SelectTrigger>
+                                  <SelectContent>
+                                    {itemCatOptions.map((ic: any) => (
+                                      <SelectItem key={ic.code} value={ic.code}>{ic.code} — {ic.name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-xs">Target Item Category</Label>
+                                <Select onValueChange={(v) => itemForm.setValue('targetItemCategory', v)}>
+                                  <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="e.g. ZTAN" /></SelectTrigger>
+                                  <SelectContent>
+                                    {itemCatOptions.map((ic: any) => (
+                                      <SelectItem key={ic.code} value={ic.code}>{ic.code} — {ic.name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <Label className="text-xs">Copy Requirements</Label>
+                                <Select defaultValue="101" onValueChange={(v) => itemForm.setValue('copyRequirements', v)}>
+                                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="101">101 — Delivery-relevant items only</SelectItem>
+                                    <SelectItem value="102">102 — All items</SelectItem>
+                                    <SelectItem value="103">103 — Open quantity only</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-xs">Data Transfer</Label>
+                                <Select defaultValue="101" onValueChange={(v) => itemForm.setValue('dataTransfer', v)}>
+                                  <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="101">101 — Copy all item fields</SelectItem>
+                                    <SelectItem value="102">102 — Copy without pricing</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div className="flex gap-2 justify-end">
+                              <Button type="button" variant="outline" size="sm" onClick={() => { setShowItemForm(null); itemForm.reset(); }}>Cancel</Button>
+                              <Button type="submit" size="sm" disabled={createItemMutation.isPending}>
+                                {createItemMutation.isPending ? 'Adding...' : 'Add Rule'}
+                              </Button>
+                            </div>
+                          </form>
+                        </div>
+                      )}
+
+                      {/* Items Table */}
+                      {hdrItems.length === 0 ? (
+                        <div className="text-center py-4 text-sm text-muted-foreground border border-dashed rounded">
+                          No item rules yet. Click "Add Item Rule" to map source → target item categories.
+                        </div>
+                      ) : (
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="text-xs">
+                              <TableHead>Source Item Cat.</TableHead>
+                              <TableHead></TableHead>
+                              <TableHead>Target Item Cat.</TableHead>
+                              <TableHead>Copy Req.</TableHead>
+                              <TableHead>Data Transfer</TableHead>
+                              <TableHead className="w-12"></TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {hdrItems.map((item: any) => (
+                              <TableRow key={item.id} className="text-sm">
+                                <TableCell>
+                                  <Badge variant="secondary" className="font-mono">{item.source_item_category}</Badge>
+                                </TableCell>
+                                <TableCell className="text-gray-400"><ArrowRight className="h-3 w-3" /></TableCell>
+                                <TableCell>
+                                  <Badge variant="secondary" className="font-mono">{item.target_item_category}</Badge>
+                                </TableCell>
+                                <TableCell className="text-xs text-muted-foreground">{item.copy_requirements}</TableCell>
+                                <TableCell className="text-xs text-muted-foreground">{item.data_transfer}</TableCell>
+                                <TableCell>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 text-red-400 hover:text-red-600"
+                                    onClick={() => deleteItemMutation.mutate(item.id)}
+                                    disabled={deleteItemMutation.isPending}
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* SAP Standard Reference Box */}
+      <Card className="border-amber-200 bg-amber-50">
+        <CardContent className="py-4">
+          <p className="text-sm font-semibold text-amber-800 mb-2">📋 Standard Configuration Reference</p>
+          <div className="text-xs text-amber-700 space-y-1">
+            <p>• <strong>OR → LF</strong> (Sales Order → Delivery): Source item cat <strong>TAN/ZTAN</strong> → Target <strong>ZTAN</strong></p>
+            <p>• <strong>LF → F2</strong> (Delivery → Invoice): Source item cat <strong>ZTAN</strong> → Target <strong>ZTAN</strong></p>
+            <p>• Copy Requirements <strong>001/101</strong> = Standard | Data Transfer <strong>001/101</strong> = Copy all fields</p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
 
 export default function SalesDistributionConfig() {
   const { toast } = useToast();
@@ -771,8 +1233,8 @@ export default function SalesDistributionConfig() {
                     <div key={area.id} className="p-3 border rounded-lg">
                       <div className="font-medium">{area.name}</div>
                       <div className="text-sm text-muted-foreground mt-1">
-                        Sales Org: {area.salesOrgCode} | 
-                        Channel: {area.distributionChannelCode} | 
+                        Sales Org: {area.salesOrgCode} |
+                        Channel: {area.distributionChannelCode} |
                         Division: {area.divisionCode}
                       </div>
                       <Badge variant={area.isActive ? "default" : "secondary"} className="mt-2">
@@ -980,19 +1442,7 @@ export default function SalesDistributionConfig() {
         </TabsContent>
 
         <TabsContent value="copy-control" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Copy Control</CardTitle>
-              <CardDescription>
-                Configure document flow and data transfer between document types
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-center text-muted-foreground py-8">
-                Copy control configuration will be available in the next phase
-              </div>
-            </CardContent>
-          </Card>
+          <CopyControlPanel documentTypes={documentTypes} />
         </TabsContent>
       </Tabs>
     </div>

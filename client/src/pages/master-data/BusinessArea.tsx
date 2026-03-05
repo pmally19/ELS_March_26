@@ -9,12 +9,13 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Edit, Trash2, RefreshCw, Search, ArrowLeft } from "lucide-react";
+import { Plus, Edit, Trash2, RefreshCw, Search, ArrowLeft, Eye, Building, Calendar, Database } from "lucide-react";
 import { Link } from "wouter";
 
 const businessAreaSchema = z.object({
@@ -25,10 +26,15 @@ const businessAreaSchema = z.object({
   is_active: z.boolean().default(true),
 });
 
-type BusinessArea = z.infer<typeof businessAreaSchema> & { 
+type BusinessArea = z.infer<typeof businessAreaSchema> & {
   id: number;
   company_code?: string;
   company_name?: string;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: number | null;
+  updated_by?: number | null;
+  tenant_id?: string;
 };
 
 interface CompanyCode {
@@ -41,6 +47,8 @@ interface CompanyCode {
 export default function BusinessArea() {
   const [open, setOpen] = useState(false);
   const [editingBusinessArea, setEditingBusinessArea] = useState<BusinessArea | null>(null);
+  const [viewingBusinessArea, setViewingBusinessArea] = useState<BusinessArea | null>(null);
+  const [showAdminData, setShowAdminData] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -328,8 +336,8 @@ export default function BusinessArea() {
                         {area.company_code && area.company_name
                           ? `${area.company_code} - ${area.company_name}`
                           : area.company_code_id
-                          ? `ID: ${area.company_code_id}`
-                          : "-"}
+                            ? `ID: ${area.company_code_id}`
+                            : "-"}
                       </TableCell>
                       <TableCell>{area.parent_business_area_code || "-"}</TableCell>
                       <TableCell>
@@ -339,6 +347,13 @@ export default function BusinessArea() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setViewingBusinessArea(area)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
                           <Button
                             size="sm"
                             variant="outline"
@@ -485,6 +500,172 @@ export default function BusinessArea() {
               </DialogFooter>
             </form>
           </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Business Area Details Dialog */}
+      <Dialog open={!!viewingBusinessArea} onOpenChange={(open) => !open && setViewingBusinessArea(null)}>
+        <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-hidden flex flex-col">
+          {viewingBusinessArea && (
+            <>
+              <DialogHeader className="flex-shrink-0">
+                <div className="flex items-center space-x-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setViewingBusinessArea(null)}
+                    className="flex items-center space-x-2"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    <span>Back</span>
+                  </Button>
+                  <div className="flex-1">
+                    <DialogTitle>Business Area Details</DialogTitle>
+                    <DialogDescription>
+                      Comprehensive information about {viewingBusinessArea.description}
+                    </DialogDescription>
+                  </div>
+                </div>
+              </DialogHeader>
+
+              <div className="flex-1 overflow-y-auto space-y-6 px-1 mt-4">
+                <div className="bg-gray-50 p-4 rounded-lg flex justify-between items-start">
+                  <div>
+                    <h3 className="text-xl font-bold">{viewingBusinessArea.description}</h3>
+                    <div className="flex items-center mt-1">
+                      <Badge variant="outline" className="mr-2">
+                        {viewingBusinessArea.code}
+                      </Badge>
+                      <Badge
+                        variant={viewingBusinessArea.is_active ? "default" : "secondary"}
+                        className={viewingBusinessArea.is_active ? "bg-green-100 text-green-800" : ""}
+                      >
+                        {viewingBusinessArea.is_active ? "Active" : "Inactive"}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="space-x-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        handleEdit(viewingBusinessArea);
+                        setViewingBusinessArea(null);
+                      }}
+                    >
+                      <Edit className="h-4 w-4 mr-1" />
+                      Edit
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-red-600 border-red-200"
+                      onClick={() => {
+                        handleDelete(viewingBusinessArea.id);
+                        setViewingBusinessArea(null);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-6">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg flex items-center">
+                        <Building className="h-4 w-4 mr-2" />
+                        Basic Information
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <dl className="space-y-2">
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Code:</dt>
+                          <dd className="text-sm text-gray-900">{viewingBusinessArea.code}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Description:</dt>
+                          <dd className="text-sm text-gray-900">{viewingBusinessArea.description}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Parent Area:</dt>
+                          <dd className="text-sm text-gray-900">{viewingBusinessArea.parent_business_area_code || '—'}</dd>
+                        </div>
+                      </dl>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg flex items-center">
+                        <Building className="h-4 w-4 mr-2" />
+                        Organizational Link
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <dl className="space-y-2">
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Company Code:</dt>
+                          <dd className="text-sm text-gray-900">
+                            {viewingBusinessArea.company_code && viewingBusinessArea.company_name
+                              ? `${viewingBusinessArea.company_code} - ${viewingBusinessArea.company_name}`
+                              : viewingBusinessArea.company_code_id
+                                ? `ID: ${viewingBusinessArea.company_code_id}`
+                                : "—"}
+                          </dd>
+                        </div>
+                      </dl>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="col-span-2">
+                    <CardHeader className="pb-2 cursor-pointer select-none" onClick={() => setShowAdminData(!showAdminData)}>
+                      <div className="flex justify-between items-center w-full">
+                        <CardTitle className="text-lg flex items-center">
+                          <Database className="h-4 w-4 mr-2" />
+                          Administrative Data
+                        </CardTitle>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                          viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                          style={{ transform: showAdminData ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                          <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                      </div>
+                    </CardHeader>
+                    {showAdminData && (
+                      <CardContent>
+                        <dl className="grid grid-cols-2 gap-4">
+                          <div className="flex flex-col">
+                            <dt className="text-sm font-medium text-gray-500">Created By</dt>
+                            <dd className="text-sm text-gray-900">{viewingBusinessArea.created_by ?? '—'}</dd>
+                          </div>
+                          <div className="flex flex-col">
+                            <dt className="text-sm font-medium text-gray-500">Updated By</dt>
+                            <dd className="text-sm text-gray-900">{viewingBusinessArea.updated_by ?? '—'}</dd>
+                          </div>
+                          <div className="flex flex-col">
+                            <dt className="text-sm font-medium text-gray-500">Created At</dt>
+                            <dd className="text-sm text-gray-900">{viewingBusinessArea.created_at ? new Date(viewingBusinessArea.created_at).toLocaleString() : '—'}</dd>
+                          </div>
+                          <div className="flex flex-col">
+                            <dt className="text-sm font-medium text-gray-500">Updated At</dt>
+                            <dd className="text-sm text-gray-900">{viewingBusinessArea.updated_at ? new Date(viewingBusinessArea.updated_at).toLocaleString() : '—'}</dd>
+                          </div>
+                          <div className="flex flex-col">
+                            <dt className="text-sm font-medium text-gray-500">Tenant ID</dt>
+                            <dd className="text-sm text-gray-900">{viewingBusinessArea.tenant_id ?? '—'}</dd>
+                          </div>
+                        </dl>
+                      </CardContent>
+                    )}
+                  </Card>
+                </div>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

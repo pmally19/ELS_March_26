@@ -252,8 +252,13 @@ export const billOfMaterials = pgTable("bill_of_materials", {
   baseQuantity: decimal("base_quantity", { precision: 15, scale: 3 }), // No default
   unitOfMeasure: varchar("unit_of_measure", { length: 10 }),
   alternativeBom: varchar("alternative_bom", { length: 10 }),
+  active: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  _tenantId: varchar("_tenantId", { length: 3 }).default("001"),
+  _deletedAt: timestamp("_deletedAt", { withTimezone: true }),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
 });
 
 // BOM Items

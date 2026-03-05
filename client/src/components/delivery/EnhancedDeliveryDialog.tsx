@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, Package, Truck, MapPin } from 'lucide-react';
+import { Loader2, Package, Truck, MapPin, ArrowRight, Info } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
@@ -45,7 +45,6 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
   const [priority, setPriority] = useState('02');
   const [shippingCondition, setShippingCondition] = useState('01');
   const [route, setRoute] = useState('');
-  const [movementType, setMovementType] = useState('601');
 
   // Fetch master data
   const { data: priorities } = useQuery({
@@ -75,22 +74,62 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
     }
   });
 
-  const { data: movementTypes } = useQuery({
-    queryKey: ['/api/order-to-cash/movement-types'],
+
+
+  // ── NEW: Load delivery document types from sd_document_types ──
+  const { data: deliveryDocTypes = [] } = useQuery({
+    queryKey: ['/api/sales-distribution/document-types', 'DELIVERY'],
     queryFn: async () => {
-      const res = await apiRequest('/api/order-to-cash/movement-types');
-      const data = await res.json();
-      return data.success ? data.data : [];
+      const res = await fetch('/api/sales-distribution/document-types?category=DELIVERY');
+      if (!res.ok) return [];
+      return res.json();
     }
   });
 
-  // Select all eligible schedule lines by default ONLY when dialog first opens
-  // Reset when dialog closes so it re-initializes with updated schedule lines on next open
-  const [hasInitialized, setHasInitialized] = useState(false);
-  
+  // ── NEW: Load copy control headers to show auto-determined delivery type ──
+  const sourceDocType = salesOrder?.document_type || 'OR';
+  const { data: ccHeaders = [] } = useQuery({
+    queryKey: ['/api/sales-distribution/copy-control-headers'],
+    queryFn: async () => {
+      const res = await fetch('/api/sales-distribution/copy-control-headers');
+      if (!res.ok) return [];
+      return res.json();
+    }
+  });
+
+  // ── NEW: Load copy control items for item category preview per line ──
+  const { data: ccItems = [] } = useQuery({
+    queryKey: ['/api/sales-distribution/copy-control-items'],
+    queryFn: async () => {
+      const res = await fetch('/api/sales-distribution/copy-control-items');
+      if (!res.ok) return [];
+      return res.json();
+    }
+  });
+
+  // Find the applicable copy control header for this sales order's doc type
+  const applicableCCHeader = ccHeaders.find((h: any) => h.source_doc_type === sourceDocType);
+
+  // Build item category map from copy control items
+  const ccItemMap: Record<string, string> = {};
+  const relevantCCItems = ccItems.filter(
+    (it: any) => it.source_doc_type === sourceDocType && it.target_doc_type === (applicableCCHeader?.target_doc_type || 'LF')
+  );
+  for (const it of relevantCCItems) {
+    ccItemMap[it.source_item_category] = it.target_item_category;
+  }
+
+  // Auto-set delivery type from copy control when dialog opens and CC header is found
   useEffect(() => {
-    // When dialog opens, auto-select all eligible (undelivered) schedule lines
-    // This ensures split deliveries remain selectable after one split is delivered
+    if (open && applicableCCHeader?.target_doc_type) {
+      setDeliveryType(applicableCCHeader.target_doc_type);
+    }
+  }, [open, applicableCCHeader]);
+
+  // Select all eligible schedule lines by default ONLY when dialog first opens
+  const [hasInitialized, setHasInitialized] = useState(false);
+
+  useEffect(() => {
     if (open && scheduleLines && scheduleLines.length > 0) {
       if (!hasInitialized) {
         const eligibleLines = scheduleLines
@@ -101,40 +140,31 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
           .map(line => line.id);
         setSelectedLines(eligibleLines);
         setHasInitialized(true);
-        console.log('📋 Dialog opened - Auto-selected eligible lines:', eligibleLines, 'out of', scheduleLines.length, 'total lines');
       }
     }
-    
-    // Reset when dialog closes so next open will re-initialize with updated data
     if (!open) {
       setSelectedLines([]);
       setHasInitialized(false);
-      console.log('📋 Dialog closed - Reset selection state');
     }
   }, [open, scheduleLines, hasInitialized]);
 
   const toggleLineSelection = (lineId: number) => {
-    setSelectedLines(prev => 
-      prev.includes(lineId) 
+    setSelectedLines(prev =>
+      prev.includes(lineId)
         ? prev.filter(id => id !== lineId)
         : [...prev, lineId]
     );
   };
 
   const handleCreate = () => {
-    if (selectedLines.length === 0) {
-      return;
-    }
-    
-    console.log('📦 Creating delivery with selected schedule lines:', selectedLines);
+    if (selectedLines.length === 0) return;
     onCreateDelivery({
       salesOrderId: salesOrder.id,
       selectedScheduleLines: selectedLines,
       deliveryType,
       priority,
       shippingCondition,
-      route,
-      movementType
+      route
     });
   };
 
@@ -159,6 +189,34 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
         </DialogHeader>
 
         <div className="space-y-6">
+
+          {/* ── Copy Control Banner ── */}
+          {applicableCCHeader ? (
+            <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-2 text-sm">
+              <Info className="h-4 w-4 text-green-600 shrink-0" />
+              <span className="text-green-800">
+                <strong>Copy Control Active:</strong>{' '}
+                <Badge variant="outline" className="font-mono text-blue-700 bg-blue-50 border-blue-200 mx-1">{sourceDocType}</Badge>
+                <ArrowRight className="h-3 w-3 inline mx-1 text-gray-400" />
+                <Badge variant="outline" className="font-mono text-green-700 bg-green-50 border-green-200 mx-1">{applicableCCHeader.target_doc_type}</Badge>
+                {' — '}{relevantCCItems.length} item rule{relevantCCItems.length !== 1 ? 's' : ''} configured
+                {relevantCCItems.length > 0 && (
+                  <span className="ml-2 text-gray-600">
+                    ({relevantCCItems.map((it: any) => `${it.source_item_category}→${it.target_item_category}`).join(', ')})
+                  </span>
+                )}
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm">
+              <Info className="h-4 w-4 text-amber-600 shrink-0" />
+              <span className="text-amber-800">
+                No copy control rule found for document type <strong>{sourceDocType}</strong>.
+                Delivery type must be selected manually.
+              </span>
+            </div>
+          )}
+
           {/* Schedule Lines Selection */}
           <div>
             <Label className="text-base font-semibold mb-3 block">
@@ -166,18 +224,19 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
             </Label>
             <div className="border rounded-lg max-h-64 overflow-y-auto">
               {scheduleLines.map((line) => {
-                // CRITICAL: Handle NULL/undefined values for delivered_quantity
                 const confirmedQty = parseFloat(line.confirmed_quantity || 0);
                 const deliveredQty = parseFloat(line.delivered_quantity || 0);
                 const remaining = confirmedQty - deliveredQty;
                 const isEligible = remaining > 0;
-                
+                // Determine delivery item category from copy control map
+                const srcItemCat = line.item_category || 'TAN';
+                const tgtItemCat = ccItemMap[srcItemCat] || (relevantCCItems.length > 0 ? '—' : null);
+
                 return (
-                  <div 
-                    key={line.id} 
-                    className={`p-3 border-b last:border-b-0 flex items-start gap-3 ${
-                      !isEligible ? 'bg-gray-50 opacity-50' : 'hover:bg-gray-50'
-                    }`}
+                  <div
+                    key={line.id}
+                    className={`p-3 border-b last:border-b-0 flex items-start gap-3 ${!isEligible ? 'bg-gray-50 opacity-50' : 'hover:bg-gray-50'
+                      }`}
                   >
                     <Checkbox
                       checked={selectedLines.includes(line.id)}
@@ -191,9 +250,19 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
                           <span className="font-medium">Line {line.line_number}: {line.product_name}</span>
                           <span className="text-sm text-gray-500 ml-2">({line.product_code})</span>
                         </div>
-                        <Badge variant={isEligible ? 'default' : 'secondary'}>
-                          {line.confirmation_status}
-                        </Badge>
+                        <div className="flex items-center gap-2">
+                          {/* ── Item Category Flow Badge ── */}
+                          {tgtItemCat && (
+                            <div className="flex items-center gap-1 text-xs">
+                              <Badge variant="secondary" className="font-mono text-xs py-0">{srcItemCat}</Badge>
+                              <ArrowRight className="h-3 w-3 text-gray-400" />
+                              <Badge variant="outline" className="font-mono text-xs py-0 text-green-700 bg-green-50 border-green-200">{tgtItemCat}</Badge>
+                            </div>
+                          )}
+                          <Badge variant={isEligible ? 'default' : 'secondary'}>
+                            {line.confirmation_status}
+                          </Badge>
+                        </div>
                       </div>
                       <div className="text-sm text-gray-600 mt-1 space-y-1">
                         {/* Quantity Information */}
@@ -207,7 +276,7 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
                             Date: {format(new Date(line.requested_delivery_date), 'MMM dd, yyyy')}
                           </span>
                         </div>
-                        {/* Additional Details - Plant and Storage Location */}
+                        {/* Plant and Storage Location */}
                         <div className="flex items-center gap-4 flex-wrap text-xs text-gray-500 pt-1 border-t border-gray-100">
                           {line.plant_name && (
                             <span className="flex items-center gap-1">
@@ -222,8 +291,8 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
                               Storage: <strong className="text-gray-700">
                                 {line.storage_location_name || line.storage_location_code_from_table || line.storage_location_code}
                               </strong>
-                              {(line.storage_location_code_from_table || line.storage_location_code) && 
-                                !line.storage_location_name && 
+                              {(line.storage_location_code_from_table || line.storage_location_code) &&
+                                !line.storage_location_name &&
                                 <span>({line.storage_location_code_from_table || line.storage_location_code})</span>
                               }
                             </span>
@@ -246,18 +315,34 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
           <div className="border-t pt-6">
             <Label className="text-base font-semibold mb-3 block">Delivery Configuration</Label>
             <div className="grid grid-cols-2 gap-4">
-              {/* Delivery Type */}
+              {/* Delivery Type — loaded from sd_document_types / copy control */}
               <div>
-                <Label>Delivery Type</Label>
+                <Label className="flex items-center gap-1">
+                  Delivery Type
+                  {applicableCCHeader && (
+                    <span className="text-xs text-green-600 font-normal ml-1">(from copy control)</span>
+                  )}
+                </Label>
                 <Select value={deliveryType} onValueChange={setDeliveryType}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="LF">LF - Standard Delivery</SelectItem>
-                    <SelectItem value="LX">LX - Express Delivery</SelectItem>
-                    <SelectItem value="LR">LR - Returns Delivery</SelectItem>
-                    <SelectItem value="LFG">LFG - Free Goods</SelectItem>
+                    {deliveryDocTypes.length > 0 ? (
+                      deliveryDocTypes.map((dt: any) => (
+                        <SelectItem key={dt.code} value={dt.code}>
+                          {dt.code} — {dt.name}
+                          {dt.code === applicableCCHeader?.target_doc_type && ' ✓ (copy control)'}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      // Fallback if API doesn't return data yet
+                      <>
+                        <SelectItem value="LF">LF — Standard Delivery</SelectItem>
+                        <SelectItem value="EL">EL — Express Delivery</SelectItem>
+                        <SelectItem value="LR">LR — Returns Delivery</SelectItem>
+                      </>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -272,9 +357,9 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
                   <SelectContent>
                     {priorities?.map((p: any) => (
                       <SelectItem key={p.code} value={p.code}>
-                        {p.code === '01' && '🔴'} 
-                        {p.code === '02' && '🟢'} 
-                        {p.code === '03' && '🔵'} 
+                        {p.code === '01' && '🔴'}
+                        {p.code === '02' && '🟢'}
+                        {p.code === '03' && '🔵'}
                         {p.name}
                       </SelectItem>
                     ))}
@@ -320,46 +405,28 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
                 </Select>
               </div>
 
-              {/* Movement Type */}
-              <div className="col-span-2">
-                <Label>Movement Type</Label>
-                <Select value={movementType} onValueChange={setMovementType}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select movement type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {movementTypes?.map((mt: any) => (
-                      <SelectItem key={mt.code} value={mt.code}>
-                        <div className="flex flex-col py-1">
-                          <div className="font-medium">{mt.code} - {mt.name}</div>
-                          <div className="text-xs text-gray-500">
-                            {mt.movement_category} | {mt.inventory_effect}
-                            {mt.description && ` | ${mt.description.substring(0, 50)}`}
-                          </div>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-gray-500 mt-1">
-                  Selected: {movementTypes?.find((mt: any) => mt.code === movementType)?.description || 'Standard goods issue from sales order delivery'}
-                </p>
-              </div>
+
             </div>
           </div>
 
-          {/* Preview */}
+          {/* Delivery Preview */}
           <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
             <h4 className="font-semibold text-blue-900 mb-2">Delivery Preview</h4>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div>Lines to deliver: <span className="font-semibold">{selectedLines.length}</span></div>
               <div>Total quantity: <span className="font-semibold">{totalQuantity} units</span></div>
+              <div>Delivery type: <span className="font-semibold">{deliveryType}</span></div>
               <div>Priority: <span className="font-semibold">
                 {priorities?.find((p: any) => p.code === priority)?.name || priority}
               </span></div>
               <div>Shipping: <span className="font-semibold">
                 {shippingConditions?.find((sc: any) => sc.code === shippingCondition)?.name || shippingCondition}
               </span></div>
+              {relevantCCItems.length > 0 && (
+                <div>Item categories: <span className="font-semibold text-green-700">
+                  {relevantCCItems.map((it: any) => `${it.source_item_category}→${it.target_item_category}`).join(', ')}
+                </span></div>
+              )}
             </div>
           </div>
         </div>
@@ -368,8 +435,8 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button 
-            onClick={handleCreate} 
+          <Button
+            onClick={handleCreate}
             disabled={selectedLines.length === 0 || isCreating}
           >
             {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -382,4 +449,3 @@ const EnhancedDeliveryDialog: React.FC<EnhancedDeliveryDialogProps> = ({
 };
 
 export default EnhancedDeliveryDialog;
-

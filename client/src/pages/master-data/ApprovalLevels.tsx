@@ -44,7 +44,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Search, RefreshCw, Plus, Pencil, Trash2, ChevronRight, ArrowLeft } from "lucide-react";
+import { Search, RefreshCw, Plus, Pencil, Trash2, ChevronRight, ArrowLeft, Eye, Info, ChevronDown } from "lucide-react";
 
 interface ApprovalLevel {
   id: number;
@@ -52,8 +52,13 @@ interface ApprovalLevel {
   name: string;
   description: string;
   value_limit: number | null;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
+  created_by?: number | null;
+  updated_by?: number | null;
+  tenant_id?: string | null;
+  _deletedAt?: string | null;
 }
 
 // Create validation schema
@@ -65,6 +70,7 @@ const approvalLevelSchema = z.object({
     z.coerce.number().min(0, "Value limit must be a positive number"),
     z.literal("").transform(() => null)
   ]),
+  is_active: z.boolean().default(true),
 });
 
 type ApprovalLevelFormValues = z.infer<typeof approvalLevelSchema>;
@@ -75,7 +81,10 @@ export default function ApprovalLevelsPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingLevel, setEditingLevel] = useState<ApprovalLevel | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  
+  const [viewingLevel, setViewingLevel] = useState<ApprovalLevel | null>(null);
+  const [showViewDialog, setShowViewDialog] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
+
   // Form setup with proper type
   const form = useForm<ApprovalLevelFormValues>({
     resolver: zodResolver(approvalLevelSchema),
@@ -84,6 +93,7 @@ export default function ApprovalLevelsPage() {
       name: "",
       description: "",
       value_limit: "" as any, // Fix for type compatibility
+      is_active: true,
     },
   });
 
@@ -95,9 +105,10 @@ export default function ApprovalLevelsPage() {
       name: "",
       description: "",
       value_limit: "" as any,
+      is_active: true,
     },
   });
-  
+
   // Fetch approval levels data
   const { data: approvalLevels = [], isLoading, refetch } = useQuery<ApprovalLevel[]>({
     queryKey: ["/api/master-data/approval-level"],
@@ -114,12 +125,12 @@ export default function ApprovalLevelsPage() {
         },
         body: JSON.stringify(data),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.message || "Failed to create approval level");
       }
-      
+
       return response.json();
     },
     onSuccess: () => {
@@ -133,6 +144,7 @@ export default function ApprovalLevelsPage() {
         name: "",
         description: "",
         value_limit: "" as any,
+        is_active: true,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/master-data/approval-level"] });
     },
@@ -155,12 +167,12 @@ export default function ApprovalLevelsPage() {
         },
         body: JSON.stringify(data),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.message || "Failed to update approval level");
       }
-      
+
       return response.json();
     },
     onSuccess: () => {
@@ -175,6 +187,7 @@ export default function ApprovalLevelsPage() {
         name: "",
         description: "",
         value_limit: "" as any,
+        is_active: true,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/master-data/approval-level"] });
     },
@@ -193,12 +206,12 @@ export default function ApprovalLevelsPage() {
       const response = await fetch(`/api/master-data/approval-level/${id}`, {
         method: "DELETE",
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.message || "Failed to delete approval level");
       }
-      
+
       return response.json();
     },
     onSuccess: () => {
@@ -251,8 +264,15 @@ export default function ApprovalLevelsPage() {
       name: level.name,
       description: level.description || "",
       value_limit: level.value_limit?.toString() || "",
+      is_active: level.is_active,
     });
     setIsEditDialogOpen(true);
+  };
+
+  const handleViewClick = (level: ApprovalLevel) => {
+    setViewingLevel(level);
+    setShowViewDialog(true);
+    setAdminDataOpen(false);
   };
 
   // Handle edit form submission
@@ -343,9 +363,9 @@ export default function ApprovalLevelsPage() {
                       <FormItem>
                         <FormLabel>Description</FormLabel>
                         <FormControl>
-                          <Textarea 
-                            placeholder="Approves department purchases up to $10,000" 
-                            {...field} 
+                          <Textarea
+                            placeholder="Approves department purchases up to $10,000"
+                            {...field}
                           />
                         </FormControl>
                         <FormMessage />
@@ -359,9 +379,9 @@ export default function ApprovalLevelsPage() {
                       <FormItem>
                         <FormLabel>Value Limit</FormLabel>
                         <FormControl>
-                          <Input 
-                            type="number" 
-                            placeholder="10000 (leave empty for unlimited)" 
+                          <Input
+                            type="number"
+                            placeholder="10000 (leave empty for unlimited)"
                             {...field}
                             onChange={(e) => onChange(e.target.value)}
                             ref={ref}
@@ -374,8 +394,25 @@ export default function ApprovalLevelsPage() {
                       </FormItem>
                     )}
                   />
+                  <FormField
+                    control={form.control as any}
+                    name="is_active"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base text-gray-700 font-semibold">Active Status</FormLabel>
+                          <FormDescription>
+                            Enable or disable this approval level.
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <input type="checkbox" className="h-4 w-4" checked={field.value} onChange={field.onChange} />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
                   <DialogFooter className="mt-6">
-                    <Button 
+                    <Button
                       type="submit"
                       disabled={createApprovalLevelMutation.isPending}
                     >
@@ -431,6 +468,7 @@ export default function ApprovalLevelsPage() {
                       <TableHead className="w-16">Level</TableHead>
                       <TableHead>Name</TableHead>
                       <TableHead>Description</TableHead>
+                      <TableHead className="w-24">Status</TableHead>
                       <TableHead className="w-32">Value Limit</TableHead>
                       <TableHead className="w-32">Actions</TableHead>
                     </TableRow>
@@ -449,6 +487,11 @@ export default function ApprovalLevelsPage() {
                           <TableCell>{level.name}</TableCell>
                           <TableCell>{level.description}</TableCell>
                           <TableCell>
+                            <Badge variant={level.is_active ? "default" : "secondary"}>
+                              {level.is_active ? "Active" : "Inactive"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
                             {level.value_limit === null ? (
                               <Badge variant="outline">Unlimited</Badge>
                             ) : (
@@ -457,15 +500,23 @@ export default function ApprovalLevelsPage() {
                           </TableCell>
                           <TableCell>
                             <div className="flex gap-2">
-                              <Button 
-                                size="icon" 
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => handleViewClick(level)}
+                                title="View Details"
+                              >
+                                <Eye className="h-4 w-4 text-blue-600" />
+                              </Button>
+                              <Button
+                                size="icon"
                                 variant="ghost"
                                 onClick={() => handleEditClick(level)}
                               >
                                 <Pencil className="h-4 w-4" />
                               </Button>
-                              <Button 
-                                size="icon" 
+                              <Button
+                                size="icon"
                                 variant="ghost"
                                 onClick={() => handleDelete(level.id)}
                                 disabled={deleteApprovalLevelMutation.isPending}
@@ -480,7 +531,7 @@ export default function ApprovalLevelsPage() {
                   </TableBody>
                 </Table>
               </div>
-              
+
               {/* Mobile View */}
               <div className="md:hidden">
                 {sortedApprovalLevels.length === 0 ? (
@@ -497,6 +548,9 @@ export default function ApprovalLevelsPage() {
                               <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">
                                 Level {level.level}
                               </Badge>
+                              <Badge variant={level.is_active ? "default" : "secondary"}>
+                                {level.is_active ? "Active" : "Inactive"}
+                              </Badge>
                               <div className="font-medium text-base">{level.name}</div>
                             </div>
                             <div>
@@ -507,23 +561,23 @@ export default function ApprovalLevelsPage() {
                               )}
                             </div>
                           </div>
-                          
+
                           <div className="mt-2 text-sm text-muted-foreground">
                             {level.description}
                           </div>
-                          
+
                           <div className="mt-3 flex justify-end gap-2">
-                            <Button 
-                              size="sm" 
+                            <Button
+                              size="sm"
                               variant="ghost"
                               onClick={() => handleEditClick(level)}
                             >
                               <Pencil className="h-4 w-4 mr-1" />
                               Edit
                             </Button>
-                            <Button 
-                              size="sm" 
-                              variant="ghost" 
+                            <Button
+                              size="sm"
+                              variant="ghost"
                               className="text-red-600 hover:text-red-700"
                               onClick={() => handleDelete(level.id)}
                               disabled={deleteApprovalLevelMutation.isPending}
@@ -593,9 +647,9 @@ export default function ApprovalLevelsPage() {
                   <FormItem>
                     <FormLabel>Description</FormLabel>
                     <FormControl>
-                      <Textarea 
-                        placeholder="Approves department purchases up to $10,000" 
-                        {...field} 
+                      <Textarea
+                        placeholder="Approves department purchases up to $10,000"
+                        {...field}
                       />
                     </FormControl>
                     <FormMessage />
@@ -609,9 +663,9 @@ export default function ApprovalLevelsPage() {
                   <FormItem>
                     <FormLabel>Value Limit</FormLabel>
                     <FormControl>
-                      <Input 
-                        type="number" 
-                        placeholder="10000 (leave empty for unlimited)" 
+                      <Input
+                        type="number"
+                        placeholder="10000 (leave empty for unlimited)"
                         {...field}
                         onChange={(e) => onChange(e.target.value)}
                         ref={ref}
@@ -624,8 +678,25 @@ export default function ApprovalLevelsPage() {
                   </FormItem>
                 )}
               />
+              <FormField
+                control={editForm.control as any}
+                name="is_active"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base text-gray-700 font-semibold">Active Status</FormLabel>
+                      <FormDescription>
+                        Enable or disable this approval level.
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <input type="checkbox" className="h-4 w-4" checked={field.value} onChange={field.onChange} />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
               <DialogFooter className="mt-6">
-                <Button 
+                <Button
                   type="button"
                   variant="outline"
                   onClick={() => {
@@ -635,7 +706,7 @@ export default function ApprovalLevelsPage() {
                 >
                   Cancel
                 </Button>
-                <Button 
+                <Button
                   type="submit"
                   disabled={updateApprovalLevelMutation.isPending}
                 >
@@ -647,6 +718,133 @@ export default function ApprovalLevelsPage() {
               </DialogFooter>
             </form>
           </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-hidden flex flex-col p-0">
+          <DialogHeader className="p-6 pb-2">
+            <DialogTitle>Approval Level Details</DialogTitle>
+            <DialogDescription>
+              Details and administrative properties for this approval level.
+            </DialogDescription>
+          </DialogHeader>
+
+          {viewingLevel && (
+            <div className="flex-1 overflow-y-auto space-y-6 p-6 pt-2">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Basic Information</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <dl className="grid grid-cols-2 gap-4">
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Level</dt>
+                      <dd className="text-sm font-bold text-gray-900 mt-1">
+                        <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100">
+                          Level {viewingLevel.level}
+                        </Badge>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Name</dt>
+                      <dd className="text-sm font-bold text-gray-900 mt-1">{viewingLevel.name}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Value Limit</dt>
+                      <dd className="text-sm text-gray-900">
+                        {viewingLevel.value_limit === null ? (
+                          <Badge variant="outline">Unlimited</Badge>
+                        ) : (
+                          formatCurrency(viewingLevel.value_limit)
+                        )}
+                      </dd>
+                    </div>
+                    <div className="col-span-2">
+                      <dt className="text-sm font-medium text-gray-500">Status</dt>
+                      <dd className="text-sm text-gray-900 mt-1">
+                        <Badge variant={viewingLevel.is_active ? "default" : "secondary"}>
+                          {viewingLevel.is_active ? "Active" : "Inactive"}
+                        </Badge>
+                      </dd>
+                    </div>
+                    <div className="col-span-2">
+                      <dt className="text-sm font-medium text-gray-500">Description</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{viewingLevel.description || '—'}</dd>
+                    </div>
+                  </dl>
+                </CardContent>
+              </Card>
+
+              {/* ── Administrative Data (SAP ECC style) ────────────────── */}
+              <div className="border rounded-md overflow-hidden bg-white">
+                <button
+                  type="button"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                >
+                  <span className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <Info className="h-3.5 w-3.5" />
+                    Administrative Data
+                  </span>
+                  {adminDataOpen
+                    ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                    : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                </button>
+
+                {adminDataOpen && (
+                  <dl className="px-4 py-3 space-y-2 bg-white">
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingLevel.created_at
+                          ? new Date(viewingLevel.created_at).toLocaleString()
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingLevel.created_by ?? '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingLevel.updated_at
+                          ? new Date(viewingLevel.updated_at).toLocaleString()
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingLevel.updated_by ?? '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Tenant ID</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingLevel.tenant_id ?? '—'}
+                      </dd>
+                    </div>
+                    {viewingLevel._deletedAt && (
+                      <div className="flex justify-between items-center">
+                        <dt className="text-xs text-red-500 font-medium">Deleted on</dt>
+                        <dd className="text-xs text-red-500 font-medium">
+                          {new Date(viewingLevel._deletedAt).toLocaleString()}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="p-4 border-t bg-gray-50 flex justify-end">
+            <Button variant="outline" onClick={() => setShowViewDialog(false)}>Close</Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

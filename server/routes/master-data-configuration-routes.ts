@@ -90,6 +90,9 @@ router.get("/chart-of-accounts", async (req: Request, res: Response) => {
         coa.maintenance_language,
         coa.created_at,
         coa.updated_at,
+        coa.created_by,
+        coa.updated_by,
+        coa."_tenantId" as "tenantId",
         grp.chart_id as group_chart_id_code,
         grp.description as group_chart_description
       FROM chart_of_accounts coa
@@ -125,6 +128,9 @@ router.get("/chart-of-accounts/:id", async (req: Request, res: Response) => {
         coa.maintenance_language,
         coa.created_at,
         coa.updated_at,
+        coa.created_by,
+        coa.updated_by,
+        coa."_tenantId" as "tenantId",
         grp.chart_id as group_chart_id_code,
         grp.description as group_chart_description
       FROM chart_of_accounts coa
@@ -202,6 +208,9 @@ router.post("/chart-of-accounts", async (req: Request, res: Response) => {
       return res.status(409).json({ error: 'Chart of accounts with this ID already exists' });
     }
 
+    const userId = (req as any).user?.id || 1;
+    const tenantId = (req as any).user?.tenantId || '001';
+
     // Insert into database with only required fields
     const result = await pool.query(`
       INSERT INTO chart_of_accounts (
@@ -214,9 +223,12 @@ router.post("/chart-of-accounts", async (req: Request, res: Response) => {
         active,
         manual_creation_allowed,
         maintenance_language,
+        created_by,
+        updated_by,
+        "_tenantId",
         created_at,
         updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
       RETURNING *
     `, [
       chartId,
@@ -227,7 +239,10 @@ router.post("/chart-of-accounts", async (req: Request, res: Response) => {
       groupChartId || null,
       isActive,
       manualCreationAllowed,
-      maintenanceLanguage || null
+      maintenanceLanguage || null,
+      userId,
+      userId,
+      tenantId
     ]);
 
     res.status(201).json(result.rows[0]);
@@ -320,6 +335,8 @@ router.put("/chart-of-accounts/:id", async (req: Request, res: Response) => {
       }
     }
 
+    const userId = (req as any).user?.id || 1;
+
     // Update in database
     const result = await pool.query(`
       UPDATE chart_of_accounts SET
@@ -332,8 +349,9 @@ router.put("/chart-of-accounts/:id", async (req: Request, res: Response) => {
         active = $7,
         manual_creation_allowed = $8,
         maintenance_language = $9,
+        updated_by = $10,
         updated_at = NOW()
-      WHERE id = $10
+      WHERE id = $11
       RETURNING *
     `, [
       chartId,
@@ -345,24 +363,19 @@ router.put("/chart-of-accounts/:id", async (req: Request, res: Response) => {
       isActive,
       manualCreationAllowed,
       maintenanceLanguage || null,
+      userId,
       id
     ]);
 
-    // Fetch updated record with group chart info
+    // Fetch updated record with group chart info and audit fields
     const updatedResult = await pool.query(`
       SELECT 
-        coa.id,
-        coa.chart_id,
-        coa.description,
-        coa.language,
-        coa.account_length,
-        coa.controlling_integration,
-        coa.group_chart_id,
-        coa.active,
-        coa.manual_creation_allowed,
-        coa.maintenance_language,
-        coa.created_at,
-        coa.updated_at,
+        coa.id, coa.chart_id, coa.description, coa.language,
+        coa.account_length, coa.controlling_integration, coa.group_chart_id,
+        coa.active, coa.manual_creation_allowed, coa.maintenance_language,
+        coa.created_at, coa.updated_at,
+        coa.created_by, coa.updated_by,
+        coa."_tenantId" as "tenantId",
         grp.chart_id as group_chart_id_code,
         grp.description as group_chart_description
       FROM chart_of_accounts coa
@@ -865,8 +878,10 @@ router.get("/vat-registration", async (req: Request, res: Response) => {
 
     const result = await pool.query(`
       SELECT id, registration_key, company_code_id, country, vat_number, tax_type, valid_from, valid_to, 
-             tax_office, tax_officer_name, exemption_certificate, active_status, created_at, updated_at
+             tax_office, tax_officer_name, exemption_certificate, active_status, created_at, updated_at,
+             created_by, updated_by, "_deletedAt", "_tenantId" as tenant_id
       FROM public.vat_registrations
+      WHERE "_deletedAt" IS NULL
       ORDER BY id DESC
     `);
     const mapped = result.rows.map((r: any) => ({
@@ -884,6 +899,10 @@ router.get("/vat-registration", async (req: Request, res: Response) => {
       activeStatus: r.active_status,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
+      createdBy: r.created_by,
+      updatedBy: r.updated_by,
+      deletedAt: r._deletedAt,
+      tenantId: r.tenant_id,
     }));
     res.json(mapped);
   } catch (error) {
@@ -932,10 +951,12 @@ router.post("/vat-registration", async (req: Request, res: Response) => {
 
     const result = await pool.query(
       `INSERT INTO public.vat_registrations 
-       (registration_key, company_code_id, country, vat_number, tax_type, valid_from, valid_to, tax_office, tax_officer_name, exemption_certificate, active_status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
-       RETURNING *`,
-      [registration_key, companyIdToUse, country, vat_number, tax_type, valid_from, valid_to, tax_office, tax_officer_name, exemption_certificate, !!active_status]
+       (registration_key, company_code_id, country, vat_number, tax_type, valid_from, valid_to, tax_office, tax_officer_name, exemption_certificate, active_status, created_by, updated_by, "_tenantId", created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+       RETURNING id, registration_key, company_code_id, country, vat_number, tax_type, valid_from, valid_to, 
+                 tax_office, tax_officer_name, exemption_certificate, active_status, created_at, updated_at,
+                 created_by, updated_by, "_deletedAt", "_tenantId" as tenant_id`,
+      [registration_key, companyIdToUse, country, vat_number, tax_type, valid_from, valid_to, tax_office, tax_officer_name, exemption_certificate, !!active_status, (req as any).user?.id || 1, (req as any).user?.id || 1, (req as any).user?.tenantId || '001']
     );
     const r = result.rows[0];
     res.status(201).json({
@@ -953,6 +974,9 @@ router.post("/vat-registration", async (req: Request, res: Response) => {
       activeStatus: r.active_status,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
+      createdBy: r.created_by,
+      updatedBy: r.updated_by,
+      tenantId: r.tenant_id,
     });
   } catch (error) {
     console.error('Error creating VAT registration:', error);
@@ -1006,10 +1030,15 @@ router.put("/vat-registration/:id", async (req: Request, res: Response) => {
     if (exemption_certificate !== undefined) { fields.push(`exemption_certificate = $${idx++}`); values.push(exemption_certificate); }
     if (active_status !== undefined) { fields.push(`active_status = $${idx++}`); values.push(!!active_status); }
     fields.push(`updated_at = NOW()`);
-    if (fields.length === 1) return res.status(400).json({ error: 'No valid fields to update' });
+    fields.push(`updated_by = $${idx++}`); values.push((req as any).user?.id || 1);
+
+    if (fields.length <= 2) return res.status(400).json({ error: 'No valid fields to update' });
 
     const result = await pool.query(
-      `UPDATE public.vat_registrations SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      `UPDATE public.vat_registrations SET ${fields.join(', ')} WHERE id = $${idx} AND "_deletedAt" IS NULL 
+       RETURNING id, registration_key, company_code_id, country, vat_number, tax_type, valid_from, valid_to, 
+                 tax_office, tax_officer_name, exemption_certificate, active_status, created_at, updated_at,
+                 created_by, updated_by, "_deletedAt", "_tenantId" as tenant_id`,
       [...values, id]
     );
     if (!result.rowCount) return res.status(404).json({ error: 'VAT registration not found' });
@@ -1029,6 +1058,9 @@ router.put("/vat-registration/:id", async (req: Request, res: Response) => {
       activeStatus: r.active_status,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
+      createdBy: r.created_by,
+      updatedBy: r.updated_by,
+      tenantId: r.tenant_id,
     });
   } catch (error) {
     console.error('Error updating VAT registration:', error);
@@ -1039,8 +1071,10 @@ router.put("/vat-registration/:id", async (req: Request, res: Response) => {
 router.delete("/vat-registration/:id", async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
-    const result = await pool.query('DELETE FROM public.vat_registrations WHERE id = $1 RETURNING id', [id]);
-    if (!result.rowCount) return res.status(404).json({ error: 'VAT registration not found' });
+    const existing = await pool.query('SELECT id FROM public.vat_registrations WHERE id = $1 AND "_deletedAt" IS NULL', [id]);
+    if (!existing.rowCount) return res.status(404).json({ error: 'VAT registration not found' });
+
+    await pool.query('UPDATE public.vat_registrations SET "_deletedAt" = NOW(), updated_by = $2 WHERE id = $1', [id, (req as any).user?.id || 1]);
     res.status(200).json({ message: 'VAT registration deleted successfully' });
   } catch (error) {
     console.error('Error deleting VAT registration:', error);

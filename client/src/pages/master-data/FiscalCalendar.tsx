@@ -58,6 +58,9 @@ type FiscalCalendar = {
     active: boolean;
     created_at: string;
     updated_at: string;
+    created_by?: number;
+    updated_by?: number;
+    tenantId?: string;
 };
 
 // Fiscal Calendar Form Schema
@@ -75,6 +78,7 @@ export default function FiscalCalendarPage() {
     const [editingFiscalCalendar, setEditingFiscalCalendar] = useState<FiscalCalendar | null>(null);
     const [viewingFiscalCalendarDetails, setViewingFiscalCalendarDetails] = useState<FiscalCalendar | null>(null);
     const [isFiscalCalendarDetailsOpen, setIsFiscalCalendarDetailsOpen] = useState(false);
+    const [showAdminData, setShowAdminData] = useState(false);
     const { toast } = useToast();
     const queryClient = useQueryClient();
 
@@ -688,6 +692,44 @@ export default function FiscalCalendarPage() {
                                             </div>
                                         </dl>
                                     </CardContent>
+                                </Card>
+
+                                {/* Administrative Data */}
+                                <Card>
+                                    <CardHeader className="pb-2">
+                                        <CardTitle
+                                            className="text-lg flex items-center justify-between cursor-pointer select-none"
+                                            onClick={() => setShowAdminData(!showAdminData)}
+                                        >
+                                            <span>Administrative Data</span>
+                                            <svg
+                                                xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                                                viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                                                style={{ transform: showAdminData ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+                                            >
+                                                <polyline points="6 9 12 15 18 9"></polyline>
+                                            </svg>
+                                        </CardTitle>
+                                    </CardHeader>
+                                    {showAdminData && (
+                                        <CardContent>
+                                            <dl className="space-y-3">
+                                                <div className="flex justify-between py-2 border-b">
+                                                    <dt className="text-sm font-medium text-gray-500">Created By:</dt>
+                                                    <dd className="text-sm text-gray-900">{viewingFiscalCalendarDetails.created_by ?? '—'}</dd>
+                                                </div>
+                                                <div className="flex justify-between py-2 border-b">
+                                                    <dt className="text-sm font-medium text-gray-500">Updated By:</dt>
+                                                    <dd className="text-sm text-gray-900">{viewingFiscalCalendarDetails.updated_by ?? viewingFiscalCalendarDetails.created_by ?? '—'}</dd>
+                                                </div>
+                                                <div className="flex justify-between py-2">
+                                                    <dt className="text-sm font-medium text-gray-500">Tenant ID:</dt>
+                                                    <dd className="text-sm text-gray-900">{(viewingFiscalCalendarDetails as any)['_tenantId'] ?? viewingFiscalCalendarDetails.tenantId ?? '—'}</dd>
+                                                </div>
+                                            </dl>
+                                        </CardContent>
+                                    )}
                                 </Card>
                             </div>
                         </>

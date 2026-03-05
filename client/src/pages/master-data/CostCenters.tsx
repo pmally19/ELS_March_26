@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -13,7 +14,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/apiClient";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Edit, Trash2, RefreshCw, ArrowLeft, Building2 } from "lucide-react";
+import { Plus, Edit, Trash2, RefreshCw, ArrowLeft, Building2, Eye } from "lucide-react";
 import { useLocation } from "wouter";
 
 const costCenterSchema = z.object({
@@ -29,7 +30,14 @@ const costCenterSchema = z.object({
   active: z.boolean().default(true)
 });
 
-type CostCenter = z.infer<typeof costCenterSchema> & { id: number };
+type CostCenter = z.infer<typeof costCenterSchema> & {
+  id: number;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: number;
+  updated_by?: number;
+  tenant_id?: string;
+};
 
 interface CompanyCode {
   id: number;
@@ -50,13 +58,15 @@ export default function CostCenters() {
   const [, setLocation] = useLocation();
   const [open, setOpen] = useState(false);
   const [editingCostCenter, setEditingCostCenter] = useState<CostCenter | null>(null);
+  const [viewingCostCenter, setViewingCostCenter] = useState<CostCenter | null>(null);
+  const [showAdminData, setShowAdminData] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const { data: costCenters = [], isLoading, refetch } = useQuery<CostCenter[]>({
-    queryKey: ["/api/master-data/cost-center"],
+    queryKey: ["/api/master-data/cost-centers"],
     queryFn: async () => {
-      const response = await apiGet<any[]>("/api/master-data/cost-center");
+      const response = await apiGet<any[]>("/api/master-data/cost-centers");
       // Transform the response to match our expected format
       return response.map((center: any) => ({
         id: center.id,
@@ -69,7 +79,12 @@ export default function CostCenters() {
         responsible_person: center.responsible_person,
         valid_from: center.valid_from,
         valid_to: center.valid_to,
-        active: center.active
+        active: center.active,
+        created_at: center.created_at,
+        updated_at: center.updated_at,
+        created_by: center.created_by,
+        updated_by: center.updated_by,
+        tenant_id: center.tenant_id
       }));
     },
   });
@@ -133,7 +148,7 @@ export default function CostCenters() {
       return apiPost("/api/master-data/cost-center", data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/master-data/cost-center"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/master-data/cost-centers"] });
       setOpen(false);
       setEditingCostCenter(null);
       form.reset({
@@ -165,7 +180,7 @@ export default function CostCenters() {
       return apiPut(`/api/master-data/cost-center/${id}`, data);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/master-data/cost-center"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/master-data/cost-centers"] });
       setOpen(false);
       setEditingCostCenter(null);
       form.reset({
@@ -195,7 +210,7 @@ export default function CostCenters() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiDelete(`/api/master-data/cost-center/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/master-data/cost-center"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/master-data/cost-centers"] });
       toast({ title: "Success", description: "Cost center deleted successfully" });
     },
     onError: (error: any) => {
@@ -591,6 +606,13 @@ export default function CostCenters() {
                     <TableCell>
                       <div className="flex space-x-2">
                         <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setViewingCostCenter(center)}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button
                           variant="outline"
                           size="sm"
                           onClick={() => handleEdit(center)}
@@ -639,6 +661,112 @@ export default function CostCenters() {
           )}
         </CardContent>
       </Card>
+
+      {/* View Cost Center Dialog (Read-Only) */}
+      <Dialog open={!!viewingCostCenter} onOpenChange={(open) => !open && setViewingCostCenter(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>View Cost Center</DialogTitle>
+            <DialogDescription>
+              Read-only view of Cost Center {viewingCostCenter?.cost_center}
+            </DialogDescription>
+          </DialogHeader>
+
+          {viewingCostCenter && (
+            <div className="space-y-4 pt-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Code</label>
+                  <p className="text-sm mt-1">{viewingCostCenter.cost_center}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Description</label>
+                  <p className="text-sm mt-1">{viewingCostCenter.description}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Category</label>
+                  <p className="text-sm mt-1">
+                    <span className={`px-2 py-1 rounded-full text-xs ${getCategoryBadgeClass(viewingCostCenter.cost_center_category)}`}>
+                      {viewingCostCenter.cost_center_category}
+                    </span>
+                  </p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Company Code</label>
+                  <p className="text-sm mt-1">{viewingCostCenter.company_code}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Controlling Area</label>
+                  <p className="text-sm mt-1">{viewingCostCenter.controlling_area}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Manager</label>
+                  <p className="text-sm mt-1">{viewingCostCenter.responsible_person || 'N/A'}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Hierarchy Area</label>
+                  <p className="text-sm mt-1">{viewingCostCenter.hierarchy_area || 'N/A'}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Valid From</label>
+                  <p className="text-sm mt-1">{viewingCostCenter.valid_from ? new Date(viewingCostCenter.valid_from).toLocaleDateString() : 'N/A'}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Valid To</label>
+                  <p className="text-sm mt-1">{viewingCostCenter.valid_to ? new Date(viewingCostCenter.valid_to).toLocaleDateString() : 'N/A'}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Status</label>
+                  <p className="text-sm mt-1">
+                    <span className={`px-2 py-1 rounded-full text-xs ${getStatusBadgeClass(viewingCostCenter.active)}`}>
+                      {viewingCostCenter.active ? 'Active' : 'Inactive'}
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              <Separator className="my-3" />
+              {/* Administrative Data - collapsible */}
+              <div
+                className="cursor-pointer flex justify-between items-center select-none py-1 px-1"
+                onClick={() => setShowAdminData(!showAdminData)}
+              >
+                <p className="font-semibold text-sm text-gray-700">Administrative Data</p>
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ transform: showAdminData ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </div>
+              {showAdminData && (
+                <dl className="grid grid-cols-2 gap-3 px-1 pb-2">
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Created By</dt>
+                    <dd className="text-sm text-gray-900">{(viewingCostCenter as any)?.created_by ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Updated By</dt>
+                    <dd className="text-sm text-gray-900">{(viewingCostCenter as any)?.updated_by ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Created At</dt>
+                    <dd className="text-sm text-gray-900">{(viewingCostCenter as any)?.created_at ? new Date((viewingCostCenter as any).created_at).toLocaleString() : '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Updated At</dt>
+                    <dd className="text-sm text-gray-900">{(viewingCostCenter as any)?.updated_at ? new Date((viewingCostCenter as any).updated_at).toLocaleString() : '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Tenant ID</dt>
+                    <dd className="text-sm text-gray-900">{(viewingCostCenter as any)?.tenant_id ?? '—'}</dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

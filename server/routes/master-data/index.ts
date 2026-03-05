@@ -71,6 +71,9 @@ import * as materialAccountAssignmentGroups from "./material-account-assignment-
 import purchasingItemCategoriesRouter from './purchasing-item-categories';
 import reasonCodesRouter from './reason-codes';
 import transactionKeysRouter from './transaction-keys';
+import postingKeysRouter from './posting-keys';
+import fieldStatusVariantsRouter from './field-status-variants';
+import fieldStatusGroupsRouter from './field-status-groups';
 import taxCategoriesRouter from './tax-categories';
 import routesMasterRouter from './routes-master';
 import transportationGroupsRouter from './transportation-groups';
@@ -385,7 +388,7 @@ export function registerMasterDataRoutes(app: Express) {
   app.get('/api/master-data/price-lists', async (req, res) => {
     try {
       const pool = ensureActivePool();
-      const result = await pool.query('SELECT * FROM price_lists ORDER BY id');
+      const result = await pool.query('SELECT * FROM price_lists WHERE "_deletedAt" IS NULL ORDER BY price_list_code');
 
       // Map database columns (snake_case) to frontend format (camelCase)
       const records = (result.rows || []).map((r: any) => ({
@@ -399,7 +402,11 @@ export function registerMasterDataRoutes(app: Express) {
         priceListType: r.price_list_type || 'standard',
         isActive: r.is_active !== undefined ? r.is_active : true,
         createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
-        updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null
+        updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+        createdBy: r.created_by,
+        updatedBy: r.updated_by,
+        tenantId: r._tenantId,
+        deletedAt: r._deletedAt
       }));
 
       res.json(records);
@@ -409,18 +416,20 @@ export function registerMasterDataRoutes(app: Express) {
     }
   });
 
-  app.post('/api/master-data/price-lists', async (req, res) => {
+  app.post('/api/master-data/price-lists', async (req: any, res) => {
     try {
       const pool = ensureActivePool();
       const { priceListCode, name, description, currency, validFrom, validTo, priceListType, isActive } = req.body;
+      const tenantId = req.user?.tenantId || '001';
+      const userId = req.user?.id || 1;
 
       if (!priceListCode || !name || !currency || !validFrom) {
         return res.status(400).json({ message: 'Missing required fields: priceListCode, name, currency, validFrom' });
       }
 
       const query = `
-        INSERT INTO price_lists (price_list_code, name, description, currency, valid_from, valid_to, price_list_type, is_active)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
+        INSERT INTO price_lists (price_list_code, name, description, currency, valid_from, valid_to, price_list_type, is_active, "_tenantId", created_by, updated_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) 
         RETURNING *
       `;
 
@@ -431,8 +440,12 @@ export function registerMasterDataRoutes(app: Express) {
         currency,
         validFrom,
         validTo || null,
+        validTo || null,
         priceListType || 'standard',
-        isActive !== undefined ? isActive : true
+        isActive !== undefined ? isActive : true,
+        tenantId,
+        userId,
+        userId
       ]);
 
       const r = result.rows[0];
@@ -447,7 +460,11 @@ export function registerMasterDataRoutes(app: Express) {
         priceListType: r.price_list_type || 'standard',
         isActive: r.is_active !== undefined ? r.is_active : true,
         createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
-        updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null
+        updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+        createdBy: r.created_by,
+        updatedBy: r.updated_by,
+        tenantId: r._tenantId,
+        deletedAt: r._deletedAt
       });
     } catch (error: any) {
       console.error('Error creating price list:', error);
@@ -458,11 +475,12 @@ export function registerMasterDataRoutes(app: Express) {
     }
   });
 
-  app.put('/api/master-data/price-lists/:id', async (req, res) => {
+  app.put('/api/master-data/price-lists/:id', async (req: any, res) => {
     try {
       const pool = ensureActivePool();
       const id = parseInt(req.params.id);
       const { priceListCode, name, description, currency, validFrom, validTo, priceListType, isActive } = req.body;
+      const userId = req.user?.id || 1;
 
       if (!priceListCode || !name || !currency || !validFrom) {
         return res.status(400).json({ message: 'Missing required fields: priceListCode, name, currency, validFrom' });
@@ -470,8 +488,8 @@ export function registerMasterDataRoutes(app: Express) {
 
       const query = `
         UPDATE price_lists 
-        SET price_list_code = $1, name = $2, description = $3, currency = $4, valid_from = $5, valid_to = $6, price_list_type = $7, is_active = $8, updated_at = NOW()
-        WHERE id = $9
+        SET price_list_code = $1, name = $2, description = $3, currency = $4, valid_from = $5, valid_to = $6, price_list_type = $7, is_active = $8, updated_at = NOW(), updated_by = $9
+        WHERE id = $10 AND "_deletedAt" IS NULL
         RETURNING *
       `;
 
@@ -484,6 +502,7 @@ export function registerMasterDataRoutes(app: Express) {
         validTo || null,
         priceListType || 'standard',
         isActive !== undefined ? isActive : true,
+        userId,
         id
       ]);
 
@@ -514,12 +533,13 @@ export function registerMasterDataRoutes(app: Express) {
     }
   });
 
-  app.delete('/api/master-data/price-lists/:id', async (req, res) => {
+  app.delete('/api/master-data/price-lists/:id', async (req: any, res) => {
     try {
       const pool = ensureActivePool();
       const id = parseInt(req.params.id);
+      const userId = req.user?.id || 1;
 
-      const result = await pool.query('DELETE FROM price_lists WHERE id = $1 RETURNING id', [id]);
+      const result = await pool.query('UPDATE price_lists SET "_deletedAt" = NOW(), updated_by = $1, updated_at = NOW() WHERE id = $2 AND "_deletedAt" IS NULL RETURNING id', [userId, id]);
 
       if (result.rows.length === 0) {
         return res.status(404).json({ message: 'Price list not found' });
@@ -656,8 +676,15 @@ export function registerMasterDataRoutes(app: Express) {
   // Plural alias for compatibility with UI expecting plural endpoint
   app.use('/api/master-data/profit-centers', profitCentersRouter);
 
-  // Posting Keys (Transaction Keys) for Account Determination
-  app.use('/api/master-data/posting-keys', transactionKeysRouter);
+  // Posting Keys (OB41) for Account Determination - dedicated router using posting_keys table
+  app.use('/api/master-data/posting-keys', postingKeysRouter);
+
+  // Field Status Configuration (OBC4)
+  app.use('/api/master-data/field-status-variants', fieldStatusVariantsRouter);
+  app.use('/api/master-data/field-status-groups', fieldStatusGroupsRouter);
+
+  // Transaction Keys (legacy) still available separately
+  app.use('/api/master-data/transaction-keys', transactionKeysRouter);
 
   app.use('/api/master-data/business-areas', businessAreasRouter);
 
@@ -773,9 +800,10 @@ export function registerMasterDataRoutes(app: Express) {
           posting_block_company_code, deletion_flag_company_code,
           posting_block_purchasing_org, deletion_flag_purchasing_org,
           blacklisted, blacklist_reason, notes, tags, company_code_id,
-          is_active, created_at, updated_at, created_by, updated_by, version
+          is_active, created_at, updated_at, created_by, updated_by, version,
+          "_tenantId" as "tenantId"
         FROM vendors 
-        WHERE is_active = true
+        WHERE is_active = true AND ("_deletedAt" IS NULL)
         ORDER BY name ASC
       `);
 
@@ -875,6 +903,7 @@ export function registerMasterDataRoutes(app: Express) {
         updatedAt: vendor.updated_at,
         createdBy: vendor.created_by,
         updatedBy: vendor.updated_by,
+        tenantId: vendor.tenantId,
         version: vendor.version
       }));
 
@@ -1210,9 +1239,14 @@ export function registerMasterDataRoutes(app: Express) {
         placeholders.push('$' + paramIndex++);
       }
 
+      // Add audit trail fields
+      const userId = (req as any).user?.id || 1;
+      const tenantId = (req as any).user?.tenantId || '001';
+
       // Add created_at and updated_at
-      fields.push('created_at', 'updated_at');
-      placeholders.push('NOW()', 'NOW()');
+      fields.push('created_at', 'updated_at', 'created_by', 'updated_by', '"_tenantId"');
+      placeholders.push('NOW()', 'NOW()', '$' + paramIndex++, '$' + paramIndex++, '$' + paramIndex++);
+      values.push(userId, userId, tenantId);
 
       const query = `
         INSERT INTO public.vendors (${fields.join(', ')})
@@ -1377,6 +1411,12 @@ export function registerMasterDataRoutes(app: Express) {
         return res.status(400).json({ message: "No valid fields to update" });
       }
 
+      // Inject updated_by from authenticated user
+      const userId = (req as any).user?.id || 1;
+      fields.push(`updated_by = $${paramIndex}`);
+      values.push(userId);
+      paramIndex++;
+
       // Always update updated_at
       fields.push(`updated_at = NOW()`);
       values.unshift(id); // Add id as first parameter
@@ -1394,8 +1434,49 @@ export function registerMasterDataRoutes(app: Express) {
         return res.status(404).json({ message: "Vendor not found" });
       }
 
-      console.log('✅ Vendor updated successfully:', result.rows[0]);
-      res.json(result.rows[0]);
+      const v = result.rows[0];
+      console.log('✅ Vendor updated successfully:', v);
+      res.json({
+        id: v.id,
+        code: v.code,
+        name: v.name,
+        legalName: v.legal_name,
+        type: v.type,
+        industry: v.industry,
+        taxId: v.tax_id,
+        vatNumber: v.vat_number,
+        address: v.address,
+        city: v.city,
+        state: v.state,
+        country: v.country,
+        postalCode: v.postal_code,
+        region: v.region,
+        phone: v.phone,
+        altPhone: v.alt_phone,
+        email: v.email,
+        website: v.website,
+        currency: v.currency,
+        paymentTerms: v.payment_terms,
+        paymentMethod: v.payment_method,
+        reconciliationAccountId: v.reconciliation_account_id,  // ← fixed: camelCase for frontend
+        minimumOrderValue: v.minimum_order_value,
+        evaluationScore: v.evaluation_score,
+        leadTime: v.lead_time,
+        purchasingGroupId: v.purchasing_group_id,
+        companyCodeId: v.company_code_id,
+        purchaseOrganizationId: v.purchase_organization_id,
+        accountGroupId: v.account_group_id,
+        accountGroup: v.account_group,
+        status: v.status,
+        blacklisted: v.blacklisted,
+        blacklistReason: v.blacklist_reason,
+        notes: v.notes,
+        isActive: v.is_active,
+        createdAt: v.created_at,
+        updatedAt: v.updated_at,
+        createdBy: v.created_by,
+        updatedBy: v.updated_by,
+      });
     } catch (error: any) {
       console.error("Error updating vendor:", error);
       res.status(500).json({ message: "Failed to update vendor", error: error.message });
@@ -1406,13 +1487,15 @@ export function registerMasterDataRoutes(app: Express) {
     try {
       const id = req.params.id;
 
-      // Soft delete by setting is_active to false
+      const userId = (req as any).user?.id || 1;
+
+      // Soft delete by setting is_active to false and recording deletion time
       const result = await pool.query(`
         UPDATE vendors 
-        SET is_active = false, updated_at = NOW()
-        WHERE id = $1
+        SET is_active = false, "_deletedAt" = NOW(), updated_by = $2, updated_at = NOW()
+        WHERE id = $1 AND ("_deletedAt" IS NULL)
         RETURNING *
-      `, [id]);
+      `, [id, userId]);
 
       if (result.rows.length === 0) {
         return res.status(404).json({ message: "Vendor not found" });
@@ -2445,7 +2528,7 @@ export function registerMasterDataRoutes(app: Express) {
   app.get("/api/master-data/units-of-measure", async (req: Request, res: Response) => {
     try {
       res.setHeader('Content-Type', 'application/json');
-      const result = await pool.query("SELECT * FROM uom");
+      const result = await pool.query('SELECT * FROM uom WHERE "_deletedAt" IS NULL');
 
       // Transform the data to match frontend expectations
       const transformedData = result.rows.map(row => ({
@@ -2457,7 +2540,11 @@ export function registerMasterDataRoutes(app: Express) {
         isBase: row.is_base || false,
         isActive: row.is_active !== false,
         createdAt: row.created_at,
-        updatedAt: row.updated_at
+        updatedAt: row.updated_at,
+        createdBy: row.created_by,
+        updatedBy: row.updated_by,
+        _tenantId: row._tenantId,
+        _deletedAt: row._deletedAt
       }));
 
       return res.status(200).json(transformedData);
@@ -2471,12 +2558,14 @@ export function registerMasterDataRoutes(app: Express) {
   app.post("/api/master-data/units-of-measure", async (req: Request, res: Response) => {
     try {
       const { code, name, description, category, isBase, isActive } = req.body;
+      const userId = (req as any).user?.id || 1;
+      const tenantId = (req as any).user?.tenantId || '001';
 
       const result = await pool.query(`
-        INSERT INTO uom(code, name, description, category, is_base, is_active, created_at, updated_at)
-  VALUES($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        INSERT INTO uom(code, name, description, category, is_base, is_active, created_at, updated_at, created_by, updated_by, "_tenantId")
+  VALUES($1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
   RETURNING *
-    `, [code, name, description, category, isBase, isActive !== false]);
+    `, [code, name, description, category, isBase, isActive !== false, userId, userId, tenantId]);
 
       const newUom = result.rows[0];
       const transformedData = {
@@ -2488,7 +2577,11 @@ export function registerMasterDataRoutes(app: Express) {
         isBase: newUom.is_base || false,
         isActive: newUom.is_active !== false,
         createdAt: newUom.created_at,
-        updatedAt: newUom.updated_at
+        updatedAt: newUom.updated_at,
+        createdBy: newUom.created_by,
+        updatedBy: newUom.updated_by,
+        _tenantId: newUom._tenantId,
+        _deletedAt: newUom._deletedAt
       };
 
       return res.status(201).json(transformedData);
@@ -2503,6 +2596,7 @@ export function registerMasterDataRoutes(app: Express) {
     try {
       const { id } = req.params;
       const { code, name, description, category, isBase, isActive } = req.body;
+      const userId = (req as any).user?.id || 1;
 
       const result = await pool.query(`
         UPDATE uom 
@@ -2512,10 +2606,11 @@ export function registerMasterDataRoutes(app: Express) {
     category = COALESCE($4, category),
     is_base = COALESCE($5, is_base),
     is_active = COALESCE($6, is_active),
-    updated_at = NOW()
-        WHERE id = $7
+    updated_at = NOW(),
+    updated_by = $7
+        WHERE id = $8
   RETURNING *
-    `, [code, name, description, category, isBase, isActive, id]);
+    `, [code, name, description, category, isBase, isActive, userId, id]);
 
       if (result.rows.length === 0) {
         return res.status(404).json({ message: "Unit of measure not found" });
@@ -2531,7 +2626,11 @@ export function registerMasterDataRoutes(app: Express) {
         isBase: updatedUom.is_base || false,
         isActive: updatedUom.is_active !== false,
         createdAt: updatedUom.created_at,
-        updatedAt: updatedUom.updated_at
+        updatedAt: updatedUom.updated_at,
+        createdBy: updatedUom.created_by,
+        updatedBy: updatedUom.updated_by,
+        _tenantId: updatedUom._tenantId,
+        _deletedAt: updatedUom._deletedAt
       };
 
       return res.status(200).json(transformedData);
@@ -2545,10 +2644,11 @@ export function registerMasterDataRoutes(app: Express) {
   app.delete("/api/master-data/units-of-measure/:id", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
+      const userId = (req as any).user?.id || 1;
 
       const result = await pool.query(`
-        DELETE FROM uom WHERE id = $1 RETURNING *
-    `, [id]);
+        UPDATE uom SET is_active = false, "_deletedAt" = NOW(), updated_by = $2, updated_at = NOW() WHERE id = $1 RETURNING *
+    `, [id, userId]);
 
       if (result.rows.length === 0) {
         return res.status(404).json({ message: "Unit of measure not found" });
@@ -2565,7 +2665,7 @@ export function registerMasterDataRoutes(app: Express) {
   app.get("/api/master-data/uom", async (req: Request, res: Response) => {
     try {
       res.setHeader('Content-Type', 'application/json');
-      const result = await pool.query("SELECT * FROM uom");
+      const result = await pool.query('SELECT * FROM uom WHERE "_deletedAt" IS NULL');
       return res.status(200).json(result.rows);
     } catch (error) {
       console.error("Error fetching UOMs:", error);
@@ -2588,7 +2688,10 @@ export function registerMasterDataRoutes(app: Express) {
         SELECT 
           *,
           cost_center as code,
-          description as name
+          description as name,
+          "_tenantId" as tenant_id,
+          created_by,
+          updated_by
         FROM cost_centers
         ORDER BY cost_center, id
       `);
@@ -2754,7 +2857,8 @@ export function registerMasterDataRoutes(app: Express) {
       const params = [
         cost_center, description, cost_center_category, company_code_id || null,
         controlling_area || 'A000', hierarchy_area || null, responsible_person || null,
-        valid_from, valid_to || null, active !== false
+        valid_from, valid_to || null, active !== false,
+        (req as any).user?.id || 1, (req as any).user?.id || 1, (req as any).user?.tenantId || '001'
       ];
 
       console.log('📤 SQL Parameters (master-data):', params);
@@ -2764,9 +2868,9 @@ export function registerMasterDataRoutes(app: Express) {
         INSERT INTO cost_centers(
       cost_center, description, cost_center_category, company_code_id,
       controlling_area, hierarchy_area, responsible_person, valid_from, valid_to,
-      active, created_at, updated_at
+      active, created_at, updated_at, created_by, updated_by, "_tenantId"
     )
-  VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+  VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW(), $11, $12, $13)
   RETURNING *
     `, params);
 
@@ -2775,6 +2879,66 @@ export function registerMasterDataRoutes(app: Express) {
     } catch (error: any) {
       console.error("❌ Error creating cost center (master-data):", error);
       return res.status(500).json({ message: "Failed to create cost center", error: error.message });
+    }
+  });
+
+  // Cost Center PUT route
+  app.put("/api/master-data/cost-center/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const {
+        cost_center, description, cost_center_category, company_code_id,
+        controlling_area, hierarchy_area, responsible_person, valid_from, valid_to, active
+      } = req.body;
+
+      // Check if cost_center exists
+      const existingCenter = await pool.query('SELECT id FROM cost_centers WHERE id = $1', [id]);
+      if (existingCenter.rows.length === 0) {
+        return res.status(404).json({ message: 'Cost center not found' });
+      }
+
+      // Check for code conflict
+      const codeCheck = await pool.query(
+        'SELECT id FROM cost_centers WHERE cost_center = $1 AND id != $2',
+        [cost_center, id]
+      );
+      if (codeCheck.rows.length > 0) {
+        return res.status(409).json({ message: 'Cost center with this code already exists' });
+      }
+
+      const params = [
+        cost_center, description, cost_center_category, company_code_id || null,
+        controlling_area || 'A000', hierarchy_area || null, responsible_person || null,
+        valid_from, valid_to || null, active !== false,
+        (req as any).user?.id || 1,
+        id
+      ];
+
+      const result = await pool.query(`
+        UPDATE cost_centers SET
+          cost_center = $1, description = $2, cost_center_category = $3, company_code_id = $4,
+          controlling_area = $5, hierarchy_area = $6, responsible_person = $7, valid_from = $8, valid_to = $9,
+          active = $10, updated_at = NOW(), updated_by = $11
+        WHERE id = $12
+        RETURNING *
+      `, params);
+
+      return res.status(200).json(result.rows[0]);
+    } catch (error: any) {
+      console.error("❌ Error updating cost center:", error);
+      return res.status(500).json({ message: "Failed to update cost center", error: error.message });
+    }
+  });
+
+  // Cost Center DELETE route
+  app.delete("/api/master-data/cost-center/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      await pool.query('DELETE FROM cost_centers WHERE id = $1', [id]);
+      return res.status(200).json({ message: 'Cost center deleted successfully' });
+    } catch (error: any) {
+      console.error("❌ Error deleting cost center:", error);
+      return res.status(500).json({ message: "Failed to delete cost center", error: error.message });
     }
   });
 

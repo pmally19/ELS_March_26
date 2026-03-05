@@ -77,6 +77,9 @@ export class SalesDistributionService {
     description?: string;
     region?: string;
     country?: string;
+    _tenantId?: string;
+    createdBy?: number;
+    updatedBy?: number;
   }) {
     const [office] = await db
       .insert(salesOffices)
@@ -86,7 +89,7 @@ export class SalesDistributionService {
   }
 
   async getAllSalesOffices() {
-    return await db.select().from(salesOffices).orderBy(salesOffices.code);
+    return await db.select().from(salesOffices).where(or(eq(salesOffices.is_active, true), isNull(salesOffices.is_active))).orderBy(salesOffices.code);
   }
 
   async updateSalesOffice(id: number, data: Partial<{
@@ -95,6 +98,7 @@ export class SalesDistributionService {
     region: string;
     country: string;
     is_active: boolean;
+    updatedBy: number;
   }>) {
     const [updated] = await db
       .update(salesOffices)
@@ -104,8 +108,18 @@ export class SalesDistributionService {
     return updated;
   }
 
-  async deleteSalesOffice(id: number) {
-    return await db.delete(salesOffices).where(eq(salesOffices.id, id));
+  async deleteSalesOffice(id: number, updatedBy?: number) {
+    const [deleted] = await db
+      .update(salesOffices)
+      .set({
+        is_active: false,
+        _deletedAt: new Date(),
+        updatedBy: updatedBy,
+        updated_at: new Date()
+      })
+      .where(eq(salesOffices.id, id))
+      .returning();
+    return deleted;
   }
 
   async bulkImportSalesOffices(offices: any[]) {

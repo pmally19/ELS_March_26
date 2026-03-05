@@ -1,4 +1,4 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 import { z } from "zod";
 import { db, pool } from "../db";
 import { sql, eq, and, desc } from "drizzle-orm";
@@ -21,6 +21,7 @@ import { InventoryTrackingService } from "../services/inventoryTrackingService.j
 import { validatePeriodLock } from "../middleware/period-lock-check";
 import { FiscalPeriodService } from "../services/fiscal-period-service";
 import { pricingCalculationService, PricingContext } from "../services/pricing-calculation";
+import { determineTaxForItem } from "../services/taxDeterminationService";
 
 const inventoryTrackingService = new InventoryTrackingService(pool);
 
@@ -80,7 +81,7 @@ router.post("/sales-orders", async (req, res) => {
     if (typeof req.body === 'string') {
       try {
         parsedBody = JSON.parse(req.body);
-        console.log('⚠️ Request body was string, parsed to object');
+        console.log(' Request body was string, parsed to object');
       } catch (parseError) {
         console.error('Failed to parse request body:', parseError);
         return res.status(400).json({
@@ -110,10 +111,10 @@ router.post("/sales-orders", async (req, res) => {
 
     const { items, ...orderData } = normalizeEmptyStrings(parsedBody);
 
-    console.log('🚀 Starting dynamic sales order creation...');
+    console.log('Ã°Å¸Å¡â‚¬ Starting dynamic sales order creation...');
 
     // Step 1: Get System Configuration (Dynamic Values)
-    console.log('⚙️ Fetching system configuration...');
+    console.log('Ã¢Å¡â„¢Ã¯Â¸Â Fetching system configuration...');
     const configResult = await db.execute(sql`
       SELECT 
         (SELECT config_value FROM system_configuration WHERE config_key = 'default_plant_id' AND active = true LIMIT 1) as default_plant_id,
@@ -136,7 +137,7 @@ router.post("/sales-orders", async (req, res) => {
     const creditCheckEnabled = getBoolean(config.credit_check_enabled);
     const reserveInventory = getBoolean(config.reserve_inventory);
 
-    console.log(`📋 Configuration: Plant=${defaultPlantId}, SalesOrg=${defaultSalesOrgId}, Tax=${taxRate * 100}%, Approval=${approvalThreshold}`);
+    console.log(`Ã°Å¸â€œâ€¹ Configuration: Plant=${defaultPlantId}, SalesOrg=${defaultSalesOrgId}, Tax=${taxRate * 100}%, Approval=${approvalThreshold}`);
 
     // Validate items array exists and is iterable
     if (!items || !Array.isArray(items)) {
@@ -156,7 +157,7 @@ router.post("/sales-orders", async (req, res) => {
     }
 
     // Step 2: Real-time Inventory Status Check
-    console.log('📦 Checking real-time inventory status...');
+    console.log('Ã°Å¸â€œÂ¦ Checking real-time inventory status...');
     const inventoryStatusResults = [];
 
     for (const item of items) {
@@ -262,11 +263,11 @@ router.post("/sales-orders", async (req, res) => {
       }
     }
 
-    console.log('✅ Real-time inventory check completed');
+    console.log('Ã¢Å“â€¦ Real-time inventory check completed');
 
     // Step 3: Dynamic Credit Check (if enabled)
     if (creditCheckEnabled && orderData.customer_id) {
-      console.log('💳 Performing dynamic credit check...');
+      console.log('Ã°Å¸â€™Â³ Performing dynamic credit check...');
 
       const customerResult = await db.execute(sql`
         SELECT 
@@ -338,52 +339,57 @@ router.post("/sales-orders", async (req, res) => {
         });
       }
 
-      console.log('✅ Credit check passed');
+      console.log('Ã¢Å“â€¦ Credit check passed');
     }
 
     // Calculate order totals for approval check
-    const orderTotal = items.reduce((sum, item) =>
-      sum + ((parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0)), 0
-    );
+    const orderTotal = orderData.subtotal !== undefined
+      ? parseFloat(orderData.subtotal)
+      : items.reduce((sum, item) =>
+        sum + ((parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0)), 0
+      );
 
     // Calculate tax based on customer's tax rules (if provided in request)
-    let taxAmount = 0;
-    let taxBreakdown = [];
+    let taxAmount = orderData.tax_amount !== undefined ? parseFloat(orderData.tax_amount) : 0;
+    let taxBreakdown = orderData.tax_breakdown || [];
 
-    if (orderData.tax_rules && Array.isArray(orderData.tax_rules) && orderData.tax_rules.length > 0) {
-      // Use tax rules from customer's tax profile
-      console.log('💰 Calculating taxes based on customer tax rules...');
-      taxBreakdown = orderData.tax_rules.map(rule => ({
-        rule_id: rule.id,
-        rule_code: rule.rule_code,
-        title: rule.title,
-        rate_percent: parseFloat(rule.rate_percent),
-        amount: orderTotal * (parseFloat(rule.rate_percent) / 100)
-      }));
-      taxAmount = taxBreakdown.reduce((sum, tax) => sum + tax.amount, 0);
-      console.log(`✅ Tax calculated: ${taxBreakdown.length} rules, total: $${taxAmount.toFixed(2)}`);
-    } else {
-      // Fallback to default tax rate
-      taxAmount = orderTotal * taxRate;
-      console.log(`⚠️ Using default tax rate: ${taxRate * 100}%, amount: $${taxAmount.toFixed(2)}`);
+    // Only calculate taxes manually if not provided by frontend (which now relies on Pricing Engine)
+    if (orderData.tax_amount === undefined) {
+      if (orderData.tax_rules && Array.isArray(orderData.tax_rules) && orderData.tax_rules.length > 0) {
+        // Use tax rules from customer's tax profile
+        console.log('Ã°Å¸â€™Â° Calculating taxes based on customer tax rules...');
+        taxBreakdown = orderData.tax_rules.map(rule => ({
+          rule_id: rule.id,
+          rule_code: rule.rule_code,
+          title: rule.title,
+          rate_percent: parseFloat(rule.rate_percent),
+          amount: orderTotal * (parseFloat(rule.rate_percent) / 100)
+        }));
+        taxAmount = taxBreakdown.reduce((sum, tax) => sum + tax.amount, 0);
+        console.log(`Ã¢Å“â€¦ Tax calculated: ${taxBreakdown.length} rules, total: $${taxAmount.toFixed(2)}`);
+      } else {
+        // Fallback to default tax rate
+        taxAmount = orderTotal * taxRate;
+        console.log(` Using default tax rate: ${taxRate * 100}%, amount: $${taxAmount.toFixed(2)}`);
+      }
     }
 
     const shippingAmount = parseFloat(orderData.shipping_amount || 0);
-    const totalAmount = orderTotal + taxAmount + shippingAmount;
+    const totalAmount = orderData.total_amount !== undefined ? parseFloat(orderData.total_amount) : (orderTotal + taxAmount + shippingAmount);
 
     // Step 4: Dynamic Approval Check
-    console.log('📋 Checking approval requirements...');
+    console.log('Ã°Å¸â€œâ€¹ Checking approval requirements...');
 
     const requiresApproval = totalAmount > approvalThreshold || orderData.priority === 'High';
 
     if (requiresApproval) {
-      console.log('⚠️ Order requires approval based on dynamic thresholds');
+      console.log(' Order requires approval based on dynamic thresholds');
     }
 
-    console.log('✅ All dynamic checks passed, proceeding with order creation...');
+    console.log('Ã¢Å“â€¦ All dynamic checks passed, proceeding with order creation...');
 
     // Step 5: Dynamic Plant and Organization Resolution
-    console.log('🏭 Resolving warehouse and organization details...');
+    console.log('Ã°Å¸ÂÂ­ Resolving warehouse and organization details...');
 
     // Get warehouse ID from order data or items - NO FORCED DEFAULTS
     let warehouseId = orderData.plant_id || null;
@@ -393,7 +399,7 @@ router.post("/sales-orders", async (req, res) => {
       const itemWithPlant = items.find(item => item.plant_id);
       if (itemWithPlant) {
         warehouseId = itemWithPlant.plant_id;
-        console.log(`✅ Using plant from item: ${warehouseId}`);
+        console.log(`Ã¢Å“â€¦ Using plant from item: ${warehouseId}`);
       }
     }
 
@@ -410,9 +416,9 @@ router.post("/sales-orders", async (req, res) => {
           details: `Plant ID ${warehouseId} does not exist or is not active`
         });
       }
-      console.log(`✅ Validated plant: ${warehouseValidation.rows[0].name} (ID: ${warehouseId})`);
+      console.log(`Ã¢Å“â€¦ Validated plant: ${warehouseValidation.rows[0].name} (ID: ${warehouseId})`);
     } else {
-      console.log('ℹ️ No plant/warehouse specified - will be null in order');
+      console.log('Ã¢â€žÂ¹Ã¯Â¸Â No plant/warehouse specified - will be null in order');
     }
 
     // Sales Organization - from request only, no hardcoded defaults
@@ -442,7 +448,7 @@ router.post("/sales-orders", async (req, res) => {
 
         if (salesOrgResult.rows.length > 0 && salesOrgResult.rows[0].company_code_id) {
           companyCodeId = getInt(salesOrgResult.rows[0].company_code_id);
-          console.log(`✅ Company code auto-filled from sales organization: ${companyCodeId}`);
+          console.log(`Ã¢Å“â€¦ Company code auto-filled from sales organization: ${companyCodeId}`);
         } else {
           // Fallback to legacy table
           const legacySalesOrgResult = await db.execute(sql`
@@ -453,11 +459,11 @@ router.post("/sales-orders", async (req, res) => {
 
           if (legacySalesOrgResult.rows.length > 0 && legacySalesOrgResult.rows[0].company_code_id) {
             companyCodeId = getInt(legacySalesOrgResult.rows[0].company_code_id);
-            console.log(`✅ Company code auto-filled from sales organization (legacy): ${companyCodeId}`);
+            console.log(`Ã¢Å“â€¦ Company code auto-filled from sales organization (legacy): ${companyCodeId}`);
           }
         }
       } catch (salesOrgError) {
-        console.warn('⚠️ Could not fetch company code from sales organization:', salesOrgError);
+        console.warn(' Could not fetch company code from sales organization:', salesOrgError);
       }
     }
 
@@ -473,14 +479,14 @@ router.post("/sales-orders", async (req, res) => {
         const companyCodeIdValue = getInt(customerResult.rows[0].company_code_id);
         if (companyCodeIdValue) {
           companyCodeId = companyCodeIdValue;
-          console.log(`✅ Company code fetched from customer master: ${companyCodeId}`);
+          console.log(`Ã¢Å“â€¦ Company code fetched from customer master: ${companyCodeId}`);
         }
       }
     }
 
     // If still no company code, leave it null - NO FORCED DEFAULTS
     if (!companyCodeId) {
-      console.log('ℹ️ No company code found - will be null in order');
+      console.log('Ã¢â€žÂ¹Ã¯Â¸Â No company code found - will be null in order');
     }
 
     // Currency - Auto-populate from customer master
@@ -505,34 +511,34 @@ router.post("/sales-orders", async (req, res) => {
 
           if (currencyMappingResult.rows.length > 0) {
             currencyId = getInt(currencyMappingResult.rows[0].id);
-            console.log(`✅ Currency auto-filled from customer: ${customerCurrency} (ID: ${currencyId})`);
+            console.log(`Ã¢Å“â€¦ Currency auto-filled from customer: ${customerCurrency} (ID: ${currencyId})`);
           } else {
-            console.warn(`⚠️ Customer currency code '${customerCurrency}' not found in currencies table`);
+            console.warn(` Customer currency code '${customerCurrency}' not found in currencies table`);
           }
         }
       } catch (currencyError) {
-        console.warn('⚠️ Could not fetch currency from customer:', currencyError);
+        console.warn(' Could not fetch currency from customer:', currencyError);
       }
     }
 
     if (currencyId) {
-      console.log(`✅ Using currency ID: ${currencyId}`);
+      console.log(`Ã¢Å“â€¦ Using currency ID: ${currencyId}`);
     } else {
-      console.log('ℹ️ No currency specified - will be null in order');
+      console.log('Ã¢â€žÂ¹Ã¯Â¸Â No currency specified - will be null in order');
     }
 
-    console.log(`✅ Resolved: Plant=${warehouseId}, SalesOrg=${salesOrgId}, Company=${companyCodeId}, Currency=${currencyId}`);
+    console.log(`Ã¢Å“â€¦ Resolved: Plant=${warehouseId}, SalesOrg=${salesOrgId}, Company=${companyCodeId}, Currency=${currencyId}`);
 
     // Generate order number based on document type's number range
     let orderNumber: string;
 
-    console.log('📋 Order creation - Document type:', orderData.document_type);
+    console.log('Ã°Å¸â€œâ€¹ Order creation - Document type:', orderData.document_type);
 
     if (orderData.document_type) {
       try {
         // Get document type's number range
         const docTypeCode = String(orderData.document_type || '').toUpperCase().trim();
-        console.log(`🔍 Looking up document type: ${docTypeCode}`);
+        console.log(`Ã°Å¸â€Â Looking up document type: ${docTypeCode}`);
 
         const docTypeResult = await db.execute(sql`
           SELECT number_range 
@@ -542,14 +548,14 @@ router.post("/sales-orders", async (req, res) => {
             AND is_active = true
         `);
 
-        console.log(`📊 Document type query result:`, docTypeResult.rows.length, 'rows found');
+        console.log(`Ã°Å¸â€œÅ  Document type query result:`, docTypeResult.rows.length, 'rows found');
 
         if (docTypeResult.rows.length > 0 && docTypeResult.rows[0].number_range) {
           const numberRangeCode = String(docTypeResult.rows[0].number_range || '').trim();
-          console.log(`🔢 Number range code from document type: ${numberRangeCode}`);
+          console.log(`Ã°Å¸â€Â¢ Number range code from document type: ${numberRangeCode}`);
 
           // Get the number range configuration
-          console.log(`🔍 Looking up number range: ${numberRangeCode} for sales_order`);
+          console.log(`Ã°Å¸â€Â Looking up number range: ${numberRangeCode} for sales_order`);
           const numberRangeResult = await db.execute(sql`
             SELECT 
               id,
@@ -565,7 +571,7 @@ router.post("/sales-orders", async (req, res) => {
             LIMIT 1
           `);
 
-          console.log(`📊 Number range query result:`, numberRangeResult.rows.length, 'rows found');
+          console.log(`Ã°Å¸â€œÅ  Number range query result:`, numberRangeResult.rows.length, 'rows found');
 
           if (numberRangeResult.rows.length > 0) {
             const numberRange = numberRangeResult.rows[0];
@@ -593,7 +599,7 @@ router.post("/sales-orders", async (req, res) => {
             // This will be a numeric string like "4000000001"
             orderNumber = nextNumberStr;
 
-            console.log(`📝 Generated order number: ${orderNumber} (from range ${numberRangeCode}, current: ${currentNumStr}, next: ${nextNumberStr})`);
+            console.log(`Ã°Å¸â€œÂ Generated order number: ${orderNumber} (from range ${numberRangeCode}, current: ${currentNumStr}, next: ${nextNumberStr})`);
 
             // Update the current_number in the number range (atomic operation)
             const numberRangeId = parseInt(String(numberRange.id || '0'), 10);
@@ -605,15 +611,15 @@ router.post("/sales-orders", async (req, res) => {
                 WHERE id = ${numberRangeId}
                   AND current_number = ${currentNumStr}
               `);
-              console.log(`✅ Updated number range ${numberRangeId} current_number to ${nextNumberStr}`);
+              console.log(`Ã¢Å“â€¦ Updated number range ${numberRangeId} current_number to ${nextNumberStr}`);
             } else {
-              console.warn(`⚠️ Invalid number range ID: ${numberRange.id}`);
+              console.warn(` Invalid number range ID: ${numberRange.id}`);
             }
 
-            console.log(`✅ Successfully generated order number ${orderNumber} from number range ${numberRangeCode}`);
+            console.log(`Ã¢Å“â€¦ Successfully generated order number ${orderNumber} from number range ${numberRangeCode}`);
           } else {
             // Fallback: number range not found, use simple sequential
-            console.warn(`⚠️ Number range ${numberRangeCode} not found for sales_order, using fallback`);
+            console.warn(` Number range ${numberRangeCode} not found for sales_order, using fallback`);
             const currentYear = new Date().getFullYear();
             // Safely extract numeric part from order numbers, handling both formats:
             // - "SO-2025-0001" or "SO-2025-0001-125223" format
@@ -643,7 +649,7 @@ router.post("/sales-orders", async (req, res) => {
           }
         } else {
           // Fallback: document type has no number range assigned
-          console.warn(`⚠️ Document type ${orderData.document_type} has no number range, using fallback`);
+          console.warn(` Document type ${orderData.document_type} has no number range, using fallback`);
           const currentYear = new Date().getFullYear();
           // Safely extract numeric part from order numbers
           const orderCountResult = await db.execute(sql`
@@ -734,10 +740,10 @@ router.post("/sales-orders", async (req, res) => {
       // If the number already exists, append timestamp suffix
       const timestampSuffix = Date.now().toString().slice(-6);
       orderNumber = `${orderNumber}-${timestampSuffix}`;
-      console.warn(`⚠️ Order number collision detected, using: ${orderNumber}`);
+      console.warn(` Order number collision detected, using: ${orderNumber}`);
     }
 
-    // ── Server-side pricing procedure determination ─────────────────────────
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Server-side pricing procedure determination Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     let resolvedPricingProcedure: string | null = null;
     try {
       resolvedPricingProcedure = await pricingCalculationService.determinePricingProcedure(
@@ -748,20 +754,22 @@ router.post("/sales-orders", async (req, res) => {
         orderData.document_type   // treat doc type as document pricing procedure key
       );
     } catch (ppErr) {
-      console.warn('⚠️ Could not auto-determine pricing procedure:', ppErr);
+      console.warn(' Could not auto-determine pricing procedure:', ppErr);
     }
     // Fall back to frontend-provided value if server cannot determine
     const effectivePricingProcedure = resolvedPricingProcedure || orderData.pricing_procedure || null;
-    console.log(`📋 Effective pricing procedure: ${effectivePricingProcedure}`);
+    console.log(`Ã°Å¸â€œâ€¹ Effective pricing procedure: ${effectivePricingProcedure}`);
 
-    // ── Calculate total amount from items (fallback if no pricing engine) ────
-    let subtotal = 0;
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Fallback raw items total (used only as base for per-item pricing engine calls) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // NOTE: orderTotal (line 345) already holds the correct frontend pricing-preview subtotal.
+    // itemsRawTotal is only needed for the per-item pricing engine below.
+    let itemsRawTotal = 0;
     // Engine-accumulated totals (will override below if engine runs successfully)
     let engineSubtotal = 0;
     let engineTaxTotal = 0;
     let pricingEngineRan = false;
     if (items && Array.isArray(items)) {
-      subtotal = items.reduce((sum, item) => {
+      itemsRawTotal = items.reduce((sum, item) => {
         return sum + (parseFloat(item.quantity || 0) * parseFloat(item.unit_price || 0));
       }, 0);
     }
@@ -883,7 +891,7 @@ router.post("/sales-orders", async (req, res) => {
       calculatedDeliveryDate.setDate(calculatedDeliveryDate.getDate() + leadTimeDays);
       deliveryDate = calculatedDeliveryDate.toISOString().split('T')[0];
 
-      console.log(`📅 Auto-calculated delivery date: ${deliveryDate} (${leadTimeDays} days from order date)`);
+      console.log(`Ã°Å¸â€œâ€¦ Auto-calculated delivery date: ${deliveryDate} (${leadTimeDays} days from order date)`);
     }
 
     // Create sales order with all database fields
@@ -932,7 +940,7 @@ router.post("/sales-orders", async (req, res) => {
         ${orderData.sales_rep || null},
         ${orderData.priority || null},
         ${orderData.currency || null},
-        ${subtotal.toFixed(2)},
+        ${orderTotal.toFixed(2)},
         ${taxAmount.toFixed(2)},
         ${shippingAmount.toFixed(2)},
         ${orderData.active !== undefined ? orderData.active : true},
@@ -948,14 +956,14 @@ router.post("/sales-orders", async (req, res) => {
         ${orderData.sales_person_id || null},
         ${orderData.shipping_point_id || null},
         ${orderData.route_id || null},
-        ${orderData.shipping_point_code || null},
-        ${orderData.route_code || null},
-        ${orderData.shipping_condition || null},
-        ${orderData.loading_point || null},
-        ${orderData.customer_po_number || null},
+        ${orderData.shipping_point_code ? orderData.shipping_point_code.substring(0, 4) : null},
+        ${orderData.route_code ? orderData.route_code.substring(0, 6) : null},
+        ${orderData.shipping_condition ? orderData.shipping_condition.substring(0, 4) : null},
+        ${orderData.loading_point ? orderData.loading_point.substring(0, 4) : null},
+        ${orderData.customer_po_number ? orderData.customer_po_number.substring(0, 35) : null},
         ${orderData.customer_po_date ? new Date(orderData.customer_po_date).toISOString() : null},
-        ${orderData.order_reason || null},
-        ${orderData.sales_district || null}
+        ${orderData.order_reason ? orderData.order_reason.substring(0, 3) : null},
+        ${orderData.sales_district ? orderData.sales_district.substring(0, 6) : null}
       ) RETURNING id, order_number, customer_id, customer_name, order_date, 
                   delivery_date, status, total_amount, payment_status, 
                   shipping_address, billing_address, notes, created_at,
@@ -1021,7 +1029,7 @@ router.post("/sales-orders", async (req, res) => {
             ${orderData.sales_rep || null},
             ${orderData.priority || null},
             ${orderData.currency || null},
-            ${subtotal.toFixed(2)},
+            ${orderTotal.toFixed(2)},
             ${taxAmount.toFixed(2)},
             ${shippingAmount.toFixed(2)},
             ${orderData.active !== undefined ? orderData.active : true},
@@ -1063,11 +1071,30 @@ router.post("/sales-orders", async (req, res) => {
 
     // Step 7: Create Sales Order Items and Dynamic Inventory Management
     if (items && Array.isArray(items) && salesOrderId) {
-      console.log('📦 Creating sales order items with dynamic inventory management...');
+      console.log('Ã°Å¸â€œÂ¦ Creating sales order items with dynamic inventory management...');
 
       // Accumulate engine pricing per-order
       let engineSubtotalAcc = 0;
       let engineTaxAcc = 0;
+
+
+      // Destination country: comes from the Ship-To address
+      let destinationCountry: string | null = null; let destinationState: string | null = null;
+      if (orderData.ship_to_address_id) {
+        try {
+          const destRes = await db.execute(sql`
+            SELECT ca.state, COALESCE(c.code, ca.country) as country_code 
+            FROM customer_addresses ca
+            LEFT JOIN countries c ON c.name ILIKE ca.country OR c.code = ca.country
+            WHERE ca.id = ${orderData.ship_to_address_id}
+            LIMIT 1
+          `);
+          if (destRes.rows.length > 0) {
+            destinationCountry = String(destRes.rows[0].country_code || ''); 
+            destinationState = String(destRes.rows[0].state || '');
+          }
+        } catch { /* graceful */ }
+      }
 
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
@@ -1086,7 +1113,8 @@ router.post("/sales-orders", async (req, res) => {
             (SELECT id FROM storage_locations WHERE code = m.production_storage_location LIMIT 1) as storage_location_id, 
             m.production_storage_location as storage_location_code,
             m.code as material_code,
-            m.base_uom as unit
+            m.base_uom as unit,
+            m.material_group
           FROM materials m
           WHERE m.id = ${materialId}
         `);
@@ -1098,7 +1126,8 @@ router.post("/sales-orders", async (req, res) => {
 
 
         // Priority: Use frontend values, then material details, then defaults
-        // Plant ID and Code - Priority: 1) Frontend, 2) Material Details, 3) Default
+        // Priority: Use frontend values, then material details, then defaults
+        // Plant ID and Code - Priority: 1) Frontend, 2) Material Details
         let plantIdForInventory: number | null = null;
         let plantCode: string | null = null;
 
@@ -1111,11 +1140,11 @@ router.post("/sales-orders", async (req, res) => {
           plantCode = getString(materialDetails.plant_code) || null;
           console.log(`✅ Using plant from material master: ID=${plantIdForInventory}, Code=${plantCode}`);
         } else {
-          // No plant specified - leave as null
-          console.log(`ℹ️ No plant found for item - will be null`);
+          // No plant specified - STRICT ENFORCEMENT
+          throw new Error(`STRICT VERIFICATION FAILED: No plant found for item ${materialCode}. Material Master must have a Plant assigned or Plant must be explicitly provided in Sales Order.`);
         }
 
-        // Storage Location ID and Code - Priority: 1) Frontend, 2) Material Details, 3) Default from Plant
+        // Storage Location ID and Code - Priority: 1) Frontend, 2) Material Details
         let storageLocationId: number | null = null;
         let storageLocationCode: string | null = null;
 
@@ -1128,21 +1157,11 @@ router.post("/sales-orders", async (req, res) => {
           storageLocationId = getInt(materialDetails.storage_location_id);
           storageLocationCode = getString(materialDetails.storage_location_code) || null;
           console.log(`✅ Using storage location from material details: ID=${storageLocationId}, Code=${storageLocationCode}`);
-        } else if (plantIdForInventory) {
-          // Get default storage location from plant
-          const defaultStorageResult = await db.execute(sql`
-            SELECT id, code FROM storage_locations 
-            WHERE plant_id = ${plantIdForInventory}
-            ORDER BY id LIMIT 1
-          `);
-          if (defaultStorageResult.rows.length > 0) {
-            storageLocationId = getInt(defaultStorageResult.rows[0].id);
-            storageLocationCode = getString(defaultStorageResult.rows[0].code) || null;
-            console.log(`✅ Using default storage location from plant: ID=${storageLocationId}, Code=${storageLocationCode}`);
-          }
+        } else {
+          throw new Error(`STRICT VERIFICATION FAILED: No storage location found for item ${materialCode}. Material Master must have a Production Storage Location assigned or it must be explicitly provided.`);
         }
 
-        // Unit of Measure - Priority: 1) Frontend, 2) Material Details, 3) Material Master, 4) System Config
+        // Unit of Measure - Priority: 1) Frontend, 2) Material Details, 3) Material Master
         let unit: string | null = item.unit || null;
         if (!unit) {
           unit = getString(materialDetails.unit) || null;
@@ -1158,21 +1177,10 @@ router.post("/sales-orders", async (req, res) => {
             }
           }
         }
-        if (!unit) {
-          // Try to get default unit from system configuration
-          const unitConfigResult = await db.execute(sql`
-            SELECT config_value FROM system_configuration 
-            WHERE config_key = 'default_unit_of_measure' AND active = true LIMIT 1
-          `);
-          if (unitConfigResult.rows.length > 0 && unitConfigResult.rows[0].config_value) {
-            unit = getString(unitConfigResult.rows[0].config_value);
-          }
-        }
 
-        // If still no unit, we cannot proceed with inventory tracking
+        // If still no unit, we cannot proceed with inventory tracking - STRICT ENFORCEMENT
         if (!unit) {
-          console.error(`❌ Cannot reserve inventory: Unit of measure not found for material ${materialId}`);
-          // Continue without inventory reservation - don't fail the order
+          throw new Error(`STRICT VERIFICATION FAILED: Cannot reserve inventory. Unit of measure not found for material ${materialCode}. Material Master must have a Base UoM configured.`);
         }
 
         // Create sales order item with complete information
@@ -1185,13 +1193,48 @@ router.post("/sales-orders", async (req, res) => {
 
         console.log(`📦 Creating order item: Material=${materialId}, Plant=${finalPlantId}(${finalPlantCode}), Storage=${finalStorageLocationId}(${finalStorageLocationCode}), Unit=${finalUnit}`);
 
-        // ── Run pricing engine for this item ─────────────────────────────────
+        // ─── Departure country for tax determination (Item Level) ───
+        // Resolved from the specific Plant assigned to this material item
+        let departureCountry: string | null = null; let departureState: string | null = null;
+        if (finalPlantId) {
+          try {
+            const itemDeptRes = await db.execute(sql`
+              SELECT co.code, p.state, p.region
+              FROM plants p
+              JOIN countries co ON co.id = p.country_id
+              WHERE p.id = ${finalPlantId}
+              LIMIT 1
+            `);
+            if (itemDeptRes.rows.length > 0 && itemDeptRes.rows[0].code) {
+              departureCountry = String(itemDeptRes.rows[0].code);
+              departureState = String(itemDeptRes.rows[0].state || itemDeptRes.rows[0].region || '');
+            } else {
+              departureCountry = 'IN'; // Fallback
+            }
+          } catch {
+            departureCountry = 'IN';
+          }
+        } else {
+          departureCountry = 'IN'; // Strict fallback
+        }
+        console.log(`🌍 Item tax context: departure=${departureCountry}, destination=${destinationCountry}`);
+
+        // itemPricingResult is populated once by the pricing engine and reused below for condition persistence
+        let itemPricingResult: { conditions: any[] } | null = null;
+        // Per-item pricing amounts (defaults from frontend values; overridden by pricing engine if it runs)
         let itemNetAmount = subtotal;
         let itemTaxAmount = 0;
         let itemDiscountAmount = 0;
 
         if (effectivePricingProcedure) {
           try {
+            // Build manual overrides map from frontend item (SAP: manual entry per condition type)
+            // Frontend can send item.manual_conditions = { PR00: "150.00", RA01: "10" }
+            let manualOverrides: Record<string, string> | undefined;
+            if (item.manual_conditions && typeof item.manual_conditions === 'object') {
+              manualOverrides = item.manual_conditions as Record<string, string>;
+            }
+
             const pricingCtx: PricingContext = {
               customerCode: String(orderData.customer_id || ''),
               materialCode: materialCode || undefined,
@@ -1201,11 +1244,20 @@ router.post("/sales-orders", async (req, res) => {
               distributionChannelId: orderData.distribution_channel_id ? Number(orderData.distribution_channel_id) : undefined,
               divisionId: orderData.division_id ? Number(orderData.division_id) : undefined,
               quantity: quantity,
+              departureCountry: departureCountry || undefined,
+              departureState: departureState || undefined,
+              destinationCountry: destinationCountry || undefined,
+              destinationState: destinationState || undefined,
+              // SAP-standard: material group for access sequence fallback
+              materialGroup: getString(materialDetails.material_group) || undefined,
+              manualOverrides,
             };
 
+            // Ã¢â€â‚¬Ã¢â€â‚¬ Run pricing engine ONCE per item Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+            // Result is reused for both amount calculation AND condition persistence
             const pricingResult = await pricingCalculationService.calculatePricing(
               effectivePricingProcedure,
-              subtotal,   // base = qty × price per item
+              subtotal,   // base = qty Ãƒâ€” price per item
               pricingCtx
             );
 
@@ -1216,13 +1268,42 @@ router.post("/sales-orders", async (req, res) => {
             engineTaxAcc += itemTaxAmount;
             pricingEngineRan = true;
 
-            console.log(`✅ Pricing engine for item ${i + 1}: net=${itemNetAmount}, tax=${itemTaxAmount}`);
-          } catch (pricingErr) {
-            console.warn(`⚠️ Pricing engine failed for item ${i + 1}, using frontend values:`, pricingErr);
+            // Cache the result so condition rows can be persisted below without a second engine call
+            itemPricingResult = pricingResult;
+
+            console.log(`Ã¢Å“â€¦ Pricing engine for item ${i + 1}: net=${itemNetAmount}, tax=${itemTaxAmount}, material_group=${pricingCtx.materialGroup || 'none'}`);
+          } catch (pricingErr: any) {
+            console.error(`❌ Pricing engine failed for item ${i + 1}:`, pricingErr);
+            throw new Error(`STRICT VERIFICATION FAILED: Pricing Calculation failed for material ${materialCode}. Reason: ${pricingErr.message}. All condition records must be explicitly maintained.`);
           }
         }
 
-        const taxPercent = itemNetAmount > 0 ? (itemTaxAmount / itemNetAmount) * 100 : parseFloat(item.tax_percent || 0);
+        // ─── Strict Tax Validation ────────
+        // Tax must come exclusively from the Pricing Engine execution based on the pricing procedure.
+        // We will not synthesize or fallback manually if missing.
+        if (itemPricingResult && itemPricingResult.conditions) {
+          const taxCond = itemPricingResult.conditions.find(
+            (c: any) => c.isTax || (c.conditionType && ['MWST', 'MIST', 'TAX', 'VAT', 'GST', 'CGST', 'SGST', 'IGST'].includes(String(c.conditionType).toUpperCase()))
+          );
+          if (!taxCond) {
+            throw new Error(`STRICT VERIFICATION FAILED: Mandatory Output Tax condition could not be determined for material ${materialCode} by the Pricing Engine. The pricing procedure must include valid tax condition types and records must be maintained.`);
+          }
+        }
+
+        const taxPercent = itemNetAmount > 0 ? (itemTaxAmount / itemNetAmount) * 100 : 0;
+
+        // Ã¢â€â‚¬Ã¢â€â‚¬ Extract the true unit price from the pricing engine if it ran Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+        let finalUnitPrice = parseFloat(item.unit_price || 0);
+        if (pricingEngineRan && itemPricingResult && itemPricingResult.conditions) {
+          // Look for PR00, PB00, or any step with condition class 'B' (Prices)
+          const priceCondition = itemPricingResult.conditions.find(c =>
+            ['PR00', 'PB00'].includes(c.conditionType) || c.calculationType === 'A' && !c.isTax && !c.isSubtotal
+          );
+          if (priceCondition && priceCondition.rate > 0) {
+            finalUnitPrice = priceCondition.rate;
+            console.log(`Ã¢Å“â€¦ Extracted true unit price from pricing engine: ${finalUnitPrice}`);
+          }
+        }
 
         // Insert sales order item and get its ID for condition persistence
         const itemInsertResult = await db.execute(sql`
@@ -1230,144 +1311,92 @@ router.post("/sales-orders", async (req, res) => {
             sales_order_id, material_id, material_description, ordered_quantity, unit_price,
             discount_percent, tax_percent, net_amount, active,
             plant_id, plant_code, storage_location_id, storage_location_code,
+            unit, item_category, item_category_group,
             created_at, updated_at
           ) VALUES (
             ${salesOrderId}, ${materialId || null}, ${item.material_description || item.product_name || ''},
-            ${quantity}, ${parseFloat(item.unit_price || 0)},
+            ${quantity}, ${finalUnitPrice},
             ${itemDiscountAmount}, ${taxPercent},
-            ${itemNetAmount + itemTaxAmount}, true,
+            ${itemNetAmount}, true,
             ${finalPlantId}, ${finalPlantCode || null},
             ${finalStorageLocationId || null}, ${finalStorageLocationCode || null},
+            ${finalUnit || 'PC'}, ${item.item_category || null}, ${item.item_category_group || null},
             NOW(), NOW()
           ) RETURNING id
         `);
 
         const soiId = itemInsertResult.rows[0]?.id;
 
-        // ── Persist condition breakdown into sales_order_item_conditions ────
-        if (soiId && effectivePricingProcedure && pricingEngineRan) {
-          try {
-            const pricingCtx2: PricingContext = {
-              customerCode: String(orderData.customer_id || ''),
-              materialCode: materialCode || undefined,
-              materialId: materialId ? Number(materialId) : undefined,
-              customerId: orderData.customer_id ? Number(orderData.customer_id) : undefined,
-              salesOrgId: salesOrgId || undefined,
-              quantity: quantity,
-            };
-            const condResult = await pricingCalculationService.calculatePricing(
-              effectivePricingProcedure, subtotal, pricingCtx2
-            );
-
-            for (const cond of condResult.conditions) {
-              if (!cond.conditionType && !cond.isSubtotal) continue; // skip empty steps
-              await db.execute(sql`
-                INSERT INTO sales_order_item_conditions (
+        // ─── Persist condition breakdown into sales_order_item_conditions ────
+        // Reuse the already-computed pricingResult from above — no second engine call needed.
+        if (soiId && effectivePricingProcedure && pricingEngineRan && itemPricingResult) {
+          let persistedCount = 0;
+          for (const cond of itemPricingResult.conditions) {
+            if (!cond.conditionType && !cond.isSubtotal) continue; // skip empty steps
+            try {
+              // Use pool (pg) directly — more reliable than Drizzle sql`` template for loop inserts.
+              // Each insert is individually try-caught so a single failure cannot silently
+              // abort the rest of the loop (which was the root cause of MWST not being saved).
+              await pool.query(
+                `INSERT INTO sales_order_item_conditions (
                   sales_order_item_id, sales_order_id,
                   step_number, condition_type_code, condition_name,
                   base_value, rate, condition_amount, currency,
-                  calculation_type, is_statistical, is_tax, account_key, created_at
-                ) VALUES (
-                  ${soiId}, ${salesOrderId},
-                  ${cond.step}, ${cond.conditionType || null}, ${cond.description || null},
-                  ${cond.baseValue}, ${cond.rate}, ${cond.calculatedValue},
-                  ${orderData.currency || 'INR'},
-                  ${cond.calculationType || 'A'}, ${cond.isStatistical}, ${cond.isTax},
-                  ${cond.accountKey || null}, NOW()
-                )
-              `);
+                  calculation_type, is_statistical, is_tax, account_key,
+                  tax_rule_id, created_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())`,
+                [
+                  soiId, salesOrderId,
+                  cond.step, cond.conditionType || null, cond.description || null,
+                  cond.baseValue, cond.rate, cond.calculatedValue,
+                  orderData.currency || 'INR',
+                  cond.calculationType || 'A', cond.isStatistical, cond.isTax,
+                  cond.accountKey || null,
+                  (cond as any).taxRuleId || null,
+                ]
+              );
+              persistedCount++;
+            } catch (condErr: any) {
+              console.warn(`⚠️ Could not persist condition step ${cond.step} (${cond.conditionType}) for item ${soiId}:`, condErr?.message || condErr);
             }
-            console.log(`✅ Persisted ${condResult.conditions.length} conditions for item ${soiId}`);
-          } catch (condErr) {
-            console.warn(`⚠️ Could not persist conditions for item ${soiId}:`, condErr);
           }
+          console.log(`✅ Persisted ${persistedCount}/${itemPricingResult.conditions.length} conditions for item ${soiId}`);
         }
 
         // Log unit for inventory tracking (even if not stored in sales_order_items table)
         if (finalUnit) {
-          console.log(`✅ Unit of measure for inventory: ${finalUnit}`);
+          console.log(`Ã¢Å“â€¦ Unit of measure for inventory: ${finalUnit}`);
         }
 
-        // Dynamic inventory reservation using centralized inventory tracking service (if enabled)
+        // Ã¢â€â‚¬Ã¢â€â‚¬ Inventory tracking (Removed early reservation) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+        // According to SAP standard, Sales Order only creates an ordered_quantity requirement.
+        // It does NOT reserve physical stock. Stock is only reserved during Delivery creation.
+        // We log the requested quantities but do not touch stock_balances.reserved_quantity here.
         if (reserveInventory && materialId && quantity > 0) {
-          console.log(`🔒 Reserving ${quantity} units of product ${materialId} using inventory tracking service...`);
-
-          // Validate required fields for inventory tracking
-          if (!materialCode) {
-            console.error(`❌ Cannot reserve inventory: Material code not found for product ${materialId}`);
-            // Continue without inventory reservation - don't fail the order
-          } else if (!plantCode) {
-            console.error(`❌ Cannot reserve inventory: Plant code not found for product ${materialId}`);
-            // Continue without inventory reservation - don't fail the order
-          } else if (!storageLocationCode) {
-            console.error(`❌ Cannot reserve inventory: Storage location not found for product ${materialId}`);
-            // Continue without inventory reservation - don't fail the order
-          } else if (!unit) {
-            console.error(`❌ Cannot reserve inventory: Unit of measure not found for product ${materialId}`);
-            // Continue without inventory reservation - don't fail the order
-          } else {
-            try {
-              // Use centralized inventory tracking service to increase committed quantity
-              await inventoryTrackingService.increaseCommittedQuantity(
-                materialCode,
-                plantCode,
-                storageLocationCode,
-                quantity
-              );
-
-              // Also update products.reserved_stock for backward compatibility (if table exists)
-              try {
-                await db.execute(sql`
-                  UPDATE products 
-                  SET reserved_stock = COALESCE(reserved_stock, 0) + ${quantity}
-                  WHERE id = ${materialId}
-                `);
-              } catch (productsError: any) {
-                // If products table doesn't have reserved_stock column, that's okay
-                console.warn(`⚠️ Could not update products.reserved_stock: ${productsError.message}`);
-              }
-
-              // Create inventory movement record for audit trail
-              try {
-                await db.execute(sql`
-                  INSERT INTO inventory_movements (
-                    material_id, movement_type, quantity, plant_id, 
-                    posting_date, material_document_number
-                  ) VALUES (
-                    ${materialId}, 'RES', ${quantity}, ${plantIdForInventory}, 
-                    NOW(), ${orderNumber || 'SO'})
-                `);
-              } catch (movementError: any) {
-                // If inventory_movements table doesn't exist, that's okay
-                console.warn(`⚠️ Could not create inventory movement record: ${movementError.message}`);
-              }
-
-              console.log(`✅ Reserved ${quantity} units for product ${materialId} (material: ${materialCode}, plant: ${plantCode}, storage: ${storageLocationCode})`);
-            } catch (invError: any) {
-              console.error(`❌ Failed to reserve inventory for product ${materialId}:`, invError.message);
-              // Continue without inventory reservation - don't fail the order
-              // This allows orders to be created even if inventory tracking fails
-            }
-          }
+          console.log(`Ã°Å¸â€œÂ Sales Order recorded requirement of ${quantity} for product ${materialId} (material: ${materialCode || 'N/A'}). Physical stock will be reserved during Delivery creation.`);
         }
+
       }
 
-      console.log('✅ Sales order items created with dynamic inventory management');
+      console.log('Ã¢Å“â€¦ Sales order items created with dynamic inventory management');
 
       // Override totals with engine-calculated values if engine ran successfully
       if (pricingEngineRan) {
         engineSubtotal = engineSubtotalAcc;
         engineTaxTotal = engineTaxAcc;
-        console.log(`📊 Engine totals: subtotal=${engineSubtotal}, tax=${engineTaxTotal}`);
+        console.log(` Engine totals: subtotal=${engineSubtotal}, tax=${engineTaxTotal}`);
       }
     }
 
     // Patch the saved SO row with engine-calculated totals (if engine ran)
+    // BUT: if the frontend already sent accurate totals (from pricingPreview), prefer those.
     if (pricingEngineRan && salesOrderId) {
       try {
-        const finalSubtotal = engineSubtotal;
-        const finalTax = engineTaxTotal;
-        const finalTotal = finalSubtotal + finalTax + shippingAmount;
+        let finalSubtotal: number = engineSubtotal;
+        let finalTax: number = engineTaxTotal;
+        let finalTotal: number = finalSubtotal + finalTax + shippingAmount;
+
+        console.log(`📊 Strictly using engine-computed totals: subtotal=${finalSubtotal}, tax=${finalTax}, total=${finalTotal}`);
         await db.execute(sql`
           UPDATE sales_orders
           SET subtotal = ${finalSubtotal.toFixed(2)},
@@ -1376,9 +1405,9 @@ router.post("/sales-orders", async (req, res) => {
               pricing_procedure = ${effectivePricingProcedure}
           WHERE id = ${salesOrderId}
         `);
-        console.log(`✅ Updated SO ${salesOrderId} totals: subtotal=${finalSubtotal}, tax=${finalTax}, total=${finalTotal}`);
+        console.log(`Ã¢Å“â€¦ Updated SO ${salesOrderId} totals: subtotal=${finalSubtotal}, tax=${finalTax}, total=${finalTotal}`);
       } catch (updateErr) {
-        console.warn('⚠️ Could not update SO totals after pricing engine run:', updateErr);
+        console.warn(' Could not update SO totals after pricing engine run:', updateErr);
       }
     }
 
@@ -1410,7 +1439,6 @@ router.post("/sales-orders", async (req, res) => {
           order_amount: totalAmount
         },
         system_config: {
-          tax_rate: taxRate,
           reserve_inventory: reserveInventory,
           credit_check_enabled: creditCheckEnabled,
           plant_id: warehouseId,
@@ -1441,7 +1469,7 @@ router.get("/inventory-status/:productId", async (req, res) => {
         m.id,
         m.description as name,
         m.code as sku,
-        (SELECT COALESCE(SUM(quantity), 0) FROM stock_balances WHERE material_code = m.code) as stock,
+        (SELECT COALESCE(SUM(available_quantity), 0) FROM stock_balances WHERE material_code = m.code AND stock_type = 'AVAILABLE') as stock,
         (SELECT COALESCE(SUM(reserved_quantity), 0) FROM stock_balances WHERE material_code = m.code) as reserved_stock,
         m.min_stock,
         m.max_stock,
@@ -1457,7 +1485,7 @@ router.get("/inventory-status/:productId", async (req, res) => {
         m.code as material_code,
         -- Using subqueries for accurate real-time stock balances
         (SELECT COALESCE(SUM(quantity), 0) FROM stock_balances WHERE material_code = m.code) as sb_total_quantity,
-        (SELECT COALESCE(SUM(quantity), 0) FROM stock_balances WHERE material_code = m.code AND stock_type = 'AVAILABLE') as sb_total_available,
+        (SELECT COALESCE(SUM(available_quantity), 0) FROM stock_balances WHERE material_code = m.code AND stock_type = 'AVAILABLE') as sb_total_available,
         (SELECT COALESCE(SUM(reserved_quantity), 0) FROM stock_balances WHERE material_code = m.code) as sb_total_reserved
       FROM materials m
       LEFT JOIN plants p ON m.plant_code = p.code
@@ -1574,7 +1602,7 @@ router.post("/inventory-status/batch", async (req, res) => {
         m.id,
         m.description as name,
         m.code as sku,
-        (SELECT COALESCE(SUM(quantity), 0) FROM stock_balances WHERE material_code = m.code) as stock,
+        (SELECT COALESCE(SUM(available_quantity), 0) FROM stock_balances WHERE material_code = m.code AND stock_type = 'AVAILABLE') as stock,
         (SELECT COALESCE(SUM(reserved_quantity), 0) FROM stock_balances WHERE material_code = m.code) as reserved_stock,
         m.min_stock,
         m.max_stock,
@@ -1590,7 +1618,7 @@ router.post("/inventory-status/batch", async (req, res) => {
         m.code as material_code,
         -- Using subqueries for accurate real-time stock balances
         (SELECT COALESCE(SUM(quantity), 0) FROM stock_balances WHERE material_code = m.code) as sb_total_quantity,
-        (SELECT COALESCE(SUM(quantity), 0) FROM stock_balances WHERE material_code = m.code AND stock_type = 'AVAILABLE') as sb_total_available,
+        (SELECT COALESCE(SUM(available_quantity), 0) FROM stock_balances WHERE material_code = m.code AND stock_type = 'AVAILABLE') as sb_total_available,
         (SELECT COALESCE(SUM(reserved_quantity), 0) FROM stock_balances WHERE material_code = m.code) as sb_total_reserved
       FROM materials m
       LEFT JOIN plants p ON m.plant_code = p.code
@@ -1764,10 +1792,10 @@ router.get("/customer-tax-info/:customerId", async (req, res) => {
         error: 'Invalid customer ID format. Expected a numeric ID.'
       });
     }
-    console.log('🔍 [TAX-INFO] Fetching tax info for customer:', customerId);
+    console.log('Ã°Å¸â€Â [TAX-INFO] Fetching tax info for customer:', customerId);
 
     // Get customer data
-    console.log('📊 [TAX-INFO] Querying customer table...');
+    console.log('Ã°Å¸â€œÅ  [TAX-INFO] Querying customer table...');
     const customerResult = await db.execute(sql`
       SELECT 
         id,
@@ -1781,7 +1809,7 @@ router.get("/customer-tax-info/:customerId", async (req, res) => {
       FROM erp_customers
       WHERE id = ${customerId}
     `);
-    console.log('✅ [TAX-INFO] Customer query successful, rows:', customerResult.rows.length);
+    console.log('Ã¢Å“â€¦ [TAX-INFO] Customer query successful, rows:', customerResult.rows.length);
 
     if (!customerResult.rows || customerResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Customer not found' });
@@ -1893,7 +1921,7 @@ router.get("/sales-orders", async (req, res) => {
   try {
     const { status, customerId, limit = 50 } = req.query;
 
-    console.log(`📋 Fetching sales orders - Status: ${status}, Customer: ${customerId}, Limit: ${limit}`);
+    console.log(`Ã°Å¸â€œâ€¹ Fetching sales orders - Status: ${status}, Customer: ${customerId}, Limit: ${limit}`);
 
     // Optimized query with timeout handling
     const startTime = Date.now();
@@ -1928,7 +1956,7 @@ router.get("/sales-orders", async (req, res) => {
     `);
 
     const queryTime = Date.now() - startTime;
-    console.log(`✅ Sales orders query completed in ${queryTime}ms - found ${orders.rows.length} orders`);
+    console.log(`Ã¢Å“â€¦ Sales orders query completed in ${queryTime}ms - found ${orders.rows.length} orders`);
 
     res.json({
       success: true,
@@ -1940,11 +1968,11 @@ router.get("/sales-orders", async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Error fetching sales orders:', error);
+    console.error('Ã¢ÂÅ’ Error fetching sales orders:', error);
 
     // Check if it's a timeout error
     if (error instanceof Error && error.message.includes('timeout')) {
-      console.error('⏱️ Query timeout detected - database might be overloaded');
+      console.error('Ã¢ÂÂ±Ã¯Â¸Â Query timeout detected - database might be overloaded');
       res.status(504).json({
         success: false,
         error: 'Query timeout - please try again',
@@ -1973,7 +2001,7 @@ router.get("/sales-orders/:id", async (req, res) => {
       });
     }
 
-    console.log(`📋 Fetching sales order details for ID: ${orderId}`);
+    console.log(`Ã°Å¸â€œâ€¹ Fetching sales order details for ID: ${orderId}`);
 
     // Fetch order header
     const orderResult = await db.execute(sql`
@@ -2022,12 +2050,26 @@ router.get("/sales-orders/:id", async (req, res) => {
       ORDER BY soi.id ASC
     `);
 
-    // Fetch schedule lines
+    // Fetch schedule lines with item_category from sales_order_items for copy control UI display
     const scheduleLinesResult = await db.execute(sql`
-      SELECT * FROM sales_order_schedule_lines 
-      WHERE sales_order_id = ${orderId}
-      ORDER BY line_number ASC
+      SELECT sl.*,
+             soi.item_category,
+             soi.unit as soi_unit,
+             m.description as product_name,
+             m.code as product_code,
+             pl.name as plant_name,
+             pl.code as plant_code_detail,
+             loc.name as storage_location_name,
+             loc.code as storage_location_code_from_table
+      FROM sales_order_schedule_lines sl
+      LEFT JOIN sales_order_items soi ON sl.sales_order_item_id = soi.id
+      LEFT JOIN materials m ON soi.material_id = m.id
+      LEFT JOIN plants pl ON soi.plant_id = pl.id
+      LEFT JOIN storage_locations loc ON soi.storage_location_id = loc.id
+      WHERE sl.sales_order_id = ${orderId}
+      ORDER BY sl.line_number ASC
     `);
+
 
     res.json({
       success: true,
@@ -2039,7 +2081,7 @@ router.get("/sales-orders/:id", async (req, res) => {
     });
 
   } catch (error) {
-    console.error(`❌ Error fetching sales order ${req.params.id}:`, error);
+    console.error(`Ã¢ÂÅ’ Error fetching sales order ${req.params.id}:`, error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : "Failed to fetch sales order details"
@@ -2162,7 +2204,8 @@ router.get("/recent-deliveries", async (req, res) => {
     // Handle case where status column might not exist - use COALESCE with pgi_status as fallback
     const recentDeliveries = await db.execute(sql`
       SELECT 
-        dd.id, dd.delivery_number, dd.delivery_date, 
+        dd.id, dd.delivery_number, dd.delivery_date,
+        dd.pgi_status,
         COALESCE(dd.status, 
                  CASE WHEN dd.pgi_status = 'POSTED' THEN 'COMPLETED' 
                       WHEN dd.pgi_status = 'OPEN' THEN 'PENDING' 
@@ -2235,7 +2278,7 @@ router.get("/recent-deliveries", async (req, res) => {
           display_number: delivery.delivery_number,
           related_order: delivery.sales_order_number,
           description: delivery.sales_order_number
-            ? `${delivery.sales_order_number} → Customer Delivery`
+            ? `${delivery.sales_order_number} Ã¢â€ â€™ Customer Delivery`
             : `Delivery ${delivery.delivery_number || delivery.id}`,
           date: delivery.updated_at || delivery.created_at,
           status_display: statusDisplay
@@ -2247,14 +2290,14 @@ router.get("/recent-deliveries", async (req, res) => {
         display_number: transfer.transfer_number,
         related_order: transfer.sales_order_number,
         description: transfer.sales_order_number
-          ? `${transfer.sales_order_number} → Warehouse Transfer`
+          ? `${transfer.sales_order_number} Ã¢â€ â€™ Warehouse Transfer`
           : `Warehouse Transfer ${transfer.transfer_number || transfer.id}`,
         date: transfer.updated_at || transfer.created_at,
         status_display: transfer.status === 'COMPLETED' ? 'Completed' :
           transfer.status === 'OPEN' ? 'In Progress' :
             transfer.status === 'PENDING' ? 'Pending' : transfer.status
       }))
-    ].sort((a, b) => new Date(String(b.date)).getTime() - new Date(String(a.date)).getTime()).slice(0, 10);
+    ].sort((a, b) => new Date(String(b.date)).getTime() - new Date(String(a.date)).getTime()).slice(0, 20);
 
     res.json({
       success: true,
@@ -2440,9 +2483,9 @@ router.post("/delivery-documents", async (req, res) => {
 
     const { salesOrderId, selectedScheduleLineIds = [], shippingInfo = {} } = req.body;
 
-    console.log('📦 Creating enhanced delivery document for sales order:', salesOrderId);
-    console.log('📋 Selected schedule line IDs:', selectedScheduleLineIds);
-    console.log('📋 Selected schedule line IDs type:', typeof selectedScheduleLineIds, Array.isArray(selectedScheduleLineIds));
+    console.log('Ã°Å¸â€œÂ¦ Creating enhanced delivery document for sales order:', salesOrderId);
+    console.log('Ã°Å¸â€œâ€¹ Selected schedule line IDs:', selectedScheduleLineIds);
+    console.log('Ã°Å¸â€œâ€¹ Selected schedule line IDs type:', typeof selectedScheduleLineIds, Array.isArray(selectedScheduleLineIds));
 
     // Step 1: Get system configuration for delivery defaults
     const configResult = await db.execute(sql`
@@ -2578,93 +2621,154 @@ router.post("/delivery-documents", async (req, res) => {
       });
     }
 
-    console.log(`📋 Found ${scheduleLines.length} schedule lines ready for delivery`);
-    console.log('📋 Schedule line IDs that will be delivered:', scheduleLines.map(sl => sl.id));
+    console.log(`Ã°Å¸â€œâ€¹ Found ${scheduleLines.length} schedule lines ready for delivery`);
+    console.log('Ã°Å¸â€œâ€¹ Schedule line IDs that will be delivered:', scheduleLines.map(sl => sl.id));
 
     // Verify that we're only processing the selected schedule lines
     if (selectedScheduleLineIds && Array.isArray(selectedScheduleLineIds) && selectedScheduleLineIds.length > 0) {
       const returnedIds = scheduleLines.map(sl => sl.id);
       const requestedIds = selectedScheduleLineIds.map(id => typeof id === 'number' ? id : parseInt(String(id), 10)).filter(id => !isNaN(id));
-      console.log('✅ Verification - Requested IDs:', requestedIds);
-      console.log('✅ Verification - Returned IDs:', returnedIds);
+      console.log('Ã¢Å“â€¦ Verification - Requested IDs:', requestedIds);
+      console.log('Ã¢Å“â€¦ Verification - Returned IDs:', returnedIds);
 
       // Check if all requested IDs are in the returned results
       const missingIds = requestedIds.filter(id => !returnedIds.includes(id));
       if (missingIds.length > 0) {
-        console.warn('⚠️ Some requested schedule line IDs were not found:', missingIds);
+        console.warn(' Some requested schedule line IDs were not found:', missingIds);
       }
     }
 
     // Step 4: Determine shipping condition and route
     // Use shippingInfo values if provided, otherwise use defaults
     const shippingCondition = shippingInfo.shippingCondition || salesOrder.shipping_condition || config.shipping_condition || '01';
-    const shippingCondResult = await db.execute(sql`
-      SELECT * FROM shipping_conditions_master 
-      WHERE code = ${shippingCondition} AND is_active = true
-      LIMIT 1
-    `);
+
+    // Use correct table: sd_shipping_conditions
+    const shippingCondResult = await pool.query(
+      `SELECT * FROM sd_shipping_conditions WHERE condition_code = $1 AND is_active = true LIMIT 1`,
+      [shippingCondition]
+    );
     const shippingCond = shippingCondResult.rows[0];
 
     // Determine route (from shippingInfo, shipping condition, or sales order)
     const routeCode = shippingInfo.route || salesOrder.route_code || shippingCond?.proposed_route || null;
 
-    // Determine shipping point (from shipping condition or sales order)
-    const shippingPointCode = salesOrder.shipping_point_code || shippingCond?.proposed_shipping_point || null;
+    // Determine plant code (from first schedule line if available)
+    const firstPlantCodeResult = await pool.query(
+      `SELECT p.code 
+       FROM sales_order_items i 
+       LEFT JOIN plants p ON i.plant_id = p.id
+       WHERE i.sales_order_id = $1 
+       LIMIT 1`,
+      [salesOrderId]
+    );
+    const plantCode = firstPlantCodeResult.rows[0]?.code;
 
-    // Step 5: Generate delivery number
-    // CRITICAL: Use MAX() instead of COUNT() to prevent duplicate key errors
-    // Add retry logic with timestamp suffix to ensure uniqueness for concurrent requests
-    const currentYear = new Date().getFullYear();
-    let deliveryNumber: string;
-    let retryCount = 0;
-    const maxRetries = 5;
-
-    while (retryCount < maxRetries) {
-      // Get the highest existing delivery number for this year
-      const deliveryCountResult = await db.execute(sql`
-        SELECT COALESCE(MAX(
-          CASE 
-            WHEN delivery_number ~ ${`^DL${currentYear}([0-9]{6})(-.*)?$`}
-            THEN CAST((regexp_match(delivery_number, ${`^DL${currentYear}([0-9]{6})`}))[1] AS INTEGER)
-            ELSE 0
-          END
-        ), 0) as max_number
-        FROM delivery_documents
-        WHERE delivery_number LIKE ${`DL${currentYear}%`}
-      `);
-
-      const maxNumber = parseInt(String(deliveryCountResult.rows[0]?.max_number || 0));
-      // Use max number + 1 + retry count to ensure uniqueness
-      const deliveryCount = maxNumber + 1 + retryCount;
-
-      if (retryCount === 0) {
-        // First attempt: try without suffix (standard format: DL2025000001)
-        deliveryNumber = `DL${currentYear}${deliveryCount.toString().padStart(6, '0')}`;
-      } else {
-        // Retry: add short timestamp suffix (4 digits) to ensure uniqueness
-        const timestamp = Date.now();
-        const uniqueSuffix = timestamp.toString().slice(-4); // Last 4 digits of timestamp
-        deliveryNumber = `DL${currentYear}${deliveryCount.toString().padStart(6, '0')}-${uniqueSuffix}`;
-      }
-
-      // Check if this delivery number already exists
-      const existingCheck = await db.execute(sql`
-        SELECT id FROM delivery_documents WHERE delivery_number = ${deliveryNumber} LIMIT 1
-      `);
-
-      if (existingCheck.rows.length === 0) {
-        // Number is available, break out of retry loop
-        break;
-      }
-
-      retryCount++;
-      if (retryCount >= maxRetries) {
-        // Last resort: use full timestamp
-        const timestamp = Date.now();
-        deliveryNumber = `DL${currentYear}${deliveryCount.toString().padStart(6, '0')}-${timestamp}`.substring(0, 20);
-        break;
+    // Determine shipping point (from shipping_point_determination table)
+    let shippingPointCode = salesOrder.shipping_point_code;
+    if (!shippingPointCode && shippingCondition && plantCode) {
+      const spdResult = await pool.query(
+        `SELECT proposed_shipping_point 
+         FROM shipping_point_determination 
+         WHERE shipping_condition_key = $1 
+           AND plant_code = $2 
+           AND is_active = true 
+         LIMIT 1`,
+        [shippingCondition, plantCode]
+      );
+      if (spdResult.rows.length > 0) {
+        shippingPointCode = spdResult.rows[0].proposed_shipping_point;
+        console.log(`Ã¢Å“â€¦ Determined shipping point ${shippingPointCode} from shipping_point_determination (cond=${shippingCondition}, plant=${plantCode})`);
       }
     }
+
+    // Fallback if still not found
+    if (!shippingPointCode) {
+      shippingPointCode = shippingCond?.proposed_shipping_point || null;
+    }
+
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Copy Control Integration Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // Determine source document type from sales order
+    const sourceDocType = salesOrder.document_type || 'OR';
+
+    // Look up copy control header: sourceDocType Ã¢â€ â€™ targetDocType
+    const ccHeaderResult = await pool.query(
+      `SELECT cch.target_doc_type, cch.copy_requirements, cch.data_transfer,
+              sdt.name as delivery_type_name, sdt.number_range as delivery_number_range
+       FROM sd_copy_control_headers cch
+       LEFT JOIN sd_document_types sdt ON sdt.code = cch.target_doc_type
+       WHERE cch.source_doc_type = $1
+         AND sdt.category ILIKE '%DELIVERY%'
+       ORDER BY cch.id
+       LIMIT 1`,
+      [sourceDocType]
+    );
+    const ccHeader = ccHeaderResult.rows[0];
+
+    if (!ccHeader) {
+      console.warn(` No copy control header found for ${sourceDocType} Ã¢â€ â€™ DELIVERY. Using default delivery type LF.`);
+    } else {
+      console.log(`Ã¢Å“â€¦ Copy control header found: ${sourceDocType} Ã¢â€ â€™ ${ccHeader.target_doc_type} (${ccHeader.delivery_type_name})`);
+    }
+
+    // Build a lookup map: sourceItemCategory Ã¢â€ â€™ targetItemCategory from copy control items
+    const ccItemsResult = await pool.query(
+      `SELECT source_item_category, target_item_category, copy_requirements, data_transfer
+       FROM sd_copy_control_items
+       WHERE source_doc_type = $1 AND target_doc_type = $2`,
+      [sourceDocType, ccHeader?.target_doc_type || 'LF']
+    );
+    const copyControlItemMap: Record<string, string> = {};
+    for (const row of ccItemsResult.rows) {
+      copyControlItemMap[row.source_item_category] = row.target_item_category;
+    }
+    console.log(`Ã°Å¸â€œâ€¹ Copy control item map (${Object.keys(copyControlItemMap).length} rules):`, copyControlItemMap);
+    // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Step 5: Generate delivery number from number_ranges Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // 1. Look up which number_range_code is assigned to this delivery doc type (e.g. LF Ã¢â€ â€™ 'LF')
+    // 2. Atomically increment current_number in `number_ranges` WHERE number_range_code = that code
+    const resolvedDeliveryType = ccHeader?.target_doc_type || 'LF';
+
+    const nrLookupResult = await pool.query(
+      `SELECT sdt.number_range
+       FROM sd_document_types sdt
+       WHERE sdt.code = $1 LIMIT 1`,
+      [resolvedDeliveryType]
+    );
+    const assignedNrCode = nrLookupResult.rows[0]?.number_range;
+
+    let deliveryNumber: string;
+
+    if (assignedNrCode) {
+      // Atomically increment current_number in number_ranges and return the new value
+      const nrUpdateResult = await pool.query(
+        `UPDATE number_ranges
+         SET current_number = (CAST(current_number AS BIGINT) + 1)::TEXT,
+             updated_at = NOW()
+         WHERE number_range_code = $1
+           AND is_active = true
+           AND CAST(current_number AS BIGINT) < CAST(range_to AS BIGINT)
+         RETURNING current_number, range_from, range_to`,
+        [assignedNrCode]
+      );
+
+      if (nrUpdateResult.rows.length > 0) {
+        const nr = nrUpdateResult.rows[0];
+        // Format: pad to the same width as range_from (e.g. '8000000' = 7 digits Ã¢â€ â€™ '8000001')
+        const numWidth = nr.range_from.length;
+        deliveryNumber = nr.current_number.padStart(numWidth, '0');
+        console.log(`Ã¢Å“â€¦ Delivery number from number_ranges (code=${assignedNrCode}): ${deliveryNumber}`);
+      } else {
+        console.warn(` number_ranges row for code '${assignedNrCode}' exhausted or inactive. Using timestamp fallback.`);
+        deliveryNumber = `DL${Date.now()}`.substring(0, 18);
+      }
+    } else {
+      console.warn(` No number_range assigned on sd_document_types for ${resolvedDeliveryType}. Using timestamp fallback.`);
+      deliveryNumber = `DL${Date.now()}`.substring(0, 18);
+    }
+    // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+
+
 
     // Step 6: Get warehouse information from sales order items
     const warehouseResult = await db.execute(sql`
@@ -2731,15 +2835,15 @@ router.post("/delivery-documents", async (req, res) => {
     const totalAmount = parseFloat(String(totalAmountResult.rows[0]?.total_amount || 0));
 
     // Step 7: Create delivery document with all new enhanced fields
-    // Use values from shippingInfo if provided, otherwise use defaults
-    const deliveryType = shippingInfo.deliveryType || config.delivery_type || 'LF';
+    // Resolve delivery type from copy control Ã¢â€ â€™ sd_document_types (fallback to config or 'LF')
+    const deliveryType = shippingInfo.deliveryType || ccHeader?.target_doc_type || config.delivery_type || 'LF';
     const deliveryPriority = shippingInfo.priority || salesOrder.delivery_priority || config.delivery_priority || '02';
     const movementType = shippingInfo.movementType || config.movement_type || '601';
     const loadingPoint = salesOrder.loading_point || null;
     const shippingConditionFromInfo = shippingInfo.shippingCondition || null;
     const routeFromInfo = shippingInfo.route || null;
 
-    console.log('📦 Creating delivery with:', {
+    console.log('Ã°Å¸â€œÂ¦ Creating delivery with:', {
       deliveryType,
       priority: deliveryPriority,
       shippingCondition,
@@ -2762,7 +2866,7 @@ router.post("/delivery-documents", async (req, res) => {
             delivery_number, sales_order_id, customer_id,
             delivery_date, shipping_point, plant, created_by, status,
             delivery_type_code, delivery_priority, shipping_condition,
-            route_code, loading_point, movement_type,
+            route_code, loading_point,
             complete_delivery, delivery_group,
             inventory_posting_status
           ) VALUES (
@@ -2779,7 +2883,6 @@ router.post("/delivery-documents", async (req, res) => {
             ${shippingCondition},
             ${routeCode},
             ${loadingPoint},
-            ${movementType},
             ${salesOrder.complete_delivery_required || false},
             ${salesOrder.delivery_group},
             'NOT_POSTED'
@@ -2791,26 +2894,26 @@ router.post("/delivery-documents", async (req, res) => {
         deliveryDocumentId = deliveryResult.rows[0]?.id;
         delivery = deliveryResult.rows[0];
 
-        console.log(`✅ Created delivery ${deliveryNumber} with ID ${deliveryDocumentId}`);
+        console.log(`Ã¢Å“â€¦ Created delivery ${deliveryNumber} with ID ${deliveryDocumentId}`);
         break; // Success - exit retry loop
       } catch (insertError: any) {
         // Check if it's a duplicate key error
         if (insertError.code === '23505' && insertError.constraint === 'delivery_documents_delivery_number_key') {
           insertRetryCount++;
-          console.warn(`⚠️ Duplicate delivery number detected: ${deliveryNumber}. Retrying with new number... (Attempt ${insertRetryCount}/${maxInsertRetries})`);
+          console.warn(` Duplicate delivery number detected: ${deliveryNumber}. Retrying with new number... (Attempt ${insertRetryCount}/${maxInsertRetries})`);
 
           if (insertRetryCount >= maxInsertRetries) {
             // Last resort: generate completely unique number with timestamp
             const timestamp = Date.now();
             const lastCount = parseInt(deliveryNumber.replace(/^DL\d{4}/, '').replace(/-.*$/, '')) || 0;
             deliveryNumber = `DL${currentYear}${(lastCount + insertRetryCount).toString().padStart(6, '0')}-${timestamp}`.substring(0, 20);
-            console.log(`🔄 Using last resort delivery number: ${deliveryNumber}`);
+            console.log(`Ã°Å¸â€â€ž Using last resort delivery number: ${deliveryNumber}`);
           } else {
             // Generate new number with retry count
             const timestamp = Date.now();
             const lastCount = parseInt(deliveryNumber.replace(/^DL\d{4}/, '').replace(/-.*$/, '')) || 0;
             deliveryNumber = `DL${currentYear}${(lastCount + insertRetryCount).toString().padStart(6, '0')}-${timestamp.toString().slice(-4)}`;
-            console.log(`🔄 Retrying with new delivery number: ${deliveryNumber}`);
+            console.log(`Ã°Å¸â€â€ž Retrying with new delivery number: ${deliveryNumber}`);
           }
         } else {
           // Not a duplicate key error - rethrow
@@ -2865,28 +2968,25 @@ router.post("/delivery-documents", async (req, res) => {
     // Check if schedule lines belong to different sales order items (different products)
     const uniqueSalesOrderItems = new Set(scheduleLines.map(sl => sl.sales_order_item_id));
 
-    // CRITICAL FIX: ALWAYS create separate deliveries for split schedule lines
-    // If multiple schedule lines are selected, they were split for a reason
-    // Each schedule line should get its own delivery to maintain the split
-    // This ensures:
-    // 1. Split deliveries remain separate
-    // 2. Each delivery gets its own transfer order
-    // 3. No combining of split orders
-    const shouldCreateSeparateDeliveries = scheduleLines.length > 1 && (
-      // Different delivery dates = split delivery by date (always separate)
-      uniqueDeliveryDates.size > 1 ||
+    // Separate deliveries are only needed when:
+    // 1. Explicitly requested by the user (shippingInfo.createSeparateDeliveries)
+    // 2. Schedule lines were split from the SAME sales order item (same product, split by qty/date)
+    //    Ã¢â€ â€™ uniqueSalesOrderItems.size === 1 means all lines came from the same order item
+    //    Ã¢â€ â€™ In this case they were quantity/date splits and must stay separate
+    // 3. Lines span different delivery dates AND belong to different items
+    //    Ã¢â€ â€™ different products with different dates Ã¢â€ â€™ create separate per-date groupings
+    //
+    // IMPORTANT: Multiple lines from DIFFERENT products (uniqueSalesOrderItems.size > 1)
+    // should go into ONE delivery with multiple line items Ã¢â‚¬â€ this is the normal multi-line order case.
+    const shouldCreateSeparateDeliveries = (
       // Explicitly requested
       shippingInfo.createSeparateDeliveries === true ||
-      // Multiple schedule lines for same item = split by quantity (ALWAYS create separate deliveries)
-      // KEY FIX: If schedule lines were split, they MUST create separate deliveries
-      // This prevents combining split orders into one delivery
-      (uniqueSalesOrderItems.size === 1 && scheduleLines.length > 1) ||
-      // SAFETY: If more than one schedule line is selected, always create separate deliveries
-      // This ensures split deliveries are never accidentally combined
-      scheduleLines.length > 1
+      // Multiple schedule lines for the SAME order item = quantity/date splits Ã¢â€ â€™ keep separate
+      (uniqueSalesOrderItems.size === 1 && scheduleLines.length > 1)
+      // NOTE: Multiple lines from DIFFERENT products (normal multi-item order) go into ONE delivery
     );
 
-    console.log(`🔍 Split Delivery Detection:`, {
+    console.log(`Ã°Å¸â€Â Split Delivery Detection:`, {
       scheduleLineCount: scheduleLines.length,
       uniqueDeliveryDates: uniqueDeliveryDates.size,
       uniqueSalesOrderItems: uniqueSalesOrderItems.size,
@@ -2895,7 +2995,13 @@ router.post("/delivery-documents", async (req, res) => {
     });
 
     if (shouldCreateSeparateDeliveries) {
-      console.log(`📦 SPLIT DELIVERY MODE: Creating separate delivery for each schedule line (${scheduleLines.length} deliveries)`);
+      console.log(`Ã°Å¸â€œÂ¦ SPLIT DELIVERY MODE: Creating separate delivery for each schedule line (${scheduleLines.length} deliveries)`);
+
+      // Delete the placeholder delivery header created earlier Ã¢â‚¬â€ split mode will create its own per schedule line
+      if (deliveryDocumentId) {
+        await db.execute(sql`DELETE FROM delivery_documents WHERE id = ${deliveryDocumentId}`);
+        console.log(`Ã°Å¸â€”â€˜Ã¯Â¸Â Deleted placeholder delivery header ${deliveryDocumentId} (split mode will create separate ones)`);
+      }
 
       const createdDeliveries = [];
 
@@ -2904,64 +3010,85 @@ router.post("/delivery-documents", async (req, res) => {
         // CRITICAL: Handle NULL delivered_quantity (first delivery)
         const confirmedQty = getNumber(scheduleLine.confirmed_quantity, 0);
         const deliveredQty = getNumber(scheduleLine.delivered_quantity, 0);
-        const deliveryQty = confirmedQty - deliveredQty;
+        let deliveryQty = confirmedQty - deliveredQty;
 
         if (deliveryQty <= 0) {
-          console.log(`⏭️ Skipping schedule line ${scheduleLine.id} - no quantity to deliver`);
+          console.log(` Skipping schedule line ${scheduleLine.id} - no quantity to deliver`);
           continue;
         }
 
-        // Generate separate delivery number for each schedule line
-        // Use a counter that increments for each delivery to avoid conflicts
-        // CRITICAL: Use MAX() instead of COUNT() to prevent duplicate key errors
-        // Add retry logic with timestamp suffix to ensure uniqueness for concurrent requests
+        // Check inventory availability before creating delivery item (ATP Check)
+        const storageLocationValue = String(storageLocation.storage_location_code || '0001').substring(0, 10);
+        let inventoryAvailable = true;
+        let currentStock = 0;
+        let originalDeliveryQty = deliveryQty;
+
+        if (scheduleLine.material_id) {
+          const stockCheckResult = await db.execute(sql`
+            SELECT 
+              COALESCE(sb.quantity, 0) as product_stock,
+              COALESCE(sb.reserved_quantity, 0) as product_reserved,
+              m.code as material_code,
+              COALESCE(sb.quantity, 0) as stock_balance_quantity,
+              COALESCE(sb.available_quantity, 0) as stock_balance_available
+            FROM materials m
+            LEFT JOIN stock_balances sb ON (m.code = sb.material_code 
+              AND sb.plant_code = ${warehouse.plant_code || 'PLANT01'}
+              AND sb.storage_location = ${storageLocationValue})
+            WHERE m.id = ${scheduleLine.material_id}
+            LIMIT 1
+          `);
+
+          if (stockCheckResult.rows.length > 0) {
+            const stockData = stockCheckResult.rows[0];
+            const totalStock = parseFloat(String(stockData.stock_balance_quantity || stockData.product_stock || 0));
+            const reservedStock = parseFloat(String(stockData.product_reserved || 0));
+            const availableStock = stockData.stock_balance_available !== null && stockData.stock_balance_available !== undefined
+              ? parseFloat(String(stockData.stock_balance_available))
+              : Math.max(0, totalStock - reservedStock);
+
+            currentStock = availableStock;
+
+            if (availableStock < deliveryQty) {
+              inventoryAvailable = false;
+              if (availableStock <= 0) {
+                console.warn(`ATP Check failed: 0 stock available for material ${scheduleLine.material_id}. Skipping line for split mode.`);
+                inventoryIssues.push(`Material ${scheduleLine.material_description || scheduleLine.material_id}: Skipped (0 stock available).`);
+                continue;
+              } else {
+                inventoryIssues.push(
+                  `${scheduleLine.material_description || 'Material ID ' + scheduleLine.material_id}: ` +
+                  `Requested ${deliveryQty}, but only ${availableStock.toFixed(2)} available. Fulfilling partial.`
+                );
+                console.warn(`ATP Check Partial: Lowering split delivery qty from ${deliveryQty} to ${availableStock}`);
+                deliveryQty = availableStock;
+              }
+            }
+          }
+        }
+
+        // Generate separate delivery number via number_ranges (same logic as standard mode)
         let separateDeliveryNumber: string;
-        let retryCount = 0;
-        const maxRetries = 5;
+        const assignedCode = assignedNrCode || 'LF'; // Default to LF if nothing found
 
-        while (retryCount < maxRetries) {
-          const deliveryCountResult = await db.execute(sql`
-            SELECT COALESCE(MAX(
-              CASE 
-                WHEN delivery_number ~ ${`^DL${currentYear}([0-9]{6})(-.*)?$`}
-                THEN CAST((regexp_match(delivery_number, ${`^DL${currentYear}([0-9]{6})`}))[1] AS INTEGER)
-                ELSE 0
-              END
-            ), 0) as max_number
-            FROM delivery_documents
-            WHERE delivery_number LIKE ${`DL${currentYear}%`}
-          `);
-          // Add i and createdDeliveries.length to ensure unique numbers even if created in same transaction
-          const baseCount = parseInt(String(deliveryCountResult.rows[0]?.max_number || 0));
-          const deliveryCount = baseCount + createdDeliveries.length + i + 1 + retryCount;
+        const splitNrResult = await pool.query(
+          `UPDATE number_ranges
+           SET current_number = (CAST(current_number AS BIGINT) + 1)::TEXT,
+               updated_at = NOW()
+           WHERE number_range_code = $1
+             AND is_active = true
+             AND CAST(current_number AS BIGINT) < CAST(range_to AS BIGINT)
+           RETURNING current_number, range_from, range_to`,
+          [assignedCode]
+        );
 
-          if (retryCount === 0) {
-            // First attempt: try without suffix (standard format: DL2025000001)
-            separateDeliveryNumber = `DL${currentYear}${deliveryCount.toString().padStart(6, '0')}`;
-          } else {
-            // Retry: add short timestamp suffix (4 digits) to ensure uniqueness
-            const timestamp = Date.now();
-            const uniqueSuffix = (timestamp + i).toString().slice(-4); // Last 4 digits of timestamp + index
-            separateDeliveryNumber = `DL${currentYear}${deliveryCount.toString().padStart(6, '0')}-${uniqueSuffix}`;
-          }
-
-          // Check if this delivery number already exists
-          const existingCheck = await db.execute(sql`
-            SELECT id FROM delivery_documents WHERE delivery_number = ${separateDeliveryNumber} LIMIT 1
-          `);
-
-          if (existingCheck.rows.length === 0) {
-            // Number is available, break out of retry loop
-            break;
-          }
-
-          retryCount++;
-          if (retryCount >= maxRetries) {
-            // Last resort: use full timestamp
-            const timestamp = Date.now();
-            separateDeliveryNumber = `DL${currentYear}${deliveryCount.toString().padStart(6, '0')}-${timestamp}`.substring(0, 20);
-            break;
-          }
+        if (splitNrResult.rows.length > 0) {
+          const snr = splitNrResult.rows[0];
+          separateDeliveryNumber = snr.current_number.padStart(snr.range_from.length, '0');
+          console.log(`Ã¢Å“â€¦ Split delivery number (code=${assignedCode}): ${separateDeliveryNumber}`);
+        } else {
+          separateDeliveryNumber = `DL${Date.now()}`.substring(0, 18);
+          console.warn(`number_ranges range exhausted or inactive for split delivery (code=${assignedCode}), using fallback: ${separateDeliveryNumber}`);
         }
 
         // Create separate delivery document for this schedule line
@@ -2979,7 +3106,7 @@ router.post("/delivery-documents", async (req, res) => {
                 delivery_number, sales_order_id, customer_id,
                 delivery_date, shipping_point, plant, created_by, status,
                 delivery_type_code, delivery_priority, shipping_condition,
-                route_code, loading_point, movement_type,
+                route_code, loading_point,
                 complete_delivery, delivery_group,
                 inventory_posting_status
               ) VALUES (
@@ -2996,7 +3123,6 @@ router.post("/delivery-documents", async (req, res) => {
                 ${shippingCondition},
                 ${routeCode},
                 ${loadingPoint},
-                ${movementType},
                 ${salesOrder.complete_delivery_required || false},
                 ${salesOrder.delivery_group},
                 'NOT_POSTED'
@@ -3009,20 +3135,20 @@ router.post("/delivery-documents", async (req, res) => {
             // Check if it's a duplicate key error
             if (separateInsertError.code === '23505' && separateInsertError.constraint === 'delivery_documents_delivery_number_key') {
               separateInsertRetryCount++;
-              console.warn(`⚠️ Duplicate delivery number detected for split delivery: ${separateDeliveryNumber}. Retrying with new number... (Attempt ${separateInsertRetryCount}/${maxSeparateInsertRetries})`);
+              console.warn(` Duplicate delivery number detected for split delivery: ${separateDeliveryNumber}. Retrying with new number... (Attempt ${separateInsertRetryCount}/${maxSeparateInsertRetries})`);
 
               if (separateInsertRetryCount >= maxSeparateInsertRetries) {
                 // Last resort: generate completely unique number with timestamp
                 const timestamp = Date.now();
                 const lastCount = parseInt(separateDeliveryNumber.replace(/^DL\d{4}/, '').replace(/-.*$/, '')) || 0;
                 separateDeliveryNumber = `DL${currentYear}${(lastCount + separateInsertRetryCount).toString().padStart(6, '0')}-${timestamp}`.substring(0, 20);
-                console.log(`🔄 Using last resort delivery number for split: ${separateDeliveryNumber}`);
+                console.log(`Ã°Å¸â€â€ž Using last resort delivery number for split: ${separateDeliveryNumber}`);
               } else {
                 // Generate new number with retry count
                 const timestamp = Date.now();
                 const lastCount = parseInt(separateDeliveryNumber.replace(/^DL\d{4}/, '').replace(/-.*$/, '')) || 0;
                 separateDeliveryNumber = `DL${currentYear}${(lastCount + separateInsertRetryCount).toString().padStart(6, '0')}-${timestamp.toString().slice(-4)}`;
-                console.log(`🔄 Retrying split delivery with new number: ${separateDeliveryNumber}`);
+                console.log(`Ã°Å¸â€â€ž Retrying split delivery with new number: ${separateDeliveryNumber}`);
               }
             } else {
               // Not a duplicate key error - rethrow
@@ -3035,18 +3161,27 @@ router.post("/delivery-documents", async (req, res) => {
           throw new Error(`Failed to create split delivery after ${maxSeparateInsertRetries} retries. Last attempted number: ${separateDeliveryNumber}`);
         }
 
-        console.log(`✅ Created separate delivery ${separateDeliveryNumberFinal} (ID: ${separateDeliveryId}) for schedule line ${scheduleLine.id}`);
+        console.log(`Ã¢Å“â€¦ Created separate delivery ${separateDeliveryNumberFinal} (ID: ${separateDeliveryId}) for schedule line ${scheduleLine.id}`);
 
         // Create delivery item for this schedule line
         const batchNumber = `B${separateDeliveryId}01`.substring(0, 20);
-        const storageLocationValue = String(storageLocation.storage_location_code || '0001').substring(0, 10);
+
+        // Determine delivery item category from copy control item map
+        // Get the source SO item's item category, then look up target from copy control
+        const soItemResult = await pool.query(
+          `SELECT item_category FROM sales_order_items WHERE id = $1 LIMIT 1`,
+          [scheduleLine.sales_order_item_id]
+        );
+        const sourceItemCategory = soItemResult.rows[0]?.item_category || 'TAN';
+        const deliveryItemCategory = copyControlItemMap[sourceItemCategory] || 'ZTAN';
+        console.log(`  Ã°Å¸â€œÅ’ Item ${scheduleLine.sales_order_item_id}: ${sourceItemCategory} Ã¢â€ â€™ ${deliveryItemCategory}`);
 
         await db.execute(sql`
           INSERT INTO delivery_items (
             delivery_id, sales_order_item_id, line_item, material_id, 
             delivery_quantity, pgi_quantity, unit, storage_location, batch,
-            schedule_line_id, movement_type, inventory_posting_status,
-            stock_type
+            schedule_line_id, inventory_posting_status,
+            stock_type, item_category
           ) VALUES (
             ${separateDeliveryId}, 
             ${scheduleLine.sales_order_item_id}, 
@@ -3058,9 +3193,9 @@ router.post("/delivery-documents", async (req, res) => {
             ${storageLocationValue},
             ${batchNumber},
             ${scheduleLine.id},
-            ${movementType},
             'NOT_POSTED',
-            'UNRESTRICTED'
+            'UNRESTRICTED',
+            ${deliveryItemCategory}
           )
         `);
 
@@ -3077,6 +3212,54 @@ router.post("/delivery-documents", async (req, res) => {
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ${scheduleLine.id}
         `);
+
+        // Reserve stock if available (or create reservation for later fulfillment)
+        if (scheduleLine.product_id && inventoryAvailable) {
+          try {
+            const materialCodeResult = await db.execute(sql`
+              SELECT m.code as material_code
+              FROM materials m
+              WHERE m.id = ${scheduleLine.product_id}
+              LIMIT 1
+            `);
+
+            if (materialCodeResult.rows.length > 0) {
+              const materialCode = materialCodeResult.rows[0].material_code;
+              if (materialCode) {
+                await db.execute(sql`
+                  INSERT INTO stock_balances (
+                    material_code, plant_code, storage_location, stock_type,
+                    quantity, available_quantity, reserved_quantity, unit
+                  )
+                  VALUES (
+                    ${materialCode}, 
+                    ${warehouse.plant_code || 'PLANT01'}, 
+                    ${storageLocationValue},
+                    'AVAILABLE',
+                    ${currentStock}, 
+                    GREATEST(0, ${currentStock - deliveryQty}), 
+                    ${deliveryQty}, 
+                    ${scheduleLine.unit || 'EA'}
+                  )
+                  ON CONFLICT (material_code, plant_code, storage_location, stock_type)
+                  DO UPDATE SET
+                    reserved_quantity = COALESCE(stock_balances.reserved_quantity, 0) + ${deliveryQty},
+                    available_quantity = GREATEST(0, 
+                      COALESCE(stock_balances.quantity, 0) 
+                      - COALESCE(stock_balances.reserved_quantity, 0) - ${deliveryQty}
+                      - COALESCE(stock_balances.committed_quantity, 0)
+                      + COALESCE(stock_balances.ordered_quantity, 0)
+                    ),
+                    last_updated = CURRENT_TIMESTAMP
+                `);
+              }
+            }
+
+            console.log(`Ã¢Å“â€¦ Reserved ${deliveryQty} units of product ${scheduleLine.product_id} for Split Delivery`);
+          } catch (invError: any) {
+            console.error(` Error reserving stock for product ${scheduleLine.product_id} (Split mode):`, invError.message);
+          }
+        }
 
         createdDeliveries.push({
           id: separateDeliveryId,
@@ -3095,35 +3278,36 @@ router.post("/delivery-documents", async (req, res) => {
     }
 
     // STANDARD MODE: Create one delivery with multiple items (original behavior)
-    console.log(`📦 STANDARD MODE: Creating one delivery with ${scheduleLines.length} schedule lines`);
-    console.log(`📦 Processing ${scheduleLines.length} schedule lines for delivery items`);
+    console.log(`Ã°Å¸â€œÂ¦ STANDARD MODE: Creating one delivery with ${scheduleLines.length} schedule lines`);
+    console.log(`Ã°Å¸â€œÂ¦ Processing ${scheduleLines.length} schedule lines for delivery items`);
 
     for (let i = 0; i < scheduleLines.length; i++) {
       const scheduleLine = scheduleLines[i];
       // CRITICAL: Handle NULL delivered_quantity (first delivery)
       const confirmedQty = getNumber(scheduleLine.confirmed_quantity, 0);
       const deliveredQty = getNumber(scheduleLine.delivered_quantity, 0);
-      const deliveryQty = confirmedQty - deliveredQty;
+      let deliveryQty = confirmedQty - deliveredQty;
 
-      console.log(`📦 Processing schedule line ${i + 1}/${scheduleLines.length}: ID=${scheduleLine.id}, Qty=${deliveryQty}`);
+      console.log(`Ã°Å¸â€œÂ¦ Processing schedule line ${i + 1}/${scheduleLines.length}: ID=${scheduleLine.id}, Qty=${deliveryQty}`);
 
       if (deliveryQty <= 0) {
-        console.log(`⏭️ Skipping schedule line ${scheduleLine.id} - no quantity to deliver`);
+        console.log(`Ã¢ÂÂ­Ã¯Â¸Â Skipping schedule line ${scheduleLine.id} - no quantity to deliver`);
         continue; // Skip if nothing to deliver
       }
 
       const batchNumber = `B${deliveryDocumentId}${(i + 1).toString().padStart(2, '0')}`.substring(0, 20);
       const storageLocationValue = String(storageLocation.storage_location_code || '0001').substring(0, 10);
 
-      console.log(`📦 Creating delivery item ${i + 1} from schedule line ${scheduleLine.id}:`, {
+      console.log(`Ã°Å¸â€œÂ¦ Creating delivery item ${i + 1} from schedule line ${scheduleLine.id}:`, {
         material: scheduleLine.material_description,
         quantity: deliveryQty,
         scheduleLineId: scheduleLine.id
       });
 
-      // Check inventory availability before creating delivery item
+      // Check inventory availability before creating delivery item (ATP Check)
       let inventoryAvailable = true;
       let currentStock = 0;
+      let originalDeliveryQty = deliveryQty;
 
       if (scheduleLine.material_id) {
         // Check stock from materials and stock_balances tables
@@ -3144,33 +3328,54 @@ router.post("/delivery-documents", async (req, res) => {
 
         if (stockCheckResult.rows.length > 0) {
           const stockData = stockCheckResult.rows[0];
-          // Use stock_balances if available, otherwise use products.stock
           const totalStock = parseFloat(String(stockData.stock_balance_quantity || stockData.product_stock || 0));
           const reservedStock = parseFloat(String(stockData.product_reserved || 0));
-          const availableStock = parseFloat(String(stockData.stock_balance_available || (totalStock - reservedStock)));
+          // Strictly trust available_quantity if present, otherwise calculate it
+          const availableStock = stockData.stock_balance_available !== null && stockData.stock_balance_available !== undefined
+            ? parseFloat(String(stockData.stock_balance_available))
+            : Math.max(0, totalStock - reservedStock);
+
           currentStock = availableStock;
 
           if (availableStock < deliveryQty) {
             inventoryAvailable = false;
-            inventoryIssues.push(
-              `${scheduleLine.material_description || 'Material ID ' + scheduleLine.material_id}: ` +
-              `Requested ${deliveryQty}, Available ${availableStock.toFixed(2)}`
-            );
-            console.warn(`⚠️ Insufficient stock for material ${scheduleLine.material_id}: Available ${availableStock}, Required ${deliveryQty}`);
+
+            // ATP Restriction: Only allow delivery of what is actually available!
+            if (availableStock <= 0) {
+              console.warn(` ATP Check failed: 0 stock available for material ${scheduleLine.material_id}. Skipping line.`);
+              inventoryIssues.push(`Material ${scheduleLine.material_description || scheduleLine.material_id}: Skipped (0 stock available).`);
+              continue; // Completely skip this item if no stock
+            } else {
+              inventoryIssues.push(
+                `${scheduleLine.material_description || 'Material ID ' + scheduleLine.material_id}: ` +
+                `Requested ${deliveryQty}, but only ${availableStock.toFixed(2)} available. Fulfilling partial.`
+              );
+              console.warn(` ATP Check Partial: Lowering delivery qty from ${deliveryQty} to ${availableStock}`);
+              deliveryQty = availableStock; // Restrict delivery to available stock
+            }
           }
         } else {
-          // Material not found - allow but warn
-          console.warn(`⚠️ Material ${scheduleLine.material_id} not found in inventory tables`);
+          // Material not found - allow but warn (might be non-stock material)
+          console.warn(` Material ${scheduleLine.material_id} not found in inventory tables. Skipping ATP check.`);
         }
       }
+
+      // Determine delivery item category from copy control item map
+      const soItemCatResult = await pool.query(
+        `SELECT item_category FROM sales_order_items WHERE id = $1 LIMIT 1`,
+        [scheduleLine.sales_order_item_id]
+      );
+      const srcItemCategory = soItemCatResult.rows[0]?.item_category || 'TAN';
+      const tgtItemCategory = copyControlItemMap[srcItemCategory] || 'ZTAN';
+      console.log(`  Ã°Å¸â€œÅ’ Standard item ${i + 1} (SO item ${scheduleLine.sales_order_item_id}): ${srcItemCategory} Ã¢â€ â€™ ${tgtItemCategory}`);
 
       // Create delivery item linked to schedule line (even if stock is low - track for later)
       await db.execute(sql`
         INSERT INTO delivery_items (
           delivery_id, sales_order_item_id, line_item, material_id, 
           delivery_quantity, pgi_quantity, unit, storage_location, batch,
-          schedule_line_id, movement_type, inventory_posting_status,
-          stock_type
+          schedule_line_id, inventory_posting_status,
+          stock_type, item_category
         ) VALUES (
           ${deliveryDocumentId}, 
           ${scheduleLine.sales_order_item_id}, 
@@ -3182,11 +3387,12 @@ router.post("/delivery-documents", async (req, res) => {
           ${storageLocationValue},
           ${batchNumber},
           ${scheduleLine.id},
-          ${movementType},
           'NOT_POSTED',
-          'UNRESTRICTED'
+          'UNRESTRICTED',
+          ${tgtItemCategory}
         )
       `);
+
 
       // Reserve stock if available (or create reservation for later fulfillment)
       if (scheduleLine.product_id && inventoryAvailable) {
@@ -3222,21 +3428,17 @@ router.post("/delivery-documents", async (req, res) => {
                 )
                 ON CONFLICT (material_code, plant_code, storage_location, stock_type)
                 DO UPDATE SET
+                  -- SAP Standard: Delivery creation only RESERVES stock (soft hold).
+                  -- available_quantity is only reduced at Post Goods Issue (PGI), not here.
                   reserved_quantity = COALESCE(stock_balances.reserved_quantity, 0) + ${deliveryQty},
-                  available_quantity = GREATEST(0, 
-                    COALESCE(stock_balances.quantity, 0) 
-                    - COALESCE(stock_balances.reserved_quantity, 0) - ${deliveryQty}
-                    - COALESCE(stock_balances.committed_quantity, 0)
-                    + COALESCE(stock_balances.ordered_quantity, 0)
-                  ),
                   last_updated = CURRENT_TIMESTAMP
               `);
             }
           }
 
-          console.log(`✅ Reserved ${deliveryQty} units of product ${scheduleLine.product_id}`);
+          console.log(`Ã¢Å“â€¦ Reserved ${deliveryQty} units of product ${scheduleLine.product_id}`);
         } catch (invError: any) {
-          console.error(`⚠️ Error reserving stock for product ${scheduleLine.product_id}:`, invError.message);
+          console.error(` Error reserving stock for product ${scheduleLine.product_id}:`, invError.message);
           // Continue anyway - stock reservation failure shouldn't block delivery creation
         }
       }
@@ -3257,11 +3459,11 @@ router.post("/delivery-documents", async (req, res) => {
       createdItems++;
     }
 
-    console.log(`✅ Created ${createdItems} delivery items linked to schedule lines`);
+    console.log(`Ã¢Å“â€¦ Created ${createdItems} delivery items linked to schedule lines`);
 
     // Add inventory warnings to response if any
     if (inventoryIssues.length > 0) {
-      console.warn(`⚠️ Inventory issues detected for ${inventoryIssues.length} items`);
+      console.warn(` Inventory issues detected for ${inventoryIssues.length} items`);
     }
 
     // CRITICAL FIX: Only update sales order status to 'delivered' if ALL schedule lines are fully delivered
@@ -3283,7 +3485,7 @@ router.post("/delivery-documents", async (req, res) => {
         SET status = 'Delivered', updated_at = NOW()
         WHERE id = ${salesOrderId}
       `);
-      console.log(`✅ Sales order ${salesOrder.order_number} marked as fully delivered (all schedule lines completed)`);
+      console.log(`Ã¢Å“â€¦ Sales order ${salesOrder.order_number} marked as fully delivered (all schedule lines completed)`);
     } else {
       // Still have pending schedule lines - keep status as 'Confirmed' or 'Partially Delivered'
       await db.execute(sql`
@@ -3295,7 +3497,7 @@ router.post("/delivery-documents", async (req, res) => {
         updated_at = NOW()
         WHERE id = ${salesOrderId}
       `);
-      console.log(`ℹ️ Sales order ${salesOrder.order_number} has ${remainingCount} schedule line(s) with remaining quantities - status unchanged`);
+      console.log(`Ã¢â€žÂ¹Ã¯Â¸Â Sales order ${salesOrder.order_number} has ${remainingCount} schedule line(s) with remaining quantities - status unchanged`);
     }
 
     // Create document flow record using document numbers (ensure varchar limits)
@@ -3311,25 +3513,10 @@ router.post("/delivery-documents", async (req, res) => {
       )
     `);
 
-    // Automatically post inventory reduction to reduce stock immediately
-    let inventoryPostingResult: any = null;
-    let inventoryPostingError: string | null = null;
-
-    try {
-      console.log(`📦 Auto-posting inventory reduction for delivery ${deliveryNumber} (ID: ${deliveryDocumentId})`);
-      inventoryPostingResult = await postInventoryReductionForDelivery(deliveryDocumentId);
-
-      if (!inventoryPostingResult.success) {
-        inventoryPostingError = inventoryPostingResult.error || 'Failed to post inventory reduction';
-        console.warn(`⚠️ Inventory reduction posting failed: ${inventoryPostingError}`);
-      } else {
-        console.log(`✅ Inventory reduction posted successfully. Stock reduced for ${inventoryPostingResult.data?.itemsPosted || 0} item(s).`);
-      }
-    } catch (postingError: any) {
-      inventoryPostingError = postingError.message || 'Failed to post inventory reduction';
-      console.error(`❌ Error during automatic inventory posting:`, postingError);
-      // Don't fail delivery creation if inventory posting fails - just log the error
-    }
+    // SAP Standard: Do NOT reduce stock at delivery creation.
+    // Stock is only reserved (reserved_quantity increased above).
+    // Actual inventory reduction happens at Post Goods Issue (PGI) Ã¢â‚¬â€ see /post-goods-issue endpoint.
+    console.log(`Ã°Å¸â€œâ€¹ Delivery ${deliveryNumber} created. Stock reserved for ${createdItems} item(s). PGI required to reduce inventory.`);
 
     res.json({
       success: true,
@@ -3339,7 +3526,7 @@ router.post("/delivery-documents", async (req, res) => {
           deliveryNumber,
           salesOrderNumber: salesOrder.order_number,
           customerName: salesOrder.customer_name,
-          status: inventoryPostingResult?.success ? 'COMPLETED' : delivery.status,
+          status: delivery.status,
           deliveryType: delivery.delivery_type_code,
           deliveryPriority: delivery.delivery_priority,
           shippingCondition: delivery.shipping_condition,
@@ -3349,21 +3536,12 @@ router.post("/delivery-documents", async (req, res) => {
           deliveryDate: delivery.delivery_date,
           createdFrom: 'schedule_lines',
           scheduleLinesProcessed: scheduleLines.length,
-          inventoryStatus: inventoryPostingResult?.success ? 'POSTED' : (inventoryIssues.length > 0 ? 'INSUFFICIENT_STOCK' : 'STOCK_RESERVED'),
+          inventoryStatus: inventoryIssues.length > 0 ? 'INSUFFICIENT_STOCK' : 'STOCK_RESERVED',
           inventoryWarnings: inventoryIssues.length > 0 ? inventoryIssues : undefined,
-          inventoryPostingStatus: inventoryPostingResult?.success ? 'POSTED' : 'NOT_POSTED',
-          inventoryPostingError: inventoryPostingError || undefined,
-          inventoryItemsPosted: inventoryPostingResult?.data?.itemsPosted || 0
+          inventoryPostingStatus: 'NOT_POSTED'
         }
       },
-      message: `Delivery ${deliveryNumber} created successfully with ${createdItems} items from ${scheduleLines.length} schedule lines. ` +
-        (inventoryPostingResult?.success
-          ? `Stock reduced for ${inventoryPostingResult.data?.itemsPosted || 0} item(s).`
-          : inventoryPostingError
-            ? `Warning: ${inventoryPostingError}. Stock not reduced.`
-            : (inventoryIssues.length > 0
-              ? `Warning: ${inventoryIssues.length} item(s) have insufficient stock.`
-              : 'Stock reserved.'))
+      message: `Delivery ${deliveryNumber} created with ${createdItems} item(s). Stock reserved. Post Goods Issue (PGI) required to reduce inventory.`
     });
 
   } catch (error) {
@@ -3376,7 +3554,7 @@ router.post("/delivery-documents", async (req, res) => {
 });
 
 // Helper function to post inventory reduction for delivery
-async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ success: boolean; error?: string; data?: any }> {
+async function postInventoryReductionForDelivery(deliveryId: number, overrideMovementType?: string): Promise<{ success: boolean; error?: string; data?: any }> {
   try {
     // Get delivery document
     const deliveryResult = await db.execute(sql`
@@ -3419,15 +3597,23 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
 
     const postingDate = new Date().toISOString().split('T')[0];
 
-    // Get movement type from delivery or system configuration
-    let movementType = delivery.movement_type;
-    if (!movementType) {
-      const movementTypeResult = await db.execute(sql`
-        SELECT config_value FROM system_configuration 
-        WHERE config_key = 'default_movement_type' AND active = true LIMIT 1
-      `);
-      movementType = movementTypeResult.rows[0]?.config_value || null;
+    // Get movement type for PGI (Standard is 601 for Delivery Goods Issue)
+    // Use overrideMovementType from the PGI request (front end selection), or fall back to config/default
+    let movementType = overrideMovementType || '601'; // Use override first
+    if (!overrideMovementType) {
+      try {
+        const movementTypeResult = await db.execute(sql`
+          SELECT config_value FROM system_configuration 
+          WHERE config_key = 'default_pgi_movement_type' AND active = true LIMIT 1
+        `);
+        if (movementTypeResult.rows.length > 0 && movementTypeResult.rows[0].config_value) {
+          movementType = movementTypeResult.rows[0].config_value;
+        }
+      } catch (e) {
+        console.warn("Could not fetch default PGI movement type from config, using 601");
+      }
     }
+    console.log(`Ã°Å¸â€œâ€¹ PGI using movement type: ${movementType}${overrideMovementType ? ' (user selected)' : ' (default)'}}`);
 
     // Get plant code from delivery, sales order, or product (in that order)
     let plantCode: string | null = null;
@@ -3498,11 +3684,11 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
       const issueQty = deliveryQty - alreadyPostedQty;
 
       if (issueQty <= 0) {
-        console.log(`⏭️ Skipping item ${item.line_item}: Already fully posted (Delivery: ${deliveryQty}, Posted: ${alreadyPostedQty})`);
+        console.log(`Ã¢ÂÂ­Ã¯Â¸Â Skipping item ${item.line_item}: Already fully posted (Delivery: ${deliveryQty}, Posted: ${alreadyPostedQty})`);
         continue;
       }
 
-      console.log(`📦 Processing PGI for item ${item.line_item}: ${issueQty} units (Delivery: ${deliveryQty}, Already Posted: ${alreadyPostedQty})`);
+      console.log(`Ã°Å¸â€œÂ¦ Processing PGI for item ${item.line_item}: ${issueQty} units (Delivery: ${deliveryQty}, Already Posted: ${alreadyPostedQty})`);
 
       try {
         const materialCode = item.material_code;
@@ -3584,7 +3770,7 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
             const actualAvailable = Math.max(0, calculatedAvailable);
 
             if (actualAvailable < issueQty) {
-              console.warn(`⚠️ Insufficient stock for material ${materialCode}: Available=${actualAvailable}, Required=${issueQty}`);
+              console.warn(` Insufficient stock for material ${materialCode}: Available=${actualAvailable}, Required=${issueQty}`);
               // Continue anyway - allow negative stock for now (can be handled by backorder process)
               // But ensure available_quantity doesn't go below constraint limit
             }
@@ -3596,11 +3782,14 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
         }
 
         // Verify sufficient stock before deduction
+        // SAP Standard: PGI is allowed when stock is reserved for this delivery.
+        // If reserved_quantity >= issueQty, the physical stock is already set aside Ã¢â‚¬â€ allow PGI.
+        const reservedCoversIssue = currentBalanceReserved >= issueQty;
         const availableStock = stockBalanceExists
           ? currentBalanceAvailable
           : Math.max(0, currentProductStock - currentProductReserved);
 
-        if (availableStock < issueQty) {
+        if (!reservedCoversIssue && availableStock < issueQty) {
           errors.push(`Item ${item.line_item}: Insufficient stock. Available: ${availableStock}, Required: ${issueQty}`);
           continue;
         }
@@ -3662,7 +3851,7 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
 
             // If still no unit, we cannot proceed with inventory tracking
             if (!unit) {
-              console.error(`❌ Cannot decrease inventory: Unit of measure not found for delivery item ${item.line_item}`);
+              console.error(`Ã¢ÂÅ’ Cannot decrease inventory: Unit of measure not found for delivery item ${item.line_item}`);
               errors.push(`Item ${item.line_item}: Unit of measure is required for inventory tracking`);
               continue;
             }
@@ -3678,16 +3867,14 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
               unit // unit is guaranteed to be non-null at this point due to validation above
             );
 
-            console.log(`✅ Decreased committed quantity and stock for material ${materialCode}: -${issueQty} at plant ${itemPlantCode}, storage ${storageLocation}`);
+            console.log(`Ã¢Å“â€¦ Decreased committed quantity and stock for material ${materialCode}: -${issueQty} at plant ${itemPlantCode}, storage ${storageLocation}`);
 
             // CRITICAL: Create material movement for goods issue
             // If this fails, the entire transaction will roll back
-            console.log(`📝 Creating material movement for ${materialCode}...`);
+            console.log(`Ã°Å¸â€œÂ Creating material movement for ${materialCode}...`);
 
-            // Generate movement number
-            const movementSeq = await db.execute(sql`SELECT nextval('movement_number_seq') as seq`);
-            const seqNum = movementSeq.rows[0]?.seq || 1;
-            const movementNumber = `MV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(seqNum).padStart(4, '0')}`;
+            // Generate document number (movement_number_seq doesn't exist in DB)
+            const movementNumber = `MV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${String(Date.now()).slice(-6)}`;
 
             // Get material name
             let materialName = 'Material';
@@ -3721,50 +3908,41 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
               `);
               pgiDebitGL = getString(pgiGLResult.rows[0]?.gbb_account) || null;  // Dr COGS
               pgiCreditGL = getString(pgiGLResult.rows[0]?.bsx_account) || null;  // Cr Inventory
-              console.log(`🧾 PGI GL Accounts: Dr(GBB)=${pgiDebitGL} Cr(BSX)=${pgiCreditGL}`);
+              console.log(`Ã°Å¸Â§Â¾ PGI GL Accounts: Dr(GBB)=${pgiDebitGL} Cr(BSX)=${pgiCreditGL}`);
             } catch (glErr: any) {
-              console.warn('⚠️ Could not resolve PGI GL accounts:', glErr.message);
+              console.warn(' Could not resolve PGI GL accounts:', glErr.message);
             }
 
             await db.execute(sql`
               INSERT INTO stock_movements (
-                movement_number, movement_type, material_id, material_code, material_name,
-                quantity, unit_of_measure, from_location, plant_id,
-                delivery_order_id, sales_order_id,
-                reference_document, reference_type, batch_number,
-                movement_date, posting_date, status, posted_by, notes,
+                document_number, movement_type, material_code, plant_code,
+                storage_location, quantity, unit,
+                reference_document, notes,
+                posting_date, created_at,
                 gl_account_debit, gl_account_credit, financial_posting_status
               ) VALUES (
                 ${movementNumber},
-                'Goods Issue',
-                ${materialId},
+                'Goods Issue - 601',
                 ${materialCode},
-                ${materialName},
+                ${itemPlantCode},
+                ${storageLocation},
                 ${issueQty},
                 ${unit},
-                ${storageLocation},
-                ${plantId},
-                ${deliveryId},
-                ${delivery.sales_order_id},
                 ${delivery.delivery_number},
-                'Delivery',
-                ${item.batch},
-                CURRENT_TIMESTAMP,
-                CURRENT_DATE,
-                'Posted',
-                1,
                 ${`Goods issue for delivery ${delivery.delivery_number} - Item ${item.line_item}`},
+                CURRENT_DATE,
+                CURRENT_TIMESTAMP,
                 ${pgiDebitGL},
                 ${pgiCreditGL},
                 ${pgiDebitGL && pgiCreditGL ? 'POSTED' : 'PENDING'}
               )
             `);
 
-            console.log(`✅ Created material movement ${movementNumber} for goods issue`);
+            console.log(`Ã¢Å“â€¦ Created material movement ${movementNumber} for goods issue`);
           } catch (invServiceError: any) {
-            console.error(`❌ Error using inventory tracking service for material ${materialCode}:`, invServiceError.message);
+            console.error(`Ã¢ÂÅ’ Error using inventory tracking service for material ${materialCode}:`, invServiceError.message);
             // Fallback to direct update if service fails
-            console.log(`⚠️ Falling back to direct stock_balances update...`);
+            console.log(` Falling back to direct stock_balances update...`);
 
             // Fallback: Direct update to stock_balances
             // CRITICAL: Only update if stock_balances row exists, otherwise skip (can't decrease from 0)
@@ -3809,13 +3987,13 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
                   AND (stock_type = 'AVAILABLE' OR stock_type IS NULL)
               `);
             } else {
-              console.warn(`⚠️ Cannot decrease stock: stock_balances row does not exist for material ${materialCode} at plant ${itemPlantCode}, storage ${storageLocation}`);
+              console.warn(` Cannot decrease stock: stock_balances row does not exist for material ${materialCode} at plant ${itemPlantCode}, storage ${storageLocation}`);
               errors.push(`Item ${item.line_item}: Stock balance record not found. Cannot decrease inventory.`);
               continue;
             }
           }
         } else {
-          console.warn(`⚠️ Cannot use inventory tracking service: missing materialCode, plantCode, or storageLocation`);
+          console.warn(` Cannot use inventory tracking service: missing materialCode, plantCode, or storageLocation`);
         }
 
         // Sync products.stock and reserved_stock from stock_balances to ensure consistency
@@ -3826,9 +4004,12 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
             // Use the existing pool from db
             const client = await pool.connect();
             try {
-              // Sync both stock and reserved_stock from stock_balances
-              // This ensures products table reflects the actual state after delivery completion
-              const syncResult = await client.query(`
+              // Check if products table exists before syncing
+              const tableCheck = await client.query("SELECT 1 FROM information_schema.tables WHERE table_name = 'products'");
+              if (tableCheck.rows.length > 0) {
+                // Sync both stock and reserved_stock from stock_balances
+                // This ensures products table reflects the actual state after delivery completion
+                const syncResult = await client.query(`
                 UPDATE products p
                 SET
                   stock = COALESCE((
@@ -3850,15 +4031,16 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
                 RETURNING id, name, sku, stock, reserved_stock
               `, [item.product_id]);
 
-              if (syncResult.rows.length > 0) {
-                const syncedProduct = syncResult.rows[0];
-                console.log(`✅ Synced product ${syncedProduct.name} (ID: ${syncedProduct.id}): stock=${syncedProduct.stock}, reserved_stock=${syncedProduct.reserved_stock}`);
+                if (syncResult.rows.length > 0) {
+                  const syncedProduct = syncResult.rows[0];
+                  console.log(`Ã¢Å“â€¦ Synced product ${syncedProduct.name} (ID: ${syncedProduct.id}): stock=${syncedProduct.stock}, reserved_stock=${syncedProduct.reserved_stock}`);
+                }
               }
             } finally {
               client.release();
             }
           } catch (syncError: any) {
-            console.error('❌ Error syncing products.stock from stock_balances:', syncError);
+            console.error('Ã¢ÂÅ’ Error syncing products.stock from stock_balances:', syncError);
             console.error('Sync error details:', {
               productId: item.product_id,
               materialCode,
@@ -3942,7 +4124,7 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
               RETURNING id
             `);
             stockMovementId = getInt(movementResult.rows[0]?.id) || null;
-            console.log(`✅ Created stock movement ${stockMovementId} for delivery ${deliveryId}, item ${item.id}, quantity ${issueQty} (with delivery_id links)`);
+            console.log(`Ã¢Å“â€¦ Created stock movement ${stockMovementId} for delivery ${deliveryId}, item ${item.id}, quantity ${issueQty} (with delivery_id links)`);
           } else {
             // Columns don't exist - include delivery info in notes for tracking
             const movementResult = await db.execute(sql`
@@ -3966,7 +4148,7 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
               RETURNING id
             `);
             stockMovementId = getInt(movementResult.rows[0]?.id) || null;
-            console.log(`✅ Created stock movement ${stockMovementId} for delivery ${deliveryId}, item ${item.id}, quantity ${issueQty} (delivery info in notes)`);
+            console.log(`Ã¢Å“â€¦ Created stock movement ${stockMovementId} for delivery ${deliveryId}, item ${item.id}, quantity ${issueQty} (delivery info in notes)`);
           }
         } catch (movementError: any) {
           console.error('Could not create stock movement record:', movementError.message);
@@ -4048,9 +4230,9 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
           delivery_quantity: deliveryQty
         });
 
-        console.log(`✅ Processed inventory reduction: ${issueQty} units of ${materialCode} (Total Posted: ${newPostedQuantity}/${deliveryQty}, Status: ${isFullyPosted ? 'POSTED' : 'PARTIALLY_POSTED'})`);
+        console.log(`Ã¢Å“â€¦ Processed inventory reduction: ${issueQty} units of ${materialCode} (Total Posted: ${newPostedQuantity}/${deliveryQty}, Status: ${isFullyPosted ? 'POSTED' : 'PARTIALLY_POSTED'})`);
       } catch (itemError: any) {
-        console.error(`❌ Error posting goods issue for item ${item.id}:`, itemError.message);
+        console.error(`Ã¢ÂÅ’ Error posting goods issue for item ${item.id}:`, itemError.message);
         errors.push(`Item ${item.line_item}: ${itemError.message}`);
       }
     }
@@ -4117,13 +4299,223 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
               updated_at = NOW()
           WHERE id = ${delivery.sales_order_id}
         `);
-        console.log(`✅ Sales order ${delivery.sales_order_number} marked as Delivered (all schedule lines completed)`);
+        console.log(`Ã¢Å“â€¦ Sales order ${delivery.sales_order_number} marked as Delivered (all schedule lines completed)`);
       }
     }
 
-    console.log(`✅ Updated delivery ${delivery.delivery_number} completion status: ${allFullyPosted ? 'POSTED' : (hasPartiallyPosted ? 'PARTIALLY_POSTED' : 'OPEN')} (Posted: ${checkResult.posted_items}/${checkResult.total_items} items)`);
-    console.log(`✅ Inventory document ${inventoryDocNumber} created for delivery ${delivery.delivery_number}`);
-    console.log(`✅ Inventory reduction completed for delivery ${delivery.delivery_number}`);
+    console.log(`Ã¢Å“â€¦ Updated delivery ${delivery.delivery_number} completion status: ${allFullyPosted ? 'POSTED' : (hasPartiallyPosted ? 'PARTIALLY_POSTED' : 'OPEN')} (Posted: ${checkResult.posted_items}/${checkResult.total_items} items)`);
+    console.log(`Ã¢Å“â€¦ Inventory document ${inventoryDocNumber} created for delivery ${delivery.delivery_number}`);
+    console.log(`Ã¢Å“â€¦ Inventory reduction completed for delivery ${delivery.delivery_number}`);
+
+    // Ã¢â€â‚¬Ã¢â€â‚¬ PGI GL Posting (SAP OBYC: MT 601 Ã¢â€ â€™ WA09 Ã¢â€ â€™ Dr GBB/Cr BSX) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // Fire-and-forget: runs after PGI is fully committed, does NOT block the HTTP response.
+    // Flow: movement_type (601/602/641) Ã¢â€ â€™ movement_posting_rules (WA09) Ã¢â€ â€™ transaction_keys (GBB=Dr, BSX=Cr) Ã¢â€ â€™ GL accounts
+    const capturedDeliveryId = deliveryId;
+    const capturedMovementType = movementType;
+    const capturedDeliveryNumber = delivery.delivery_number;
+    const capturedInventoryDocNumber = inventoryDocNumber;
+    setImmediate(async () => {
+      try {
+        // Get delivery details for GL posting
+        const dlResult = await db.execute(sql`
+          SELECT
+            dd.id, dd.delivery_number, dd.sales_order_id,
+            so.company_code_id,
+            cc.chart_of_accounts_id
+          FROM delivery_documents dd
+          LEFT JOIN sales_orders so ON dd.sales_order_id = so.id
+          LEFT JOIN company_codes cc ON so.company_code_id = cc.id
+          WHERE dd.id = ${capturedDeliveryId}
+        `);
+        const dlRow = dlResult.rows[0];
+        const today = new Date();
+        const fiscalYear = today.getFullYear();
+        const fiscalPeriod = today.getMonth() + 1;
+        const glDocNumber = `FIPGI${capturedDeliveryId}-${Date.now().toString().slice(-8)}`;
+
+        // Resolve posting rule for movement type
+        const postingRuleResult = await db.execute(sql`
+          SELECT pr.value_string
+          FROM movement_types mt
+          JOIN movement_posting_rules pr ON pr.movement_type_id = mt.id
+          WHERE mt.movement_type_code = ${capturedMovementType}
+            AND pr.is_active = true
+          ORDER BY pr.id LIMIT 1
+        `);
+
+        if (postingRuleResult.rows.length === 0) {
+          console.warn(` PGI GL: No posting rule for movement type ${capturedMovementType}`);
+          return;
+        }
+        const valueString = postingRuleResult.rows[0].value_string;
+
+        // Get value string lines (transaction keys)
+        const vsLines = await db.execute(sql`
+          SELECT transaction_key, debit_credit, description
+          FROM movement_type_value_strings
+          WHERE value_string = ${valueString} AND is_active = true
+          ORDER BY sort_order, debit_credit
+        `);
+
+        if (vsLines.rows.length === 0) {
+          console.warn(` PGI GL: No value string lines for ${valueString}`);
+          return;
+        }
+
+        // Get delivery items for total posted value
+        // CRITICAL: delivery_items.unit_price is often NULL (set during delivery creation, not pricing).
+        // Instead, pull price from sales_order_items which has the correct pricing procedure result.
+        const diResult = await db.execute(sql`
+          SELECT di.delivery_quantity as quantity, di.material_id,
+                 COALESCE(soi.unit_price, 0) as unit_price,
+                 COALESCE(soi.net_amount, 0) as net_amount,
+                 COALESCE(soi.net_amount, 0) as total_price,
+
+                 m.valuation_class,
+                 (SELECT vc.id FROM valuation_classes vc WHERE vc.class_code = m.valuation_class LIMIT 1) AS valuation_class_id
+          FROM delivery_items di
+          LEFT JOIN sales_order_items soi ON di.sales_order_item_id = soi.id
+          LEFT JOIN materials m ON di.material_id = m.id
+          WHERE di.delivery_id = ${capturedDeliveryId}
+        `);
+
+        // Calculate total amount Ã¢â‚¬â€ SAP COGS posting uses the material valuation price.
+        // Priority: (1) unit_price Ãƒâ€” quantity, (2) net_amount per item, (3) total_price per item
+        const totalAmount = diResult.rows.reduce((sum: number, r: any) => {
+          const qty = parseFloat(r.quantity || 0);
+          const unitPrice = parseFloat(r.unit_price || 0);
+          const netAmt = parseFloat(r.net_amount || 0);
+          const totalPriceAmt = parseFloat(r.total_price || 0);
+
+          if (unitPrice > 0) {
+            return sum + (qty * unitPrice);
+          } else if (netAmt > 0) {
+            // Fallback: use net_amount directly (per SO line item)
+            return sum + netAmt;
+          } else if (totalPriceAmt > 0) {
+            return sum + totalPriceAmt;
+          }
+          return sum;
+        }, 0);
+
+        if (totalAmount <= 0) {
+          console.warn(` PGI GL: Zero-value delivery ${capturedDeliveryId} Ã¢â‚¬â€ unit_price, net_amount, and total_price are all missing on sales order items. Skipping GL posting. Please ensure pricing is set on the sales order.`);
+          return;
+        }
+
+        const companyCodeId = dlRow?.company_code_id;
+        const chartOfAccountsId = dlRow?.chart_of_accounts_id;
+        const valuationGroupingCodeId = dlRow?.valuation_grouping_code_id;
+        const valuationClassId = diResult.rows[0]?.valuation_class_id || null;
+
+        // Create accounting document header
+        const adResult = await db.execute(sql`
+          INSERT INTO accounting_documents (
+            document_number, document_type, posting_date, document_date,
+            company_code, fiscal_year, period, reference,
+            header_text, total_amount, currency,
+            source_module, source_document_id, source_document_type,
+            status, created_at
+          ) VALUES (
+            ${glDocNumber}, 'WA', CURRENT_DATE, CURRENT_DATE,
+            ${companyCodeId?.toString() || '1000'}, ${fiscalYear}, ${fiscalPeriod},
+            ${capturedDeliveryNumber},
+            ${'PGI ' + capturedDeliveryNumber + ' Ã¢â‚¬â€ ' + capturedMovementType + ' Ã¢â‚¬â€ ' + valueString},
+            ${totalAmount}, 'INR',
+            'SD', ${capturedDeliveryId}, 'DELIVERY',
+            'POSTED', NOW()
+          ) RETURNING id
+        `);
+        const accountingDocId = adResult.rows[0]?.id;
+
+        // Insert GL line entries per transaction key
+        for (const line of vsLines.rows as any[]) {
+          const txKey = line.transaction_key;
+          const dcIndicator = line.debit_credit; // 'D' or 'C'
+
+          // Resolve GL account: transaction_key Ã¢â€ â€™ material_account_determination Ã¢â€ â€™ gl_account
+          const tkResult = await db.execute(sql`
+            SELECT id FROM transaction_keys WHERE code = ${txKey} AND is_active = true LIMIT 1
+          `);
+          if (tkResult.rows.length === 0) { console.warn(` PGI GL: tx key ${txKey} not found`); continue; }
+          const txKeyId = tkResult.rows[0].id;
+
+          // Try most-specific to least-specific (SAP OBYC fallback chain)
+          let glAccountId: number | null = null;
+          const attempts = [
+            { vcId: valuationClassId, vgcId: valuationGroupingCodeId, coaId: chartOfAccountsId },
+            { vcId: valuationClassId, vgcId: null, coaId: chartOfAccountsId },
+            { vcId: valuationClassId, vgcId: null, coaId: null },
+            { vcId: null, vgcId: null, coaId: chartOfAccountsId },
+            { vcId: null, vgcId: null, coaId: null },
+          ];
+          for (const attempt of attempts) {
+            if (glAccountId) break;
+            const conditions: string[] = ['mad.transaction_key_id = ' + txKeyId, 'mad.is_active = true'];
+            const params: any[] = [];
+            if (attempt.vcId) { conditions.push('mad.valuation_class_id = ' + attempt.vcId); }
+            if (attempt.vgcId) { conditions.push('mad.valuation_grouping_code_id = ' + attempt.vgcId); }
+            if (attempt.coaId) { conditions.push('mad.chart_of_accounts_id = ' + attempt.coaId); }
+            const madResult = await db.execute(sql`
+              SELECT mad.gl_account_id FROM material_account_determination mad
+              WHERE mad.transaction_key_id = ${txKeyId} AND mad.is_active = true
+              LIMIT 1
+            `);
+            if (madResult.rows.length > 0 && madResult.rows[0].gl_account_id) {
+              glAccountId = Number(madResult.rows[0].gl_account_id);
+            }
+          }
+
+          if (!glAccountId) {
+            // Name-based fallback
+            const fallbackMap: Record<string, string> = { 'GBB': '%consumption%', 'BSX': '%inventory%' };
+            const pattern = fallbackMap[txKey];
+            if (pattern) {
+              const fbResult = await db.execute(sql`
+                SELECT id FROM gl_accounts WHERE account_name ILIKE ${pattern} AND is_active = true LIMIT 1
+              `);
+              if (fbResult.rows.length > 0) glAccountId = Number(fbResult.rows[0].id);
+            }
+          }
+
+          if (!glAccountId) { console.warn(` PGI GL: No GL account for ${txKey}`); continue; }
+
+          const postingKey = dcIndicator === 'D' ? '40' : '50';
+          await db.execute(sql`
+            INSERT INTO gl_entries (
+              document_number, gl_account_id, amount, debit_credit_indicator,
+              posting_key, posting_date, posting_status, fiscal_period, fiscal_year,
+              description, source_module, source_document_type, source_document_id, reference
+            ) VALUES (
+              ${glDocNumber}, ${glAccountId}, ${totalAmount}, ${dcIndicator},
+              ${postingKey}, CURRENT_DATE, 'posted', ${fiscalPeriod}, ${fiscalYear},
+              ${'PGI ' + txKey + ': ' + (line.description || capturedDeliveryNumber)},
+              'SD', 'DELIVERY', ${capturedDeliveryId}, ${capturedDeliveryNumber}
+            )
+          `);
+        }
+
+        // Mark delivery with GL document number
+        try {
+          await db.execute(sql`
+            ALTER TABLE delivery_documents ADD COLUMN IF NOT EXISTS gl_document_number VARCHAR(50)
+          `);
+          await db.execute(sql`
+            ALTER TABLE delivery_documents ADD COLUMN IF NOT EXISTS financial_posting_status VARCHAR(20)
+          `);
+          await db.execute(sql`
+            UPDATE delivery_documents
+            SET gl_document_number = ${glDocNumber},
+                financial_posting_status = 'POSTED'
+            WHERE id = ${capturedDeliveryId}
+          `);
+        } catch (_) { }
+
+        console.log(`Ã¢Å“â€¦ PGI GL posted: ${glDocNumber} | MT=${capturedMovementType} VS=${valueString} | Amount=${totalAmount} | Delivery=${capturedDeliveryNumber}`);
+      } catch (glErr: any) {
+        console.warn(` PGI GL posting exception for delivery ${capturedDeliveryId} (PGI committed, only GL skipped): ${glErr.message}`);
+      }
+    });
 
     return {
       success: true,
@@ -4139,7 +4531,7 @@ async function postInventoryReductionForDelivery(deliveryId: number): Promise<{ 
     };
 
   } catch (error: any) {
-    console.error('❌ Error posting inventory reduction:', error);
+    console.error('Ã¢ÂÅ’ Error posting inventory reduction:', error);
     return { success: false, error: error.message || 'Failed to post inventory reduction' };
   }
 }
@@ -4155,9 +4547,15 @@ router.post("/delivery-documents/:id/post-goods-issue", async (req, res) => {
         error: "Invalid delivery ID format. Expected a numeric ID, not a document number."
       });
     }
-    console.log(`📦 Processing delivery completion for delivery ID: ${deliveryId}`);
 
-    const result = await postInventoryReductionForDelivery(deliveryId);
+    // Accept movement type from frontend selection (default: 601 - GI for Delivery)
+    const { movementType: requestedMovementType } = req.body || {};
+    const pgiMovementType = requestedMovementType && ['601', '602', '641'].includes(requestedMovementType)
+      ? requestedMovementType
+      : '601';
+    console.log(`Ã°Å¸â€œÂ¦ Processing PGI for delivery ID: ${deliveryId} with movement type: ${pgiMovementType}`);
+
+    const result = await postInventoryReductionForDelivery(deliveryId, pgiMovementType);
 
     if (!result.success) {
       const statusCode = result.error?.includes('not found') ? 404 : 400;
@@ -4202,16 +4600,16 @@ router.post("/delivery-documents/:id/post-goods-issue", async (req, res) => {
           postedItems: updatedDelivery?.posted_items
         }
       },
-      message: `✅ Delivery completed successfully! ` +
+      message: `Ã¢Å“â€¦ Delivery completed successfully! ` +
         `Inventory Document: ${result.data?.inventoryDocumentNumber || 'N/A'}, ` +
         `Items Processed: ${result.data?.itemsPosted || 0}, ` +
         `Completion Status: ${updatedDelivery?.pgi_status || 'N/A'}, ` +
         `Delivery Status: ${updatedDelivery?.status || 'N/A'}` +
-        (result.data?.errors?.length > 0 ? ` ⚠️ Warning: ${result.data.errors.length} error(s).` : '')
+        (result.data?.errors?.length > 0 ? `  Warning: ${result.data.errors.length} error(s).` : '')
     });
 
   } catch (error: any) {
-    console.error('❌ Error posting inventory reduction:', error);
+    console.error('Ã¢ÂÅ’ Error posting inventory reduction:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to post inventory reduction'
@@ -4259,7 +4657,7 @@ router.put("/delivery-documents/:id/status", async (req, res) => {
 
     // If status is being set to COMPLETED, ensure inventory reduction is posted first
     if (normalizedStatus === 'COMPLETED' && delivery.inventory_posting_status !== 'POSTED') {
-      console.log(`📦 Auto-posting inventory reduction for delivery ${delivery.delivery_number} before marking as COMPLETED`);
+      console.log(`Ã°Å¸â€œÂ¦ Auto-posting inventory reduction for delivery ${delivery.delivery_number} before marking as COMPLETED`);
 
       const inventoryResult = await postInventoryReductionForDelivery(deliveryId);
 
@@ -4293,7 +4691,7 @@ router.put("/delivery-documents/:id/status", async (req, res) => {
     });
 
   } catch (error: any) {
-    console.error('❌ Error updating delivery status:', error);
+    console.error('Ã¢ÂÅ’ Error updating delivery status:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to update delivery status'
@@ -4341,8 +4739,8 @@ router.post("/transfer-orders", async (req, res) => {
     }
 
 
-    console.log('📦 Creating transfer order for delivery:', parsedDeliveryId);
-    console.log('📋 Request payload:', { deliveryId, fromLocationId, toLocationId });
+    console.log('Ã°Å¸â€œÂ¦ Creating transfer order for delivery:', parsedDeliveryId);
+    console.log('Ã°Å¸â€œâ€¹ Request payload:', { deliveryId, fromLocationId, toLocationId });
 
 
     // Check if transfer order already exists for this delivery (prevent duplicates)
@@ -4353,10 +4751,10 @@ router.post("/transfer-orders", async (req, res) => {
       LIMIT 1
     `);
 
-    console.log(`✅ Checked existing transfer orders: ${existingTransferOrderResult.rows.length} found`);
+    console.log(`Ã¢Å“â€¦ Checked existing transfer orders: ${existingTransferOrderResult.rows.length} found`);
     if (existingTransferOrderResult.rows.length > 0) {
       const existing = existingTransferOrderResult.rows[0];
-      console.log('ℹ️ Transfer order already exists (returning existing):', existing.transfer_number);
+      console.log('Ã¢â€žÂ¹Ã¯Â¸Â Transfer order already exists (returning existing):', existing.transfer_number);
       return res.status(200).json({
         success: true,
         message: `Transfer order already exists. Returning existing order.`,
@@ -4385,9 +4783,9 @@ router.post("/transfer-orders", async (req, res) => {
     `);
 
     const delivery = deliveryResult.rows[0];
-    console.log('📦 Delivery found:', delivery ? `${delivery.delivery_number} (Status: ${delivery.status})` : 'NOT FOUND');
+    console.log('Ã°Å¸â€œÂ¦ Delivery found:', delivery ? `${delivery.delivery_number} (Status: ${delivery.status})` : 'NOT FOUND');
     if (!delivery) {
-      console.error('❌ Delivery not found:', parsedDeliveryId);
+      console.error('Ã¢ÂÅ’ Delivery not found:', parsedDeliveryId);
       return res.status(404).json({ success: false, error: "Delivery not found" });
     }
 
@@ -4397,9 +4795,9 @@ router.post("/transfer-orders", async (req, res) => {
     const allowedStatuses = ['PENDING', 'CONFIRMED', 'PLANNED', 'OPEN', 'IN_PROGRESS', 'COMPLETED'];
     const normalizedStatus = deliveryStatus || 'PENDING';
 
-    console.log(`📋 Delivery status check: ${normalizedStatus} (allowed: ${allowedStatuses.join(', ')})`);
+    console.log(`Ã°Å¸â€œâ€¹ Delivery status check: ${normalizedStatus} (allowed: ${allowedStatuses.join(', ')})`);
     if (!allowedStatuses.includes(normalizedStatus)) {
-      console.error('❌ Invalid delivery status:', normalizedStatus);
+      console.error('Ã¢ÂÅ’ Invalid delivery status:', normalizedStatus);
       return res.status(400).json({
         success: false,
         error: `Delivery must be in PENDING, CONFIRMED, PLANNED, OPEN, IN_PROGRESS, or COMPLETED status to create transfer order. Current status: ${delivery.status || 'NULL'}`
@@ -4427,11 +4825,11 @@ router.post("/transfer-orders", async (req, res) => {
     `);
 
     const storageLocation = storageLocationResult.rows[0];
-    console.log('📍 Storage location result:', storageLocationResult.rows.length > 0 ? storageLocation : 'NONE FOUND');
+    console.log('Ã°Å¸â€œÂ Storage location result:', storageLocationResult.rows.length > 0 ? storageLocation : 'NONE FOUND');
 
     // Enhanced validation: Check if storage location exists AND has required fields
     if (!storageLocation) {
-      console.error('❌ No storage location found for delivery items');
+      console.error('Ã¢ÂÅ’ No storage location found for delivery items');
       return res.status(400).json({
         success: false,
         error: "No storage location found for delivery items",
@@ -4441,7 +4839,7 @@ router.post("/transfer-orders", async (req, res) => {
 
     // Additional validation: Ensure storage location has valid IDs (not NULL)
     if (!storageLocation.storage_location_id) {
-      console.error('❌ Storage location ID is NULL. Storage location code:', storageLocation.storage_location);
+      console.error('Ã¢ÂÅ’ Storage location ID is NULL. Storage location code:', storageLocation.storage_location);
       return res.status(400).json({
         success: false,
         error: "Invalid storage location configuration",
@@ -4450,7 +4848,7 @@ router.post("/transfer-orders", async (req, res) => {
     }
 
     if (!storageLocation.plant_id) {
-      console.error('❌ Plant ID is NULL for storage location:', storageLocation.storage_location_code);
+      console.error('Ã¢ÂÅ’ Plant ID is NULL for storage location:', storageLocation.storage_location_code);
       return res.status(400).json({
         success: false,
         error: "Storage location has no plant assigned",
@@ -4645,7 +5043,7 @@ router.post("/transfer-orders", async (req, res) => {
       });
     }
 
-    console.log(`✅ Found ${itemsResult.rows.length} items for delivery ${parsedDeliveryId} (ensuring only this delivery's items are included)`);
+    console.log(`Ã¢Å“â€¦ Found ${itemsResult.rows.length} items for delivery ${parsedDeliveryId} (ensuring only this delivery's items are included)`);
 
     let itemCount = 0;
 
@@ -4695,11 +5093,11 @@ router.post("/transfer-orders", async (req, res) => {
     });
 
   } catch (error: any) {
-    console.error('❌ Transfer order creation error:', error);
-    console.error('❌ Error stack:', error.stack);
-    console.error('❌ Request deliveryId:', req.body.deliveryId);
-    console.error('❌ Request fromLocationId:', req.body.fromLocationId);
-    console.error('❌ Request toLocationId:', req.body.toLocationId);
+    console.error('Ã¢ÂÅ’ Transfer order creation error:', error);
+    console.error('Ã¢ÂÅ’ Error stack:', error.stack);
+    console.error('Ã¢ÂÅ’ Request deliveryId:', req.body.deliveryId);
+    console.error('Ã¢ÂÅ’ Request fromLocationId:', req.body.fromLocationId);
+    console.error('Ã¢ÂÅ’ Request toLocationId:', req.body.toLocationId);
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to create transfer order',
@@ -4991,7 +5389,7 @@ router.get("/sales-orders-for-delivery", async (req, res) => {
           -- Option 1: Has remaining schedule lines (split delivery scenario)
           -- FIX: Show order if ANY schedule line has remaining quantity
           -- This is critical for split deliveries where one delivery is processed but others are pending
-          -- Example: Split 100 units into 50+50, process first 50 → order should still show for remaining 50
+          -- Example: Split 100 units into 50+50, process first 50 Ã¢â€ â€™ order should still show for remaining 50
           -- CRITICAL: This is the PRIMARY check - if there are remaining schedule lines, show the order
           EXISTS (
             SELECT 1 FROM sales_order_schedule_lines sl
@@ -5024,314 +5422,6 @@ router.get("/sales-orders-for-delivery", async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to fetch sales orders for delivery'
-    });
-  }
-});
-
-// Phase 4: Billing Document Creation (Invoice Generation)
-router.post("/billing-documents", async (req, res) => {
-  try {
-    // Defensive body parsing
-    let parsedBody = req.body;
-    if (typeof parsedBody === 'string') {
-      try {
-        parsedBody = JSON.parse(parsedBody);
-        console.log('🔄 Parsed stringified body:', parsedBody);
-      } catch (e) {
-        console.error('Failed to parse request body:', e);
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid request body',
-          details: 'Request body must be valid JSON'
-        });
-      }
-    }
-
-    console.log('📝 Billing document creation request:', parsedBody);
-
-    const { deliveryId, deliveryDocumentId, billingInfo = {} } = parsedBody;
-    const actualDeliveryId = deliveryId || deliveryDocumentId;
-
-    if (!actualDeliveryId) {
-      return res.status(400).json({
-        success: false,
-        error: "deliveryId is required"
-      });
-    }
-
-    console.log('🔍 Fetching delivery document:', actualDeliveryId);
-
-    // Get delivery document with related data including tax information and company code
-    const deliveryResult = await db.execute(sql`
-      SELECT dd.*, so.customer_id, so.order_number as sales_order_number,
-             so.payment_terms, so.currency, so.total_amount,
-             so.subtotal, so.tax_amount, so.tax_breakdown,
-             so.company_code_id as sales_order_company_code_id
-      FROM delivery_documents dd
-      JOIN sales_orders so ON dd.sales_order_id = so.id
-      WHERE dd.id = ${actualDeliveryId}
-    `);
-    const delivery = deliveryResult.rows[0];
-
-    console.log('📦 Delivery found:', delivery ? 'Yes' : 'No');
-
-    if (!delivery) {
-      return res.status(404).json({ success: false, error: "Delivery document not found" });
-    }
-
-    console.log('📊 Delivery data:', {
-      id: delivery.id,
-      sales_order_id: delivery.sales_order_id,
-      customer_id: delivery.customer_id,
-      total_amount: delivery.total_amount,
-      subtotal: delivery.subtotal,
-      tax_amount: delivery.tax_amount
-    });
-
-    // Generate billing number
-    const currentYear = new Date().getFullYear();
-    const billingCountResult = await db.execute(sql`
-      SELECT COUNT(*) as count FROM billing_documents 
-      WHERE billing_number LIKE ${`INV-${currentYear}-%`}
-    `);
-    const billingCount = parseInt(String(billingCountResult.rows[0]?.count || 0)) + 1;
-    const billingNumber = `INV-${currentYear}-${billingCount.toString().padStart(6, '0')}`;
-
-    // Calculate due date (default 30 days)
-    const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + 30);
-
-    // Get delivery items with pricing
-    const itemsResult = await db.execute(sql`
-      SELECT di.*, soi.unit_price, soi.net_amount,
-             soi.tax_percent, soi.discount_percent,
-             soi.material_description as product_description
-      FROM delivery_items di
-      JOIN sales_order_items soi ON di.sales_order_item_id = soi.id
-      WHERE di.delivery_id = ${actualDeliveryId}
-    `);
-
-    let totalNetAmount = 0;
-    let totalTaxAmount = 0;
-    let totalGrossAmount = 0;
-
-    // CRITICAL FIX: Always calculate from delivery items ONLY, never use sales order totals
-    // This ensures split deliveries invoice only their portion, not the entire order
-    if (itemsResult.rows && itemsResult.rows.length > 0) {
-      // Calculate from delivery items
-      for (const item of itemsResult.rows) {
-        const deliveryQty = parseFloat(String(item.delivery_quantity || 0));
-        const unitPrice = parseFloat(String(item.unit_price || 0));
-        totalNetAmount += deliveryQty * unitPrice;
-      }
-
-      // Calculate tax based on sales order tax breakdown or default 10%
-      let taxRate = 0;
-      if (delivery.tax_breakdown) {
-        try {
-          const taxRules = typeof delivery.tax_breakdown === 'string'
-            ? JSON.parse(delivery.tax_breakdown)
-            : delivery.tax_breakdown;
-
-          if (Array.isArray(taxRules)) {
-            taxRate = taxRules.reduce((sum, rule) => sum + parseFloat(rule.rate_percent || 0), 0);
-            console.log('📊 Tax rules from sales order:', taxRules);
-          }
-        } catch (e) {
-          console.error('Error parsing tax_breakdown:', e);
-        }
-      }
-
-      // If no tax rate found, get from system configuration or tax codes
-      if (taxRate === 0) {
-        const systemTaxConfig = await db.execute(sql`
-          SELECT config_value FROM system_configuration 
-          WHERE config_key = 'default_tax_rate' AND active = true LIMIT 1
-        `);
-
-        if (systemTaxConfig.rows.length > 0) {
-          taxRate = parseFloat(String(systemTaxConfig.rows[0].config_value || '0'));
-          console.log(`✅ Using system default tax rate: ${taxRate}%`);
-        } else {
-          // Get default tax rate from tax codes table
-          const defaultTaxResult = await db.execute(sql`
-            SELECT tax_rate FROM tax_codes 
-            WHERE is_default = true AND is_active = true 
-            ORDER BY id LIMIT 1
-          `);
-
-          if (defaultTaxResult.rows.length > 0) {
-            taxRate = parseFloat(String(defaultTaxResult.rows[0].tax_rate || '0'));
-            console.log(`✅ Using default tax rate from tax codes: ${taxRate}%`);
-          } else {
-            return res.status(400).json({
-              success: false,
-              error: 'Tax rate not configured. Please configure tax codes or system default tax rate.'
-            });
-          }
-        }
-      }
-
-      totalTaxAmount = totalNetAmount * (taxRate / 100);
-      totalGrossAmount = totalNetAmount + totalTaxAmount;
-
-      console.log('💰 Calculated totals from delivery items:', {
-        itemsCount: itemsResult.rows.length,
-        totalNetAmount: totalNetAmount.toFixed(2),
-        taxRate: taxRate + '%',
-        totalTaxAmount: totalTaxAmount.toFixed(2),
-        totalGrossAmount: totalGrossAmount.toFixed(2)
-      });
-    } else {
-      // If no delivery items found, this is an error - cannot create invoice without items
-      return res.status(400).json({
-        success: false,
-        error: 'Cannot create invoice: No delivery items found. Delivery must have items to bill.'
-      });
-    }
-
-    // Create billing document
-    console.log('💰 Creating billing document...');
-    console.log('📝 Values:', {
-      billingNumber,
-      sales_order_id: delivery.sales_order_id,
-      delivery_id: actualDeliveryId,
-      customer_id: delivery.customer_id,
-      due_date: dueDate.toISOString(),
-      net_amount: totalNetAmount,
-      tax_amount: totalTaxAmount,
-      total_amount: totalGrossAmount
-    });
-
-    // Get company_code_id from sales order, fallback to customer
-    let companyCodeId = delivery.sales_order_company_code_id || null;
-
-    if (!companyCodeId && delivery.customer_id) {
-      const customerCompanyCodeResult = await db.execute(sql`
-        SELECT company_code_id
-        FROM erp_customers
-        WHERE id = ${delivery.customer_id}
-      `);
-      companyCodeId = customerCompanyCodeResult.rows[0]?.company_code_id || null;
-    }
-
-    const billingResult = await db.execute(sql`
-      INSERT INTO billing_documents (
-        billing_number, sales_order_id, delivery_id,
-        customer_id, company_code_id, billing_date, due_date,
-        net_amount, tax_amount, total_amount
-      ) VALUES (
-        ${billingNumber}, ${delivery.sales_order_id},
-        ${actualDeliveryId}, ${delivery.customer_id}, 
-        ${companyCodeId}, NOW(), ${dueDate.toISOString()},
-        ${totalNetAmount}, ${totalTaxAmount}, ${totalGrossAmount}
-      ) RETURNING id
-    `);
-    console.log('✅ Billing document created with ID:', billingResult.rows[0]?.id);
-
-    const billingDocumentId = billingResult.rows[0]?.id;
-
-    // Create billing items (if delivery items exist)
-    if (itemsResult.rows && itemsResult.rows.length > 0) {
-      let lineItemNumber = 1;
-
-      // Calculate tax rate from sales order
-      let itemTaxRate = 0;
-      if (totalNetAmount > 0 && totalTaxAmount > 0) {
-        itemTaxRate = (totalTaxAmount / totalNetAmount) * 100;
-        console.log(`📊 Calculated tax rate from order: ${itemTaxRate.toFixed(2)}%`);
-      }
-
-      for (const item of itemsResult.rows) {
-        const deliveryQty = parseFloat(String(item.delivery_quantity || 0));
-        const unitPrice = parseFloat(String(item.unit_price || 0));
-
-        // Calculate amounts for this line using the overall tax rate
-        const itemNet = deliveryQty * unitPrice;
-        const itemTax = itemNet * (itemTaxRate / 100);
-
-        // Unit can now be up to 10 characters
-        const unit = String(item.unit_of_measure || 'EA').substring(0, 10).toUpperCase();
-
-        console.log(`📦 Line ${lineItemNumber}:`, {
-          qty: deliveryQty,
-          price: unitPrice,
-          net: itemNet.toFixed(2),
-          taxRate: itemTaxRate.toFixed(2) + '%',
-          tax: itemTax.toFixed(2)
-        });
-
-        await db.execute(sql`
-          INSERT INTO billing_items (
-            billing_id, line_item, sales_order_item_id, delivery_item_id,
-            material_id, billing_quantity, unit, unit_price,
-            net_amount, tax_amount
-          ) VALUES (
-            ${billingDocumentId}, ${lineItemNumber}, ${item.sales_order_item_id || null}, ${item.id || null},
-            ${item.material_id || 1}, ${deliveryQty}, ${unit},
-            ${unitPrice}, ${itemNet}, ${itemTax}
-          )
-        `);
-        lineItemNumber++;
-      }
-      console.log(`✅ Created ${lineItemNumber - 1} billing items with tax`);
-    } else {
-      // If no delivery items, use sales order total
-      await db.execute(sql`
-        INSERT INTO billing_items (
-          billing_id, line_item, material_id,
-          billing_quantity, unit, unit_price,
-          net_amount, tax_amount
-        ) VALUES (
-          ${billingDocumentId}, 1, 1,
-          1, 'EA', ${totalNetAmount},
-          ${totalNetAmount}, ${totalTaxAmount}
-        )
-      `);
-      console.log('✅ Created 1 billing item (from sales order total)');
-    }
-
-    // Create document flow record
-    await db.execute(sql`
-      INSERT INTO document_flow (
-        source_document_type, source_document,
-        target_document_type, target_document,
-        flow_type
-      ) VALUES (
-        'DELIVERY', ${actualDeliveryId},
-        'BILLING', ${billingDocumentId},
-        'CREATE'
-      )
-    `);
-
-    res.json({
-      success: true,
-      billingDocument: {
-        id: billingDocumentId,
-        billingNumber,
-        deliveryNumber: delivery.delivery_number,
-        salesOrderNumber: delivery.sales_order_number,
-        netAmount: totalNetAmount,
-        taxAmount: totalTaxAmount,
-        grossAmount: totalGrossAmount,
-        status: 'open'
-      }
-    });
-
-  } catch (error) {
-    console.error("❌ Billing document creation error:", error);
-    console.error("Error details:", {
-      message: error.message,
-      code: error.code,
-      detail: error.detail,
-      table: error.table,
-      column: error.column,
-      constraint: error.constraint
-    });
-    res.status(500).json({
-      success: false,
-      error: error.message || "Failed to create billing document",
-      details: error.code ? `SQL Error ${error.code}: ${error.message}` : error.message
     });
   }
 });
@@ -6124,7 +6214,7 @@ router.post("/credit-management/initialize-sample-data", async (req, res) => {
         `);
       }
     } else {
-      console.log('⚠️ credit_decisions table does not exist, skipping sample data insertion');
+      console.log(' credit_decisions table does not exist, skipping sample data insertion');
     }
 
     // Create sample cash applications
@@ -6243,7 +6333,7 @@ Please review the attached payment plan details and contact us to discuss the te
               `We have scheduled a follow-up contact regarding your account. Our collections team will be reaching out to discuss resolution options for your overdue balance.`}
 
 ${dunning_level >= 3 ?
-            `⚠️ URGENT ACTION REQUIRED: This is a final notice. Immediate payment or contact is required to avoid further collection actions.` :
+            ` URGENT ACTION REQUIRED: This is a final notice. Immediate payment or contact is required to avoid further collection actions.` :
             ''}
 
 For immediate assistance, please contact:
@@ -6278,7 +6368,7 @@ This is an automated notification from our ERP system. Please do not reply to th
     <p><strong>${dunning_level === 1 ? 'Payment Reminder' : dunning_level === 2 ? 'Urgent Payment Notice' : 'FINAL NOTICE'}</strong></p>
   </div>
   
-  ${dunning_level >= 3 ? '<div class="urgent"><strong>⚠️ URGENT ACTION REQUIRED</strong><br>This is a final notice. Immediate payment or contact is required.</div>' : ''}
+  ${dunning_level >= 3 ? '<div class="urgent"><strong> URGENT ACTION REQUIRED</strong><br>This is a final notice. Immediate payment or contact is required.</div>' : ''}
   
   <p>Dear ${customer_name},</p>
   <p>This email serves as automated notification regarding your account status.</p>
@@ -6736,9 +6826,9 @@ router.get('/enterprise/currency-config', async (req, res) => {
   try {
     const currencies = [
       { code: 'USD', name: 'US Dollar', rate: 1.0000, symbol: '$', active: true },
-      { code: 'EUR', name: 'Euro', rate: 0.8945, symbol: '€', active: true },
-      { code: 'GBP', name: 'British Pound', rate: 0.7832, symbol: '£', active: true },
-      { code: 'JPY', name: 'Japanese Yen', rate: 149.85, symbol: '¥', active: true },
+      { code: 'EUR', name: 'Euro', rate: 0.8945, symbol: 'Ã¢â€šÂ¬', active: true },
+      { code: 'GBP', name: 'British Pound', rate: 0.7832, symbol: 'Ã‚Â£', active: true },
+      { code: 'JPY', name: 'Japanese Yen', rate: 149.85, symbol: 'Ã‚Â¥', active: true },
       { code: 'CAD', name: 'Canadian Dollar', rate: 1.3576, symbol: 'C$', active: true }
     ];
 
@@ -7495,7 +7585,7 @@ router.post("/billing-documents", async (req, res) => {
   try {
     const { deliveryId } = req.body;
 
-    console.log('💰 Creating billing document for delivery:', deliveryId);
+    console.log('Ã°Å¸â€™Â° Creating billing document for delivery:', deliveryId);
 
     if (!deliveryId) {
       return res.status(400).json({
@@ -7511,7 +7601,6 @@ router.post("/billing-documents", async (req, res) => {
              so.order_number,
              so.customer_id,
              so.payment_terms,
-             so.billing_block,
              so.total_amount as order_total,
              so.company_code_id as sales_order_company_code_id,
              c.name as customer_name,
@@ -7566,17 +7655,13 @@ router.post("/billing-documents", async (req, res) => {
     const deliveryItemsResult = await db.execute(sql`
       SELECT di.*,
              soi.material_id as product_id,
-             soi.material_code as product_code,
-             soi.material_description as product_description,
-             soi.unit_of_measure,
+             soi.unit,
              soi.unit_price,
              soi.net_amount as order_line_net,
-             soi.tax_amount as order_line_tax,
-             soi.gross_amount as order_line_gross,
-             soi.pricing_procedure,
-             soi.condition_records,
+             soi.tax_percent as order_line_tax_percent,
+             soi.ordered_quantity as order_quantity,
              m.id as material_id,
-             m.product_code as material_code,
+             m.code as material_code,
              m.description as material_description,
              m.base_uom
       FROM delivery_items di
@@ -7609,7 +7694,7 @@ router.post("/billing-documents", async (req, res) => {
     let taxRate = defaultTaxRate;
     const taxCodeResult = await db.execute(sql`
       SELECT tax_rate FROM tax_codes 
-      WHERE code = ${defaultTaxCode} AND is_active = true
+      WHERE tax_code = ${defaultTaxCode} AND is_active = true
       LIMIT 1
     `);
     if (taxCodeResult.rows.length > 0) {
@@ -7617,7 +7702,7 @@ router.post("/billing-documents", async (req, res) => {
     }
 
     // Step 6.5: Determine GL accounts using account determination service
-    console.log('🔍 Determining GL accounts for billing items...');
+    console.log('Ã°Å¸â€Â Determining GL accounts for billing items...');
     const materialIds = deliveryItems.map(item => getInt(item.material_id) || getInt(item.product_id)).filter(Boolean);
     const salesOrg = getString(delivery.sales_organization) || '1000';
 
@@ -7627,7 +7712,7 @@ router.post("/billing-documents", async (req, res) => {
       salesOrganization: salesOrg
     });
 
-    console.log('✅ Account determination completed:', {
+    console.log('Ã¢Å“â€¦ Account determination completed:', {
       arAccount: accountDeterminationResult.arAccount,
       revenueAccountsCount: accountDeterminationResult.revenueAccounts.length,
       taxAccount: accountDeterminationResult.taxAccount || 'Not configured',
@@ -7637,7 +7722,7 @@ router.post("/billing-documents", async (req, res) => {
     // Get default accounts if determination failed
     let defaultAccounts;
     if (!accountDeterminationResult.success && accountDeterminationResult.revenueAccounts.length === 0) {
-      console.log('⚠️ Account determination had errors, using default accounts');
+      console.log(' Account determination had errors, using default accounts');
       defaultAccounts = await accountDeterminationService.getDefaultAccounts();
     }
 
@@ -7648,58 +7733,160 @@ router.post("/billing-documents", async (req, res) => {
 
     const billingItemsData = [];
 
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Helper: resolve GL account from account_determination_mapping by account key Ã¢â€â‚¬Ã¢â€â‚¬
+    const resolveGLByAccountKey = async (acctKey: string): Promise<string | null> => {
+      try {
+        const result = await db.execute(sql`
+          SELECT gl.account_number
+          FROM account_determination_mapping adm
+          JOIN gl_accounts gl ON adm.gl_account_id = gl.id
+          WHERE adm.account_key_code = ${acctKey}
+            AND adm.is_active = true
+            AND gl.is_active = true
+            AND gl.account_number IS NOT NULL
+          ORDER BY adm.id
+          LIMIT 1
+        `);
+        return result.rows[0]?.account_number ? String(result.rows[0].account_number) : null;
+      } catch { return null; }
+    };
+
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Pre-fetch saved pricing condition steps for all sales order items in this delivery Ã¢â€â‚¬Ã¢â€â‚¬
+    // These were saved during sales order creation by the pricing engine.
+    // Each row has account_key (e.g. ERL, ERS, MWS) from the pricing procedure step.
+    const soiIds = deliveryItems.map(it => it.sales_order_item_id).filter(Boolean);
+    const conditionStepsBySOI = new Map<number, { account_key: string; condition_type: string; is_statistical: boolean }[]>();
+
+    if (soiIds.length > 0) {
+      try {
+        const condResult = await db.execute(sql`
+          SELECT
+            soic.sales_order_item_id,
+            soic.condition_type_code as condition_type,
+            COALESCE(pps.account_key, ct.account_key) as account_key,
+            COALESCE(soic.is_statistical, pps.is_statistical, false) as is_statistical,
+            soic.condition_amount
+          FROM sales_order_item_conditions soic
+          LEFT JOIN pricing_procedure_steps pps
+            ON pps.condition_type_code = soic.condition_type_code
+          LEFT JOIN condition_types ct
+            ON ct.condition_code = soic.condition_type_code
+          WHERE soic.sales_order_item_id = ANY(${'{' + soiIds.join(',') + '}'}::int[])
+            AND COALESCE(soic.is_statistical, false) = false
+          ORDER BY soic.sales_order_item_id, pps.step_number
+        `);
+
+        for (const row of condResult.rows as any[]) {
+          const soiId = row.sales_order_item_id;
+          if (!conditionStepsBySOI.has(soiId)) conditionStepsBySOI.set(soiId, []);
+          conditionStepsBySOI.get(soiId)!.push({
+            account_key: row.account_key || '',
+            condition_type: row.condition_type,
+            is_statistical: row.is_statistical,
+            condition_amount: parseFloat(String(row.condition_amount || 0))
+          });
+        }
+        console.log(`Ã¢Å“â€¦ Loaded pricing condition steps for ${conditionStepsBySOI.size} sales order items`);
+      } catch (err) {
+        console.warn(' Could not load sales_order_item_conditions Ã¢â‚¬â€ using default account key fallback:', err);
+      }
+    }
+
     for (let i = 0; i < deliveryItems.length; i++) {
       const item = deliveryItems[i];
 
       // Use delivered quantity for billing
       const billingQty = parseFloat(String(item.delivery_quantity || item.picked_quantity || 0));
-      const unitPrice = parseFloat(String(item.unit_price || 0));
+      const orderQty = parseFloat(String(item.order_quantity || billingQty || 1));
 
-      // Calculate amounts (proportional to delivered quantity)
-      const itemNetAmount = billingQty * unitPrice;
-      const itemTaxAmount = (itemNetAmount * taxRate) / 100;
+      const baseUnitPrice = parseFloat(String(item.unit_price || 0));
+
+      // Retrieve the accurately calculated pricing totals from the sales order item
+      const orderNet = parseFloat(String(item.order_line_net || 0));
+
+      const savedSteps = conditionStepsBySOI.get(item.sales_order_item_id) || [];
+      const taxStep = savedSteps.find((s: any) => ['MWS', 'MWST', 'MW1', 'MW2', 'MW3'].includes(s.account_key));
+      let orderTax = parseFloat(String(taxStep?.condition_amount || 0));
+      // Bug 2 Fix: if condition_amount is 0 (not persisted correctly), derive tax from
+      // the SO item's stored tax_percent column (always saved even when conditions fail)
+      if (orderTax === 0) {
+        const soiTaxPct = parseFloat(String(item.order_line_tax_percent || 0));
+        if (soiTaxPct > 0 && orderNet > 0) {
+          orderTax = orderNet * soiTaxPct / 100;
+          console.log(`[BILLING] Derived tax from SOI tax_percent=${soiTaxPct}%: orderTax=${orderTax.toFixed(2)}`);
+        }
+      }
+
+      // Calculate effective unit metrics (net value and tax per unit) to handle proportional billing quantities properly
+      let effectiveUnitPrice = baseUnitPrice;
+      let effectiveUnitTax = 0;
+
+      if (orderQty > 0) {
+        effectiveUnitPrice = orderNet / orderQty;
+        effectiveUnitTax = orderTax / orderQty;
+      }
+
+      // The unit price shown on the billing item should be the effective net price so Qty*Unit = Net Amount
+      const unitPrice = effectiveUnitPrice;
+      const itemNetAmount = billingQty * effectiveUnitPrice;
+      const itemTaxAmount = billingQty * effectiveUnitTax;
       const itemGrossAmount = itemNetAmount + itemTaxAmount;
 
       totalNetAmount += itemNetAmount;
       totalTaxAmount += itemTaxAmount;
       totalGrossAmount += itemGrossAmount;
 
-      // Determine GL account for this item (use first revenue account or default)
       const materialId = getInt(item.material_id) || getInt(item.product_id);
-      const revenueAccount = accountDeterminationResult.revenueAccounts.find(
-        acc => acc.glAccount
-      ) || accountDeterminationResult.revenueAccounts[0];
 
-      // Get account from determination result, no hardcoded fallbacks
-      let glAccount = revenueAccount?.glAccount;
-      let accountKey = revenueAccount?.accountKey || 'REVENUE';
+      // Ã¢â€â‚¬Ã¢â€â‚¬ Step 1: Try to resolve GL from saved pricing condition steps (ERL = revenue) Ã¢â€â‚¬Ã¢â€â‚¬
+      let glAccount: string | null = null;
+      let accountKey = 'ERL'; // SAP standard revenue account key
 
-      if (!glAccount && defaultAccounts?.revenueAccount) {
-        glAccount = defaultAccounts.revenueAccount;
-      }
+      // Find the primary revenue step Ã¢â‚¬â€ ERL first, then any non-discount account key
+      const erlStep = savedSteps.find((s: any) => s.account_key === 'ERL');
+      const primaryStep = erlStep || savedSteps.find((s: any) => s.account_key && !['ERS', 'ERB', 'MWS', 'MW1', 'MW2', 'MW3'].includes(s.account_key));
 
-      // If no account found, throw error instead of using hardcoded value
-      if (!glAccount) {
-        throw new Error(`No revenue account determined for material ${materialId}. Please configure account determination rules.`);
-      }
-
-      // If we have material-specific determination, try to get it
-      if (materialId) {
-        const materialGroup = await accountDeterminationService.getMaterialAccountGroup(parseInt(String(materialId)));
-        const customerGroup = await accountDeterminationService.getCustomerAccountGroup(parseInt(String(delivery.customer_id)));
-
-        const specificAccount = await accountDeterminationService.determineGLAccount({
-          chartOfAccounts: 'INT',
-          salesOrganization: salesOrg,
-          customerAccountGroup: customerGroup,
-          materialAccountGroup: materialGroup,
-          accountKey: 'REVENUE'
-        });
-
-        if (specificAccount.success) {
-          glAccount = specificAccount.glAccount;
-          accountKey = specificAccount.accountKey;
+      if (primaryStep?.account_key) {
+        accountKey = primaryStep.account_key;
+        glAccount = await resolveGLByAccountKey(primaryStep.account_key);
+        if (glAccount) {
+          console.log(`Ã¢Å“â€¦ GL resolved from pricing step: ${primaryStep.condition_type} Ã¢â€ â€™ ${accountKey} Ã¢â€ â€™ ${glAccount}`);
         }
+      }
+
+      // Ã¢â€â‚¬Ã¢â€â‚¬ Step 2: Fallback Ã¢â‚¬â€ material-specific account determination Ã¢â€â‚¬Ã¢â€â‚¬
+      if (!glAccount && materialId) {
+        try {
+          const materialGroup = await accountDeterminationService.getMaterialAccountGroup(parseInt(String(materialId)));
+          const customerGroup = await accountDeterminationService.getCustomerAccountGroup(parseInt(String(delivery.customer_id)));
+
+          const specificAccount = await accountDeterminationService.determineGLAccount({
+            chartOfAccounts: 'INT',
+            salesOrganization: salesOrg,
+            customerAccountGroup: customerGroup,
+            materialAccountGroup: materialGroup,
+            accountKey: accountKey
+          });
+
+          if (specificAccount.success) {
+            glAccount = specificAccount.glAccount;
+            accountKey = specificAccount.accountKey;
+          }
+        } catch (err) {
+          console.warn(' Material-specific account determination failed:', err);
+        }
+      }
+
+      // Ã¢â€â‚¬Ã¢â€â‚¬ Step 3: Fallback Ã¢â‚¬â€ use pre-determined revenue account from service Ã¢â€â‚¬Ã¢â€â‚¬
+      if (!glAccount) {
+        const revenueAccount = accountDeterminationResult.revenueAccounts.find(acc => acc.glAccount)
+          || accountDeterminationResult.revenueAccounts[0];
+        glAccount = revenueAccount?.glAccount || defaultAccounts?.revenueAccount || null;
+        accountKey = revenueAccount?.accountKey || accountKey;
+      }
+
+      if (!glAccount) {
+        throw new Error(`No revenue GL account determined for material ${materialId}. Please configure account determination rules (account key: ${accountKey}).`);
       }
 
       billingItemsData.push({
@@ -7725,13 +7912,13 @@ router.post("/billing-documents", async (req, res) => {
     let dueDateOffset = 30; // default 30 days
 
     const paymentTermsResult = await db.execute(sql`
-      SELECT payment_days FROM payment_terms 
-      WHERE code = ${paymentTerms}
+      SELECT payment_due_days FROM payment_terms 
+      WHERE payment_term_key = ${paymentTerms}
       LIMIT 1
     `);
 
     if (paymentTermsResult.rows.length > 0) {
-      dueDateOffset = parseInt(String(paymentTermsResult.rows[0].payment_days));
+      dueDateOffset = parseInt(String(paymentTermsResult.rows[0].payment_due_days));
     }
 
     const billingDate = new Date();
@@ -7763,7 +7950,7 @@ router.post("/billing-documents", async (req, res) => {
         companyCode = String(salesOrderCompanyCodeResult.rows[0].company_code);
         companyCurrency = String(salesOrderCompanyCodeResult.rows[0].company_currency);
         companyCodeId = parseInt(String(salesOrderCompanyCodeResult.rows[0].id));
-        console.log(`✅ Using company code from sales order: ${companyCode}`);
+        console.log(`Ã¢Å“â€¦ Using company code from sales order: ${companyCode}`);
       }
     }
 
@@ -7779,7 +7966,7 @@ router.post("/billing-documents", async (req, res) => {
         companyCode = String(customerCompanyCodeResult.rows[0].company_code);
         companyCurrency = String(customerCompanyCodeResult.rows[0].company_currency);
         companyCodeId = parseInt(String(customerCompanyCodeResult.rows[0].id));
-        console.log(`✅ Using company code from customer (fallback): ${companyCode}`);
+        console.log(`Ã¢Å“â€¦ Using company code from customer (fallback): ${companyCode}`);
       }
     }
 
@@ -7788,9 +7975,14 @@ router.post("/billing-documents", async (req, res) => {
     }
 
     // Get billing type from delivery, sales order, or system configuration (no hardcoded F2)
-    let billingType = delivery.billing_type || (await db.execute(sql`
-      SELECT billing_type FROM sales_orders WHERE id = ${delivery.sales_order_id} LIMIT 1
-    `)).rows[0]?.billing_type;
+    let billingType = delivery.billing_type;
+
+    if (!billingType) {
+      const soBillingTypeResult = await db.execute(sql`
+        SELECT document_type FROM sales_orders WHERE id = ${delivery.sales_order_id} LIMIT 1
+      `);
+      billingType = soBillingTypeResult.rows[0]?.document_type;
+    }
 
     if (!billingType) {
       // Get default billing type from system configuration or document types
@@ -7833,15 +8025,25 @@ router.post("/billing-documents", async (req, res) => {
       String(billingType) // Pass billing type, function will map to document type
     );
 
-    console.log(`📄 Generated accounting document number: ${accountingDocNumber}`);
+    console.log(`Ã°Å¸â€œâ€ž Generated accounting document number: ${accountingDocNumber}`);
 
     // Step 10: Create billing document header WITH accounting_document_number
     // Get currency from company code or sales order (no hardcoded USD)
-    const currency = companyCurrency || delivery.currency || (await db.execute(sql`
-      SELECT currency FROM sales_orders WHERE id = ${delivery.sales_order_id} LIMIT 1
-    `)).rows[0]?.currency || (await db.execute(sql`
-      SELECT currency FROM company_codes WHERE code = ${companyCode} AND is_active = true LIMIT 1
-    `)).rows[0]?.currency;
+    let currency = companyCurrency || delivery.currency;
+
+    if (!currency) {
+      const soCurrencyResult = await db.execute(sql`
+        SELECT currency FROM sales_orders WHERE id = ${delivery.sales_order_id} LIMIT 1
+      `);
+      currency = soCurrencyResult.rows[0]?.currency;
+    }
+
+    if (!currency) {
+      const ccCurrencyResult = await db.execute(sql`
+        SELECT currency FROM company_codes WHERE code = ${companyCode} AND is_active = true LIMIT 1
+      `);
+      currency = ccCurrencyResult.rows[0]?.currency;
+    }
 
     if (!currency) {
       throw new Error(`Currency not configured for company code ${companyCode}. Please configure company master data.`);
@@ -7908,19 +8110,19 @@ router.post("/billing-documents", async (req, res) => {
         posting_status, accounting_document_number, created_by, created_at, updated_at
       ) VALUES (
         ${billingNumber}, 
-        ${billingType}, // Retrieved from delivery/sales order or default
+        ${billingType}, 
         ${delivery.sales_order_id},
         ${deliveryId},
         ${delivery.customer_id},
-        ${companyCodeId}, // Company code from sales order (priority) or customer (fallback)
+        ${companyCodeId}, 
         ${billingDate.toISOString().split('T')[0]},
         ${dueDate.toISOString().split('T')[0]},
         ${totalNetAmount.toFixed(2)},
         ${totalTaxAmount.toFixed(2)},
         ${totalGrossAmount.toFixed(2)},
-        ${currency}, // Retrieved from company code or sales order
-        'OPEN', // Default posting status for new invoices
-        ${accountingDocNumber}, // ← NEW: Store accounting document number immediately
+        ${currency}, 
+        'OPEN', 
+        ${accountingDocNumber}, 
         ${parseInt(String(createdBy))},
         NOW(),
         NOW()
@@ -7933,7 +8135,7 @@ router.post("/billing-documents", async (req, res) => {
       throw new Error('Failed to create billing document');
     }
 
-    console.log(`✅ Created billing document: ${billingNumber} (ID: ${billingId})`);
+    console.log(`Ã¢Å“â€¦ Created billing document: ${billingNumber} (ID: ${billingId})`);
 
     // Step 11: Create billing items
     for (const itemData of billingItemsData) {
@@ -7961,7 +8163,7 @@ router.post("/billing-documents", async (req, res) => {
       `);
     }
 
-    console.log(`✅ Created ${billingItemsData.length} billing items`);
+    console.log(`Ã¢Å“â€¦ Created ${billingItemsData.length} billing items`);
 
     // Step 11.5: Create DRAFT accounting document with direct GL account assignment
     const billingItemsForAccountDoc = billingItemsData.map(item => ({
@@ -7987,48 +8189,70 @@ router.post("/billing-documents", async (req, res) => {
       createdBy: parseInt(String(createdBy)) // From auth context
     });
 
-    console.log(`✅ Created DRAFT accounting document: ${accountingDocNumber}`);
+    console.log(`Created DRAFT accounting document: ${accountingDocNumber}`);
 
     // Step 12: Update delivery status
     await db.execute(sql`
       UPDATE delivery_documents 
       SET status = 'BILLED', updated_at = NOW()
       WHERE id = ${deliveryId}
-    `);
+      `);
 
     // Step 13: Update sales order status
     await db.execute(sql`
       UPDATE sales_orders
       SET status = 'BILLED', updated_at = NOW()
       WHERE id = ${delivery.sales_order_id}
-    `);
+      `);
 
-    // Step 14: Create document flow entries
-    await db.execute(sql`
-      INSERT INTO document_flow (
-        source_document, source_document_type,
-        target_document, target_document_type,
-        flow_type, created_at
-      ) VALUES (
-        ${delivery.delivery_number}, 'DELIVERY',
-        ${billingNumber}, 'INVOICE',
-        'BILLING', NOW()
-      )
-    `);
+    // Step 14: Create document flow entries (non-critical — wrapped in try-catch as table may have varchar(10) limits)
+    try {
+      await db.execute(sql`
+        INSERT INTO document_flow(
+          source_document, source_document_type,
+          target_document, target_document_type,
+          flow_type, created_at
+        ) VALUES(
+          ${String(delivery.delivery_number).substring(0, 10)}, 'DELIVERY',
+          ${String(billingNumber).substring(0, 10)}, 'INVOICE',
+          'BILLING', NOW()
+        )
+      `);
+    } catch (dfErr: any) {
+      console.warn('Document flow delivery→invoice skipped (non-critical):', dfErr.message);
+    }
 
-    await db.execute(sql`
-      INSERT INTO document_flow (
-        source_document, source_document_type,
-        target_document, target_document_type,
-        flow_type, created_at
-      ) VALUES (
-        ${delivery.order_number}, 'SALES_ORDER',
-        ${billingNumber}, 'INVOICE',
-        'BILLING', NOW()
-      )
-    `);
+    try {
+      await db.execute(sql`
+        INSERT INTO document_flow(
+          source_document, source_document_type,
+          target_document, target_document_type,
+          flow_type, created_at
+        ) VALUES(
+          ${String(delivery.order_number).substring(0, 10)}, 'ORDER',
+          ${String(billingNumber).substring(0, 10)}, 'INVOICE',
+          'BILLING', NOW()
+        )
+      `);
+    } catch (dfErr2: any) {
+      console.warn('Document flow order→invoice skipped (non-critical):', dfErr2.message);
+    }
 
-    console.log('✅ Document flow updated');
+    console.log('Ã¢Å“â€¦ Document flow updated');
+
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Auto GL Posting for Invoice (SAP Standard: VF01 immediately posts to FI) Ã¢â€â‚¬Ã¢â€â‚¬
+    // Fire-and-forget after response: posts Dr AR / Cr Revenue / Cr Tax to accounting_documents
+    const capturedBillingId = parseInt(String(billingId));
+    const capturedBillingNumber = billingNumber;
+    const capturedAccountingDocNumber = accountingDocNumber;
+    const capturedCompanyCode = companyCode as string;
+    const capturedTotalNet = totalNetAmount;
+    const capturedTotalTax = totalTaxAmount;
+    const capturedTotalGross = totalGrossAmount;
+    const capturedCurrency = currency as string;
+    const capturedCreatedBy = createdBy as number;
+    const capturedCustomerId = delivery.customer_id ? parseInt(String(delivery.customer_id)) : undefined;
+    const capturedChartOfAccountsId = delivery.chart_of_accounts_id ? parseInt(String(delivery.chart_of_accounts_id)) : undefined;
 
     // Step 15: Return success response with billing details
     res.json({
@@ -8048,7 +8272,7 @@ router.post("/billing-documents", async (req, res) => {
         netAmount: parseFloat(totalNetAmount.toFixed(2)),
         taxAmount: parseFloat(totalTaxAmount.toFixed(2)),
         totalAmount: parseFloat(totalGrossAmount.toFixed(2)),
-        currency: 'USD',
+        currency: String(currency),
         paymentTerms: paymentTerms,
         postingStatus: 'OPEN',
         items: billingItemsData.map(item => ({
@@ -8066,8 +8290,94 @@ router.post("/billing-documents", async (req, res) => {
       message: `Billing document ${billingNumber} created successfully`
     });
 
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Async Auto GL Posting Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // SAP Standard: Invoice creation (VF01) immediately posts Dr AR / Cr Revenue / Cr Tax
+    // Run after response is sent so it doesn't delay the HTTP response.
+    setImmediate(async () => {
+      try {
+        const { sdGLResolver } = await import('../services/sd-gl-resolver');
+
+        // Build journal lines using the full SAP GL determination chain:
+        // AR = customer recon account (from customer master)
+        // Revenue = ERL account key Ã¢â€ â€™ account_determination_mapping
+        // Tax = MWS account key Ã¢â€ â€™ tax_account_determination (separate table)
+        const journalResult = await sdGLResolver.buildBillingJournalLines({
+          netAmount: capturedTotalNet,
+          taxAmount: capturedTotalTax,
+          discountAmount: 0,
+          totalAmount: capturedTotalGross,
+          currency: capturedCurrency,
+          reference: capturedBillingNumber,
+          customerId: capturedCustomerId,           // -> Customer recon account lookup
+          chartOfAccountsId: capturedChartOfAccountsId, // -> Used for tax_account_determination filter
+          revenueItems: billingItemsData.map(item => ({
+            account: item.revenueAccount || '',
+            amount: item.netAmount,
+            description: `Revenue for ${item.materialCode || item.materialDescription}`
+          })).filter(i => i.account !== ''),
+          arAccount: accountDeterminationResult.arAccount,
+          taxAccount: accountDeterminationResult.taxAccount
+        });
+
+        console.log(`Ã°Å¸â€Â Invoice GL determination for ${capturedBillingNumber}: `, {
+          ar: journalResult.glAccounts.receivable,
+          revenue: journalResult.glAccounts.revenue,
+          lines: journalResult.lines.length
+        });
+
+        const today = new Date();
+        const fiscalYear = today.getFullYear();
+        const fiscalPeriod = today.getMonth() + 1;
+
+        // Insert GL entries for each journal line
+        for (const line of journalResult.lines) {
+          try {
+            // Resolve gl_account_id from account_number
+            const glAccRes = await db.execute(sql`
+              SELECT id FROM gl_accounts WHERE account_number = ${line.account} AND is_active = true LIMIT 1
+            `);
+            const glAccountId = glAccRes.rows[0]?.id ? Number(glAccRes.rows[0].id) : null;
+
+            if (!glAccountId) {
+              console.warn(` Invoice GL post: account ${line.account} not found in gl_accounts, skipping line`);
+              continue;
+            }
+
+            const dcIndicator = line.debit > 0 ? 'D' : 'C';
+            const amount = line.debit > 0 ? line.debit : line.credit;
+
+            await db.execute(sql`
+              INSERT INTO gl_entries(
+        document_number, gl_account_id, amount, debit_credit_indicator,
+        posting_key, posting_date, posting_status, fiscal_period, fiscal_year,
+        description, source_module, source_document_type, source_document_id, reference
+      ) VALUES(
+        ${capturedAccountingDocNumber}, ${glAccountId}, ${amount}, ${dcIndicator},
+        ${line.posting_key}, CURRENT_DATE, 'posted', ${fiscalPeriod}, ${fiscalYear},
+        ${line.description},
+        'SD', 'INVOICE', ${capturedBillingId}, ${capturedBillingNumber}
+      )
+            `);
+          } catch (lineErr: any) {
+            console.warn(` Invoice GL line insert failed(${line.account}): `, lineErr.message);
+          }
+        }
+
+        // Mark billing document as POSTED
+        await db.execute(sql`
+          UPDATE billing_documents
+          SET posting_status = 'POSTED', updated_at = NOW()
+          WHERE id = ${capturedBillingId}
+    `);
+
+        console.log(`Ã¢Å“â€¦ Invoice ${capturedBillingNumber} auto - posted to GL(${journalResult.lines.length} entries)`);
+      } catch (glErr: any) {
+        console.warn(` Invoice auto - GL posting failed for ${capturedBillingNumber}(invoice committed, only GL skipped): `, glErr.message);
+      }
+    });
+
   } catch (error) {
-    console.error('❌ Billing document creation error:', error);
+    console.error('Ã¢ÂÅ’ Billing document creation error:', error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to create billing document'
@@ -8079,27 +8389,27 @@ router.post("/billing-documents", async (req, res) => {
 router.get("/billing-documents", async (req, res) => {
   try {
     const billingDocs = await db.execute(sql`
-      SELECT 
-        bd.id, bd.billing_number, bd.billing_type, bd.billing_date, bd.due_date,
-        bd.net_amount, bd.tax_amount, bd.total_amount, bd.currency,
-        bd.posting_status, bd.accounting_document_number,
-        bd.sales_order_id, so.order_number as sales_order_number,
-        bd.delivery_id, dd.delivery_number,
-        bd.customer_id, c.name as customer_name,
-        bd.created_at, bd.updated_at,
-        COUNT(bi.id) as item_count
+    SELECT
+    bd.id, bd.billing_number, bd.billing_type, bd.billing_date, bd.due_date,
+      bd.net_amount, bd.tax_amount, bd.total_amount, bd.currency,
+      bd.posting_status, bd.accounting_document_number,
+      bd.sales_order_id, so.order_number as sales_order_number,
+      bd.delivery_id, dd.delivery_number,
+      bd.customer_id, c.name as customer_name,
+      bd.created_at, bd.updated_at,
+      COUNT(bi.id) as item_count
       FROM billing_documents bd
       LEFT JOIN sales_orders so ON bd.sales_order_id = so.id
       LEFT JOIN delivery_documents dd ON bd.delivery_id = dd.id
       LEFT JOIN erp_customers c ON bd.customer_id = c.id
       LEFT JOIN billing_items bi ON bd.id = bi.billing_id
       GROUP BY bd.id, bd.billing_number, bd.billing_type, bd.billing_date, bd.due_date,
-               bd.net_amount, bd.tax_amount, bd.total_amount, bd.currency,
-               bd.posting_status, bd.accounting_document_number,
-               bd.sales_order_id, so.order_number, bd.delivery_id, dd.delivery_number,
-               bd.customer_id, c.name, bd.created_at, bd.updated_at
+      bd.net_amount, bd.tax_amount, bd.total_amount, bd.currency,
+      bd.posting_status, bd.accounting_document_number,
+      bd.sales_order_id, so.order_number, bd.delivery_id, dd.delivery_number,
+      bd.customer_id, c.name, bd.created_at, bd.updated_at
       ORDER BY bd.created_at DESC
-    `);
+      `);
 
     res.json({
       success: true,
@@ -8119,19 +8429,19 @@ router.get("/billing-documents", async (req, res) => {
 router.get("/billing-documents/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    console.log('🔍 Fetching invoice details for ID:', id);
+    console.log('Fetching invoice details for ID:', id);
 
     // Get billing document header with tax breakdown from sales order
     const billingResult = await db.execute(sql`
-      SELECT 
-        bd.*,
-        so.order_number as sales_order_number,
-        so.tax_breakdown as sales_order_tax_breakdown,
-        dd.delivery_number,
-        c.name as customer_name,
-        c.email as customer_email,
-        c.address as customer_address,
-        c.city, c.state, c.postal_code, c.country
+    SELECT
+    bd.*,
+      so.order_number as sales_order_number,
+      so.tax_breakdown as sales_order_tax_breakdown,
+      dd.delivery_number,
+      c.name as customer_name,
+      c.email as customer_email,
+      c.address as customer_address,
+      c.city, c.state, c.postal_code, c.country
       FROM billing_documents bd
       LEFT JOIN sales_orders so ON bd.sales_order_id = so.id
       LEFT JOIN delivery_documents dd ON bd.delivery_id = dd.id
@@ -8139,13 +8449,13 @@ router.get("/billing-documents/:id", async (req, res) => {
       WHERE bd.id = ${parseInt(id)}
     `);
 
-    console.log('📋 Billing document query result:', {
+    console.log('Ã°Å¸â€œâ€¹ Billing document query result:', {
       found: billingResult.rows.length > 0,
       rowCount: billingResult.rows.length
     });
 
     if (billingResult.rows.length === 0) {
-      console.log('⚠️ Billing document not found for ID:', id);
+      console.log(' Billing document not found for ID:', id);
       return res.status(404).json({
         success: false,
         error: 'Billing document not found'
@@ -8157,33 +8467,57 @@ router.get("/billing-documents/:id", async (req, res) => {
     try {
       // Join with materials table to get actual product names
       itemsResult = await db.execute(sql`
-        SELECT 
-          bi.*,
-          COALESCE(m.code, bi.material_id::text) as material_code,
-          COALESCE(m.description, bi.material_id::text) as material_description
+    SELECT
+    bi.*,
+      COALESCE(m.code, bi.material_id:: text) as material_code,
+      COALESCE(m.description, bi.material_id:: text) as material_description,
+      soi.unit_price as soi_unit_price,
+      soi.net_amount as soi_net_amount,
+      soi.net_amount as soi_total_price,
+      soi.tax_percent as soi_tax_percent,
+      (
+          SELECT json_agg(
+            json_build_object(
+              'step', soic.step_number,
+              'condition_type', soic.condition_type_code,
+              'condition_name', soic.condition_name,
+              'base_value', soic.base_value,
+              'rate', soic.rate,
+              'amount', soic.condition_amount,
+              'account_key', soic.account_key,
+              'is_tax', soic.is_tax,
+              'is_statistical', soic.is_statistical,
+              'currency', soic.currency
+            ) ORDER BY soic.step_number
+          )
+            FROM sales_order_item_conditions soic
+            WHERE soic.sales_order_item_id = bi.sales_order_item_id
+        ) as pricing_conditions
         FROM billing_items bi
         LEFT JOIN materials m ON bi.material_id = m.id
+        LEFT JOIN sales_order_items soi ON bi.sales_order_item_id = soi.id
         WHERE bi.billing_id = ${parseInt(id)}
         ORDER BY bi.line_item
       `);
+
     } catch (itemError: any) {
       console.error('Error fetching items with joins, trying simple query:', itemError.message);
       // Fallback to simple query without joins
       itemsResult = await db.execute(sql`
-        SELECT 
-          bi.*,
-          bi.material_id::text as material_code,
-          bi.material_id::text as material_description
-        FROM billing_items bi
-        WHERE bi.billing_id = ${parseInt(id)}
-        ORDER BY bi.line_item
+    SELECT bi.*,
+      bi.material_id:: text as material_code,
+      bi.material_id:: text as material_description
+      FROM billing_items bi
+      WHERE bi.billing_id = ${parseInt(id)}
+      ORDER BY bi.line_item
       `);
+
     }
 
     const billing = billingResult.rows[0];
 
     // Parse tax breakdown from sales order
-    let taxBreakdown = [];
+    let taxBreakdown: any[] = [];
     if (billing.sales_order_tax_breakdown) {
       try {
         taxBreakdown = typeof billing.sales_order_tax_breakdown === 'string'
@@ -8199,27 +8533,71 @@ router.get("/billing-documents/:id", async (req, res) => {
       }
     }
 
-    console.log('📄 Invoice items fetched:', {
-      billingId: id,
-      itemCount: itemsResult.rows.length,
-      taxBreakdownCount: taxBreakdown.length,
-      sampleItem: itemsResult.rows[0]
+    // Enrich each billing item with pricing conditions breakdown
+    // SAP pricing chain: PR00 (list price) Ã¢â€ â€™ discounts Ã¢â€ â€™ net value Ã¢â€ â€™ tax Ã¢â€ â€™ total
+    const enrichedItems = itemsResult.rows.map((item: any) => {
+      // First try: use real pricing conditions from sales_order_item_conditions
+      let pricingConditions: any[] = [];
+      if (item.pricing_conditions) {
+        try {
+          const parsed = typeof item.pricing_conditions === 'string'
+            ? JSON.parse(item.pricing_conditions)
+            : item.pricing_conditions;
+          if (Array.isArray(parsed)) pricingConditions = parsed;
+        } catch (e) { /* ignore */ }
+      }
+
+      // Second try: parse from price_breakdown JSON stored on SO item
+      if (pricingConditions.length === 0 && item.soi_price_breakdown) {
+        try {
+          const pb = typeof item.soi_price_breakdown === 'string'
+            ? JSON.parse(item.soi_price_breakdown)
+            : item.soi_price_breakdown;
+          if (Array.isArray(pb)) pricingConditions = pb;
+          else if (pb?.conditions && Array.isArray(pb.conditions)) pricingConditions = pb.conditions;
+        } catch (e) { /* ignore */ }
+      }
+
+      // Final fallback: construct synthetic breakdown from available amount fields
+      if (pricingConditions.length === 0) {
+        const billingQty = parseFloat(item.billing_quantity || 1);
+        const soiUnitPrice = parseFloat(item.soi_unit_price || item.unit_price || 0);
+        const soiNetAmount = parseFloat(item.soi_net_amount || item.net_amount || 0);
+        const soiDiscount = parseFloat(item.soi_discount_amount || 0);
+        const soiTax = parseFloat(item.soi_tax_amount || item.tax_amount || 0);
+        const listPrice = soiUnitPrice > 0 ? soiUnitPrice * billingQty : (soiNetAmount + soiDiscount);
+        if (listPrice > 0) {
+          pricingConditions = [
+            { step: 10, condition_type: 'PR00', condition_name: 'List Price', base_value: listPrice, amount: listPrice, currency: billing.currency || 'INR' },
+            ...(soiDiscount > 0 ? [{ step: 20, condition_type: 'K007', condition_name: 'Customer Discount', base_value: soiDiscount, amount: -soiDiscount, currency: billing.currency || 'INR' }] : []),
+            { step: 30, condition_type: 'NETWR', condition_name: 'Net Value', base_value: soiNetAmount, amount: soiNetAmount || (listPrice - soiDiscount), currency: billing.currency || 'INR' },
+            ...(soiTax > 0 ? [{ step: 40, condition_type: 'MWST', condition_name: 'Output Tax', base_value: soiTax, amount: soiTax, is_tax: true, currency: billing.currency || 'INR' }] : []),
+          ];
+        }
+      }
+
+      return {
+        ...item,
+        pricing_conditions: pricingConditions,
+        unit_price: item.unit_price || item.soi_unit_price || 0,
+        net_amount: item.net_amount || item.soi_net_amount || 0,
+        tax_amount: item.tax_amount || item.soi_tax_amount || 0,
+      };
     });
 
-    // Remove sales_order_tax_breakdown from the main object and add it as tax_breakdown
     const { sales_order_tax_breakdown, ...billingWithoutTaxBreakdown } = billing;
 
     res.json({
       success: true,
       billingDocument: {
         ...billingWithoutTaxBreakdown,
-        items: itemsResult.rows,
+        items: enrichedItems,
         tax_breakdown: taxBreakdown
       }
     });
 
   } catch (error) {
-    console.error('❌ Error fetching billing document:', error);
+    console.error('Ã¢ÂÅ’ Error fetching billing document:', error);
     console.error('Error details:', {
       message: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : null,
@@ -8239,15 +8617,15 @@ router.get("/billing-documents/:id/download", async (req, res) => {
 
     // Get billing document with items including tax breakdown
     const billingResult = await db.execute(sql`
-      SELECT 
-        bd.*,
-        so.order_number as sales_order_number,
-        so.tax_breakdown as sales_order_tax_breakdown,
-        dd.delivery_number,
-        c.name as customer_name,
-        c.email as customer_email,
-        c.address as customer_address,
-        c.city, c.state, c.postal_code, c.country
+    SELECT
+    bd.*,
+      so.order_number as sales_order_number,
+      so.tax_breakdown as sales_order_tax_breakdown,
+      dd.delivery_number,
+      c.name as customer_name,
+      c.email as customer_email,
+      c.address as customer_address,
+      c.city, c.state, c.postal_code, c.country
       FROM billing_documents bd
       LEFT JOIN sales_orders so ON bd.sales_order_id = so.id
       LEFT JOIN delivery_documents dd ON bd.delivery_id = dd.id
@@ -8268,10 +8646,10 @@ router.get("/billing-documents/:id/download", async (req, res) => {
     let itemsResult;
     try {
       itemsResult = await db.execute(sql`
-        SELECT 
-          bi.*,
-          COALESCE(m.code, bi.material_id::text) as material_code,
-          COALESCE(m.description, bi.material_id::text) as material_description
+    SELECT
+    bi.*,
+      COALESCE(m.code, bi.material_id:: text) as material_code,
+      COALESCE(m.description, bi.material_id:: text) as material_description
         FROM billing_items bi
         LEFT JOIN materials m ON bi.material_id = m.id
         WHERE bi.billing_id = ${parseInt(id)}
@@ -8280,18 +8658,19 @@ router.get("/billing-documents/:id/download", async (req, res) => {
     } catch (itemError: any) {
       console.error('Error fetching items for download, using fallback:', itemError.message);
       itemsResult = await db.execute(sql`
-        SELECT 
-          bi.*,
-          bi.material_id::text as material_code,
-          bi.material_id::text as material_description
+    SELECT
+    bi.*,
+      bi.material_id:: text as material_code,
+        bi.material_id:: text as material_description
         FROM billing_items bi
         WHERE bi.billing_id = ${parseInt(id)}
         ORDER BY bi.line_item
       `);
     }
 
+
     // Parse tax breakdown from sales order
-    let taxBreakdown = [];
+    let taxBreakdown: any[] = [];
     if (billing.sales_order_tax_breakdown) {
       try {
         taxBreakdown = typeof billing.sales_order_tax_breakdown === 'string'
@@ -8312,23 +8691,23 @@ router.get("/billing-documents/:id/download", async (req, res) => {
     if (taxBreakdown.length > 0) {
       taxDetailsSection = taxBreakdown.map((tax: any) => {
         const taxName = tax.title || tax.rule_code || 'Tax';
-        const taxRate = tax.rate_percent ? ` (${tax.rate_percent}%)` : '';
+        const taxRate = tax.rate_percent ? ` (${tax.rate_percent} %)` : '';
         const taxAmount = parseFloat(tax.amount || 0).toFixed(2);
-        return `${(taxName + taxRate).padEnd(45)} $${taxAmount.padStart(10)}`;
+        return `${(taxName + taxRate).padEnd(45)} $${taxAmount.padStart(10)} `;
       }).join('\n') + '\n' + '-'.repeat(80) + '\n';
-      taxDetailsSection += `Total Tax Amount:${''.padEnd(35)} $${parseFloat(String(billing.tax_amount || 0)).toFixed(2).padStart(10)}`;
+      taxDetailsSection += `Total Tax Amount:${''.padEnd(35)} $${parseFloat(String(billing.tax_amount || 0)).toFixed(2).padStart(10)} `;
     } else {
       // Fallback to single tax amount if no breakdown
-      taxDetailsSection = `Tax:${''.padEnd(43)} $${parseFloat(String(billing.tax_amount || 0)).toFixed(2).padStart(10)}`;
+      taxDetailsSection = `Tax:${''.padEnd(43)} $${parseFloat(String(billing.tax_amount || 0)).toFixed(2).padStart(10)} `;
     }
 
     // Generate simple text invoice with tax breakdown and proper product names
     const invoiceText = `
-INVOICE
+    INVOICE
 ${'='.repeat(80)}
 
 Invoice Number: ${billing.billing_number}
-Date: ${new Date(billing.billing_date as string | number | Date).toLocaleDateString()}
+    Date: ${new Date(billing.billing_date as string | number | Date).toLocaleDateString()}
 Due Date: ${new Date(billing.due_date as string | number | Date).toLocaleDateString()}
 
 Bill To:
@@ -8346,27 +8725,28 @@ ${'-'.repeat(80)}
 ${itemsResult.rows.map(item => {
       const description = String(item.material_description || 'N/A').substring(0, 40);
       return `${String(item.line_item).padEnd(10)} ${description.padEnd(40)} ${String(item.billing_quantity || 0).padEnd(10)} $${parseFloat(String(item.unit_price || 0)).toFixed(2).padStart(12)} $${parseFloat(String(item.net_amount || 0)).toFixed(2).padStart(12)}`;
-    }).join('\n')}
+    }).join('\n')
+      }
 
 ${'='.repeat(80)}
-TOTALS
+    TOTALS
 ${'='.repeat(80)}
 
-Subtotal:${''.padEnd(42)} $${parseFloat(String(billing.net_amount || 0)).toFixed(2).padStart(10)}
+    Subtotal:${''.padEnd(42)} $${parseFloat(String(billing.net_amount || 0)).toFixed(2).padStart(10)}
 ${taxDetailsSection}
 ${'='.repeat(80)}
-Total:${''.padEnd(46)} $${parseFloat(String(billing.total_amount || 0)).toFixed(2).padStart(10)}
+    Total:${''.padEnd(46)} $${parseFloat(String(billing.total_amount || 0)).toFixed(2).padStart(10)}
 ${'='.repeat(80)}
 
 Sales Order: ${billing.sales_order_number || 'N/A'}
-Delivery: ${billing.delivery_number || 'N/A'}
+    Delivery: ${billing.delivery_number || 'N/A'}
 
 Thank you for your business!
-    `;
+      `;
 
     // Set headers for download
     res.setHeader('Content-Type', 'text/plain');
-    res.setHeader('Content-Disposition', `attachment; filename="invoice-${billing.billing_number}.txt"`);
+    res.setHeader('Content-Disposition', `attachment; filename = "invoice-${billing.billing_number}.txt"`);
     res.send(invoiceText);
 
   } catch (error) {
@@ -8383,7 +8763,7 @@ router.get("/deliveries-for-billing", async (req, res) => {
   try {
     // Check if delivery_documents table exists
     const tableCheck = await db.execute(sql`
-      SELECT EXISTS (
+      SELECT EXISTS(
         SELECT FROM information_schema.tables 
         WHERE table_schema = 'public' 
         AND table_name = 'delivery_documents'
@@ -8400,26 +8780,26 @@ router.get("/deliveries-for-billing", async (req, res) => {
     }
 
     const deliveries = await db.execute(sql`
-      SELECT 
-        dd.id, 
-        dd.delivery_number, 
-        dd.delivery_date, 
-        dd.status,
-        dd.sales_order_id, 
-        so.order_number as sales_order_number,
-        dd.customer_id, 
-        c.name as customer_name,
-        COALESCE(so.total_amount, 0) as estimated_amount,
-        (SELECT COUNT(*) FROM sales_order_items WHERE sales_order_id = dd.sales_order_id) as item_count
+    SELECT
+    dd.id,
+      dd.delivery_number,
+      dd.delivery_date,
+      dd.status,
+      dd.sales_order_id,
+      so.order_number as sales_order_number,
+      dd.customer_id,
+      c.name as customer_name,
+      COALESCE(so.total_amount, 0) as estimated_amount,
+      (SELECT COUNT(*) FROM sales_order_items WHERE sales_order_id = dd.sales_order_id) as item_count
       FROM delivery_documents dd
       LEFT JOIN sales_orders so ON dd.sales_order_id = so.id
       LEFT JOIN erp_customers c ON dd.customer_id = c.id
-      WHERE dd.status IN ('COMPLETED', 'CONFIRMED', 'PENDING')
-      AND NOT EXISTS (
+      WHERE dd.status IN('COMPLETED', 'CONFIRMED', 'PENDING')
+      AND NOT EXISTS(
         SELECT 1 FROM billing_documents bd WHERE bd.delivery_id = dd.id
       )
       ORDER BY dd.delivery_date DESC
-    `);
+  `);
 
     res.json({
       success: true,
@@ -8453,34 +8833,34 @@ router.get("/deliveries-for-billing", async (req, res) => {
 router.post('/customer-payment', async (req, res) => {
   const { customerId, amount, paymentDate, paymentMethod, reference, description, bankAccountId, applications } = req.body;
 
-  console.log('\n🔵 ========== PAYMENT PROCESSING START ==========');
-  console.log('📝 Request:', { customerId, amount, paymentDate, paymentMethod, reference });
+  console.log('\nÃ°Å¸â€Âµ ========== PAYMENT PROCESSING START ==========');
+  console.log('Ã°Å¸â€œÂ Request:', { customerId, amount, paymentDate, paymentMethod, reference });
 
   if (!customerId || !amount || isNaN(amount) || amount <= 0) {
-    console.log('❌ Validation failed: Invalid customerId or amount');
+    console.log('Ã¢ÂÅ’ Validation failed: Invalid customerId or amount');
     return res.status(400).json({ success: false, error: 'customerId and positive amount are required.' });
   }
 
   // Use FIFO payment allocation across all open and partial AR open items
   try {
     await db.transaction(async (tx) => {
-      console.log('🔷 Transaction started');
+      console.log('Ã°Å¸â€Â· Transaction started');
 
       // Get status values from system configuration (no hardcoded values)
-      console.log('📋 Step 1: Getting AR status configuration...');
+      console.log('Ã°Å¸â€œâ€¹ Step 1: Getting AR status configuration...');
       const statusConfigResult = await tx.execute(sql`
-        SELECT 
-          (SELECT config_value FROM system_configuration WHERE config_key = 'ar_status_open' AND active = true LIMIT 1) as open_status,
-          (SELECT config_value FROM system_configuration WHERE config_key = 'ar_status_partial' AND active = true LIMIT 1) as partial_status
+SELECT
+  (SELECT config_value FROM system_configuration WHERE config_key = 'ar_status_open' AND active = true LIMIT 1) as open_status,
+  (SELECT config_value FROM system_configuration WHERE config_key = 'ar_status_partial' AND active = true LIMIT 1) as partial_status
       `);
 
       const openStatus = String(statusConfigResult.rows[0]?.open_status || '');
       const partialStatus = String(statusConfigResult.rows[0]?.partial_status || '');
 
-      console.log(`✅ Status config: open=${openStatus}, partial=${partialStatus}`);
+      console.log(`Ã¢Å“â€¦ Status config: open = ${openStatus}, partial = ${partialStatus} `);
 
       if (!openStatus || !partialStatus) {
-        console.log('❌ AR status configuration not found!');
+        console.log('Ã¢ÂÅ’ AR status configuration not found!');
         throw new Error('AR status configuration not found. Please configure ar_status_open and ar_status_partial in system_configuration');
       }
 
@@ -8488,23 +8868,23 @@ router.post('/customer-payment', async (req, res) => {
       // Use ar_open_items instead of accounts_receivable for accurate tracking
       // Use parameterized query for status values
       const openInvoices = await tx.execute(sql`
-        SELECT 
-          aoi.id as open_item_id,
-          aoi.billing_document_id,
-          aoi.outstanding_amount,
-          aoi.original_amount,
-          aoi.status,
-          aoi.due_date,
-          bd.billing_number,
-          bd.total_amount
+SELECT
+aoi.id as open_item_id,
+  aoi.billing_document_id,
+  aoi.outstanding_amount,
+  aoi.original_amount,
+  aoi.status,
+  aoi.due_date,
+  bd.billing_number,
+  bd.total_amount
         FROM ar_open_items aoi
         LEFT JOIN billing_documents bd ON aoi.billing_document_id = bd.id
         WHERE aoi.customer_id = ${customerId}
           AND aoi.active = true
-          AND (aoi.status = ${openStatus} OR aoi.status = ${partialStatus})
+AND(aoi.status = ${openStatus} OR aoi.status = ${partialStatus})
           AND aoi.outstanding_amount > 0
         ORDER BY aoi.due_date ASC, aoi.created_at ASC
-      `);
+  `);
 
       let remaining = parseFloat(amount);
       const allocations: Array<{ invoiceId: number; openItemId: number; amount: number }> = [];
@@ -8556,24 +8936,24 @@ router.post('/customer-payment', async (req, res) => {
 
       // Get payment number from sequence or count
       const paymentCountResult = await tx.execute(sql`
-        SELECT COUNT(*)::integer as count 
+        SELECT COUNT(*):: integer as count 
         FROM customer_payments
         WHERE EXTRACT(YEAR FROM payment_date) = ${paymentYear}
-      `);
+`);
       const paymentCount = parseInt(paymentCountResult.rows[0]?.count || '0') + 1;
-      const paymentNumber = `PAY-${paymentYear}-${paymentCount.toString().padStart(6, '0')}`;
+      const paymentNumber = `PAY - ${paymentYear} -${paymentCount.toString().padStart(6, '0')} `;
 
       // Get payment method default and posting status from system configuration
       const paymentMethodDefaultResult = await tx.execute(sql`
         SELECT config_value FROM system_configuration 
         WHERE config_key = 'default_payment_method' AND active = true LIMIT 1
-      `);
+  `);
       const defaultPaymentMethod = paymentMethodDefaultResult.rows[0]?.config_value || 'BANK_TRANSFER';
 
       const postingStatusResult = await tx.execute(sql`
         SELECT config_value FROM system_configuration 
         WHERE config_key = 'payment_posting_status' AND active = true LIMIT 1
-      `);
+  `);
       const postingStatus = postingStatusResult.rows[0]?.config_value || 'POSTED';
 
       // Get customer company code and currency
@@ -8582,7 +8962,7 @@ router.post('/customer-payment', async (req, res) => {
         FROM erp_customers
         WHERE id = ${customerId}
         LIMIT 1
-      `);
+  `);
       const customerCompanyCodeId = customerResult.rows[0]?.company_code_id || null;
       const customerCurrency = customerResult.rows[0]?.currency || 'USD';
 
@@ -8597,34 +8977,34 @@ router.post('/customer-payment', async (req, res) => {
           SELECT gl_account_id 
           FROM account_id_master 
           WHERE id = ${parseInt(bankAccountId)} AND is_active = true
-        `);
+  `);
         // If account_id_master exists, we'll use its GL account directly
         // bank_account_id can be NULL since the foreign key allows it
         resolvedBankAccountId = null; // Set to NULL to avoid FK constraint issue
       }
 
       // Insert customer payment with all fields
-      console.log('📋 Step 4: Inserting payment record...');
-      console.log(`   Params: number=${paymentNumber}, customer=${customerId}, amount=${amount}, company_code_id=${customerCompanyCodeId}`);
+      console.log('Ã°Å¸â€œâ€¹ Step 4: Inserting payment record...');
+      console.log(`   Params: number = ${paymentNumber}, customer = ${customerId}, amount = ${amount}, company_code_id = ${customerCompanyCodeId} `);
 
       const paymentRes = await tx.execute(sql`
-        INSERT INTO customer_payments (
-          payment_number, customer_id, payment_date, payment_amount, payment_method, 
-          reference, posting_status, currency, company_code_id, bank_account_id, description
-        ) VALUES (
-          ${paymentNumber}, ${customerId}, ${paymentDateStr},
-          ${amount}, ${paymentMethod || defaultPaymentMethod}, ${reference || ''}, ${postingStatus},
-          ${customerCurrency}, ${customerCompanyCodeId}, ${resolvedBankAccountId}, ${description || ''}
-        ) RETURNING id
+        INSERT INTO customer_payments(
+    payment_number, customer_id, payment_date, payment_amount, payment_method,
+    reference, posting_status, currency, company_code_id, bank_account_id, description
+  ) VALUES(
+    ${paymentNumber}, ${customerId}, ${paymentDateStr},
+    ${amount}, ${paymentMethod || defaultPaymentMethod}, ${reference || ''}, ${postingStatus},
+    ${customerCurrency}, ${customerCompanyCodeId}, ${resolvedBankAccountId}, ${description || ''}
+  ) RETURNING id
       `);
       const paymentId = paymentRes.rows[0].id;
-      console.log(`✅ Payment inserted: ID=${paymentId}`);
+      console.log(`Ã¢Å“â€¦ Payment inserted: ID = ${paymentId} `);
 
       // Update AR open items directly using open_item_id from allocations
       for (const alloc of allocations) {
         // Use openItemId directly from allocations (already queried from ar_open_items)
         if (!alloc.openItemId) {
-          console.warn(`No open item ID found for allocation. Skipping.`);
+          console.warn(`No open item ID found for allocation.Skipping.`);
           continue;
         }
 
@@ -8635,7 +9015,7 @@ router.post('/customer-payment', async (req, res) => {
           WHERE id = ${alloc.openItemId}
             AND active = true
           LIMIT 1
-        `);
+  `);
 
         if (arOpenItemResult.rows.length > 0) {
           const arOpenItem = arOpenItemResult.rows[0];
@@ -8644,10 +9024,10 @@ router.post('/customer-payment', async (req, res) => {
 
           // Get status values from system configuration (no hardcoded values)
           const statusConfigResult = await tx.execute(sql`
-            SELECT 
-              (SELECT config_value FROM system_configuration WHERE config_key = 'ar_status_cleared' AND active = true LIMIT 1) as cleared_status,
-              (SELECT config_value FROM system_configuration WHERE config_key = 'ar_status_partial' AND active = true LIMIT 1) as partial_status
-          `);
+SELECT
+  (SELECT config_value FROM system_configuration WHERE config_key = 'ar_status_cleared' AND active = true LIMIT 1) as cleared_status,
+  (SELECT config_value FROM system_configuration WHERE config_key = 'ar_status_partial' AND active = true LIMIT 1) as partial_status
+    `);
 
           const clearedStatus = statusConfigResult.rows[0]?.cleared_status;
           const partialStatus = statusConfigResult.rows[0]?.partial_status;
@@ -8673,10 +9053,10 @@ router.post('/customer-payment', async (req, res) => {
             await tx.execute(sql`
               UPDATE ar_open_items
               SET outstanding_amount = ${newOutstanding.toString()},
-                  status = ${newStatus},
-                  last_payment_date = ${paymentDateStr}
+status = ${newStatus},
+last_payment_date = ${paymentDateStr}
               WHERE id = ${arOpenItem.id}
-            `);
+`);
           }
 
           // Create clearing document if fully paid
@@ -8689,7 +9069,7 @@ router.post('/customer-payment', async (req, res) => {
                 LEFT JOIN erp_customers ec ON bd.customer_id = ec.id
                 WHERE bd.id = ${arOpenItem.billing_document_id}
                 LIMIT 1
-              `);
+  `);
 
               if (billingDocResult.rows.length > 0) {
                 const billingDoc = billingDocResult.rows[0];
@@ -8700,7 +9080,7 @@ router.post('/customer-payment', async (req, res) => {
                 `);
 
                 if (!companyCodeResult.rows[0]?.code) {
-                  throw new Error(`Company code not found for customer company_code_id: ${billingDoc.company_code_id}`);
+                  throw new Error(`Company code not found for customer company_code_id: ${billingDoc.company_code_id} `);
                 }
 
                 const companyCode = companyCodeResult.rows[0].code;
@@ -8710,52 +9090,52 @@ router.post('/customer-payment', async (req, res) => {
                 const clearingDocTypeResult = await tx.execute(sql`
                   SELECT config_value FROM system_configuration 
                   WHERE config_key = 'clearing_document_type' AND active = true LIMIT 1
-                `);
+  `);
                 const clearingDocType = clearingDocTypeResult.rows[0]?.config_value || 'CL';
 
                 // Get currency from billing document or system configuration
                 const currencyResult = await tx.execute(sql`
                   SELECT currency FROM billing_documents WHERE id = ${arOpenItem.billing_document_id} LIMIT 1
-                `);
+  `);
                 const currency = currencyResult.rows[0]?.currency || (await tx.execute(sql`
                   SELECT config_value FROM system_configuration 
                   WHERE config_key = 'default_currency' AND active = true LIMIT 1
-                `)).rows[0]?.config_value || 'USD';
+  `)).rows[0]?.config_value || 'USD';
 
                 // Get created_by from auth context or system configuration
                 const createdByResult = await tx.execute(sql`
                   SELECT config_value FROM system_configuration 
                   WHERE config_key = 'system_user_id' AND active = true LIMIT 1
-                `);
+  `);
                 const createdBy = createdByResult.rows[0]?.config_value ? parseInt(String(createdByResult.rows[0].config_value)) : 1;
 
                 const clearingDocCountResult = await tx.execute(sql`
-                  SELECT COUNT(*)::integer as count 
+                  SELECT COUNT(*):: integer as count 
                   FROM accounting_documents
                   WHERE company_code = ${companyCode}
                     AND document_type = ${clearingDocType}
                     AND fiscal_year = ${parseInt(fiscalYear)}
-                `);
+`);
 
                 const clearingDocCount = parseInt(clearingDocCountResult.rows[0]?.count || '0') + 1;
-                const clearingDocNumber = `${String(companyCode).replace(/[^0-9]/g, '').slice(-4).padStart(4, '0')}${fiscalYear.slice(-2)}CLR${clearingDocCount.toString().padStart(6, '0')}`;
+                const clearingDocNumber = `${String(companyCode).replace(/[^0-9]/g, '').slice(-4).padStart(4, '0')}${fiscalYear.slice(-2)}CLR${clearingDocCount.toString().padStart(6, '0')} `;
 
                 // Create clearing document
                 await tx.execute(sql`
-                  INSERT INTO accounting_documents (
-                    document_number, document_type, company_code, fiscal_year,
-                    posting_date, document_date, period, reference, header_text,
-                    total_amount, currency, source_module, source_document_id,
-                    source_document_type, created_by
-                  ) VALUES (
-                    ${clearingDocNumber}, ${clearingDocType}, ${companyCode}, ${parseInt(fiscalYear)},
-                    ${paymentDateStr}, ${paymentDateStr}, ${String(paymentDateObj.getMonth() + 1).padStart(2, '0')},
+                  INSERT INTO accounting_documents(
+  document_number, document_type, company_code, fiscal_year,
+  posting_date, document_date, period, reference, header_text,
+  total_amount, currency, source_module, source_document_id,
+  source_document_type, created_by
+) VALUES(
+  ${clearingDocNumber}, ${clearingDocType}, ${companyCode}, ${parseInt(fiscalYear)},
+  ${paymentDateStr}, ${paymentDateStr}, ${String(paymentDateObj.getMonth() + 1).padStart(2, '0')},
                     ${paymentNumber}, ${`AR Clearing for ${billingDoc.billing_number || 'Invoice'}`},
                     ${alloc.amount}, ${currency}, 'SALES', ${paymentId}, 'CLEARING', ${createdBy}
                   )
-                `);
+`);
 
-                console.log(`✅ Created clearing document ${clearingDocNumber} for AR open item ${arOpenItem.id}`);
+                console.log(`Ã¢Å“â€¦ Created clearing document ${clearingDocNumber} for AR open item ${arOpenItem.id} `);
               }
             } catch (clearingError: any) {
               console.warn('Could not create clearing document (optional):', clearingError.message);
@@ -8767,16 +9147,16 @@ router.post('/customer-payment', async (req, res) => {
           const createdByResult = await tx.execute(sql`
             SELECT config_value FROM system_configuration 
             WHERE config_key = 'system_user_id' AND active = true LIMIT 1
-          `);
+  `);
           const createdBy = createdByResult.rows[0]?.config_value ? parseInt(String(createdByResult.rows[0].config_value)) : 1;
 
           // Create payment application (link payment to billing document)
           await tx.execute(sql`
-            INSERT INTO payment_applications (
-              payment_id, billing_id, applied_amount, created_by, application_date
-            ) VALUES (
-              ${paymentId}, ${arOpenItem.billing_document_id}, ${alloc.amount}, ${createdBy}, ${paymentDateStr}
-            )
+            INSERT INTO payment_applications(
+    payment_id, billing_id, applied_amount, created_by, application_date
+  ) VALUES(
+    ${paymentId}, ${arOpenItem.billing_document_id}, ${alloc.amount}, ${createdBy}, ${paymentDateStr}
+  )
           `);
         } else {
           console.warn(`No AR open item found with ID ${alloc.openItemId}. Payment recorded but AR open item not updated.`);
@@ -8793,7 +9173,7 @@ router.post('/customer-payment', async (req, res) => {
             AND active = true
             AND gl_account_id IS NOT NULL
           LIMIT 1
-        `);
+  `);
 
         if (arGlAccountResult.rows.length > 0) {
           const arGlAccountId = parseInt(arGlAccountResult.rows[0].gl_account_id);
@@ -8810,7 +9190,7 @@ router.post('/customer-payment', async (req, res) => {
                 AND aim.is_active = true
                 AND ga.is_active = true
               LIMIT 1
-            `);
+  `);
 
             if (accountIdMasterResult.rows.length > 0) {
               bankGlAccountResult = accountIdMasterResult;
@@ -8824,7 +9204,7 @@ router.post('/customer-payment', async (req, res) => {
                   AND ba.is_active = true
                   AND ga.is_active = true
                 LIMIT 1
-              `);
+  `);
             }
           }
 
@@ -8838,7 +9218,7 @@ router.post('/customer-payment', async (req, res) => {
               WHERE aim.is_active = true
                 AND ga.is_active = true
               LIMIT 1
-            `);
+  `);
 
             if (defaultAccountIdMaster.rows.length > 0) {
               bankGlAccountResult = defaultAccountIdMaster;
@@ -8851,7 +9231,7 @@ router.post('/customer-payment', async (req, res) => {
                 WHERE ba.is_active = true
                   AND ga.is_active = true
                 LIMIT 1
-              `);
+  `);
             }
           }
 
@@ -8864,7 +9244,7 @@ router.post('/customer-payment', async (req, res) => {
               FROM erp_customers ec
               LEFT JOIN company_codes cc ON ec.company_code_id = cc.id
               WHERE ec.id = ${customerId}
-            `);
+`);
 
             if (customerCompanyCodeResult.rows.length > 0) {
               const companyCode = customerCompanyCodeResult.rows[0].company_code;
@@ -8874,51 +9254,51 @@ router.post('/customer-payment', async (req, res) => {
               const paymentDocTypeResult = await tx.execute(sql`
                 SELECT config_value FROM system_configuration 
                 WHERE config_key = 'payment_document_type' AND active = true LIMIT 1
-              `);
+  `);
               const paymentDocType = paymentDocTypeResult.rows[0]?.config_value || 'DZ';
 
               // Get currency from customer or system configuration
               const customerCurrencyResult = await tx.execute(sql`
                 SELECT currency FROM erp_customers WHERE id = ${customerId} LIMIT 1
-              `);
+  `);
               const currency = customerCurrencyResult.rows[0]?.currency || (await tx.execute(sql`
                 SELECT config_value FROM system_configuration 
                 WHERE config_key = 'default_currency' AND active = true LIMIT 1
-              `)).rows[0]?.config_value || 'USD';
+  `)).rows[0]?.config_value || 'USD';
 
               // Get created_by from auth context or system configuration
               const createdByResult = await tx.execute(sql`
                 SELECT config_value FROM system_configuration 
                 WHERE config_key = 'system_user_id' AND active = true LIMIT 1
-              `);
+  `);
               const createdBy = createdByResult.rows[0]?.config_value ? parseInt(String(createdByResult.rows[0].config_value)) : 1;
 
               const paymentDocCountResult = await tx.execute(sql`
-                SELECT COUNT(*)::integer as count 
+                SELECT COUNT(*):: integer as count 
                 FROM accounting_documents
                 WHERE company_code = ${companyCode}
                   AND document_type = ${paymentDocType}
                   AND fiscal_year = ${parseInt(fiscalYear)}
-              `);
+`);
 
               const paymentDocCount = parseInt(String(paymentDocCountResult.rows[0]?.count || '0')) + 1;
               const timestamp = Date.now().toString().slice(-6); // Last 6 digits of timestamp for uniqueness
-              const paymentAccountingDocNumber = `${String(companyCode).replace(/[^0-9]/g, '').slice(-4).padStart(4, '0')}${fiscalYear.slice(-2)}${paymentDocCount.toString().padStart(6, '0')}${timestamp}`;
+              const paymentAccountingDocNumber = `${String(companyCode).replace(/[^0-9]/g, '').slice(-4).padStart(4, '0')}${fiscalYear.slice(-2)}${paymentDocCount.toString().padStart(6, '0')}${timestamp} `;
 
               // Create accounting document
               await tx.execute(sql`
-                INSERT INTO accounting_documents (
-                  document_number, document_type, company_code, fiscal_year,
-                  posting_date, document_date, period, reference, header_text,
-                  total_amount, currency, source_module, source_document_id,
-                  source_document_type, created_by
-                ) VALUES (
-                  ${paymentAccountingDocNumber}, ${paymentDocType}, ${companyCode}, ${parseInt(fiscalYear)},
-                  ${paymentDateStr}, ${paymentDateStr}, ${String(paymentDateObj.getMonth() + 1).padStart(2, '0')},
+                INSERT INTO accounting_documents(
+  document_number, document_type, company_code, fiscal_year,
+  posting_date, document_date, period, reference, header_text,
+  total_amount, currency, source_module, source_document_id,
+  source_document_type, created_by
+) VALUES(
+  ${paymentAccountingDocNumber}, ${paymentDocType}, ${companyCode}, ${parseInt(fiscalYear)},
+  ${paymentDateStr}, ${paymentDateStr}, ${String(paymentDateObj.getMonth() + 1).padStart(2, '0')},
                   ${paymentNumber}, ${`Customer Payment ${paymentNumber}`},
                   ${amount}, ${currency}, 'SALES', ${paymentId}, 'PAYMENT', ${createdBy}
                 )
-              `);
+`);
 
               // Get fiscal period from posting date
               const fiscalPeriod = paymentDateObj.getMonth() + 1;
@@ -8926,44 +9306,44 @@ router.post('/customer-payment', async (req, res) => {
 
               // Create GL entries: Credit AR (reduce receivable), Debit Bank (increase bank balance)
               await tx.execute(sql`
-                INSERT INTO gl_entries (
-                  document_number, gl_account_id, amount, 
-                  debit_credit_indicator, posting_date, posting_status,
-                  fiscal_period, fiscal_year, description,
-                  source_module, source_document_id, source_document_type,
-                  reference
-                ) VALUES (
-                  ${paymentAccountingDocNumber}, ${arGlAccountId}, ${amount}, 'C', ${paymentDateStr}, 'posted',
-                  ${fiscalPeriod}, ${fiscalYearValue}, ${`Customer Payment ${paymentNumber} - AR Reduction`},
-                  'SALES', ${paymentId}, 'PAYMENT',
-                  ${paymentNumber}
-                )
-              `);
+                INSERT INTO gl_entries(
+  document_number, gl_account_id, amount,
+  debit_credit_indicator, posting_key, posting_date, posting_status,
+  fiscal_period, fiscal_year, description,
+  source_module, source_document_id, source_document_type,
+  reference
+) VALUES(
+  ${paymentAccountingDocNumber}, ${arGlAccountId}, ${amount}, 'C', '11', ${paymentDateStr}, 'posted',
+  ${fiscalPeriod}, ${fiscalYearValue}, ${`Customer Payment ${paymentNumber} - AR Reduction`},
+  'SALES', ${paymentId}, 'PAYMENT',
+  ${paymentNumber}
+)
+  `);
 
               await tx.execute(sql`
-                INSERT INTO gl_entries (
-                  document_number, gl_account_id, amount, 
-                  debit_credit_indicator, posting_date, posting_status,
-                  fiscal_period, fiscal_year, description,
-                  source_module, source_document_id, source_document_type,
-                  reference
-                ) VALUES (
-                  ${paymentAccountingDocNumber}, ${bankGlAccountId}, ${amount}, 'D', ${paymentDateStr}, 'posted',
-                  ${fiscalPeriod}, ${fiscalYearValue}, ${`Customer Payment ${paymentNumber} - Bank Deposit`},
-                  'SALES', ${paymentId}, 'PAYMENT',
-                  ${paymentNumber}
-                )
-              `);
+                INSERT INTO gl_entries(
+    document_number, gl_account_id, amount,
+    debit_credit_indicator, posting_key, posting_date, posting_status,
+    fiscal_period, fiscal_year, description,
+    source_module, source_document_id, source_document_type,
+    reference
+  ) VALUES(
+    ${paymentAccountingDocNumber}, ${bankGlAccountId}, ${amount}, 'D', '40', ${paymentDateStr}, 'posted',
+    ${fiscalPeriod}, ${fiscalYearValue}, ${`Customer Payment ${paymentNumber} - Bank Deposit`},
+    'SALES', ${paymentId}, 'PAYMENT',
+    ${paymentNumber}
+  )
+    `);
 
               // Update payment with accounting document number and GL posting status
               await tx.execute(sql`
                 UPDATE customer_payments
                 SET accounting_document_number = ${paymentAccountingDocNumber},
-                    gl_posting_status = 'POSTED'
+gl_posting_status = 'POSTED'
                 WHERE id = ${paymentId}
-              `);
+`);
 
-              console.log(`✅ Created GL entries for payment ${paymentNumber}`);
+              console.log(`Ã¢Å“â€¦ Created GL entries for payment ${paymentNumber}`);
             }
           }
         }
@@ -8983,11 +9363,11 @@ router.post('/customer-payment', async (req, res) => {
       });
     });
   } catch (error) {
-    console.error('\n❌ ========== PAYMENT TRANSACTION FAILED ==========');
-    console.error('❌ Error:', error);
-    console.error('❌ Message:', error.message);
-    console.error('❌ Stack:', error.stack);
-    console.error('🔴 ================================================\n');
+    console.error('\nÃ¢ÂÅ’ ========== PAYMENT TRANSACTION FAILED ==========');
+    console.error('Ã¢ÂÅ’ Error:', error);
+    console.error('Ã¢ÂÅ’ Message:', error.message);
+    console.error('Ã¢ÂÅ’ Stack:', error.stack);
+    console.error('Ã°Å¸â€Â´ ================================================\n');
     res.status(500).json({ success: false, error: error.message || 'Payment processing failed' });
   }
 });
@@ -9002,24 +9382,24 @@ router.post('/reverse-payment', async (req, res) => {
     await db.transaction(async (tx) => {
       // 1. Mark payment as reversed (with status and reversal reason)
       await tx.execute(sql`
-        UPDATE customer_payments SET posting_status='REVERSED', reference=CONCAT(reference, ' [REVERSED: ', ${reason || 'No reason provided'} ,']') WHERE id=${paymentId}
-      `);
+        UPDATE customer_payments SET posting_status = 'REVERSED', reference = CONCAT(reference, ' [REVERSED: ', ${reason || 'No reason provided'} , ']') WHERE id = ${paymentId}
+`);
       // 2. Find all applications for this payment
-      const appli = await tx.execute(sql`SELECT * FROM payment_applications WHERE payment_id=${paymentId}`);
+      const appli = await tx.execute(sql`SELECT * FROM payment_applications WHERE payment_id = ${paymentId} `);
       for (const appl of appli.rows) {
         // 3. Subtract payment from invoice (restore balance)
-        const arResult = await tx.execute(sql`SELECT payment_amount, amount FROM accounts_receivable WHERE id=${appl.billing_id}`);
+        const arResult = await tx.execute(sql`SELECT payment_amount, amount FROM accounts_receivable WHERE id = ${appl.billing_id} `);
         if (arResult.rows.length > 0) {
           const invPaid = parseFloat(arResult.rows[0].payment_amount || 0) - parseFloat(appl.applied_amount || 0);
           const invAmt = parseFloat(arResult.rows[0].amount);
           const newStatus = (invPaid <= 0.01) ? 'Open' : 'Partial';
           await tx.execute(sql`
-            UPDATE accounts_receivable SET payment_amount=${Math.max(0, invPaid)}, status=${newStatus}, updated_at=NOW() WHERE id=${appl.billing_id}
-          `);
+            UPDATE accounts_receivable SET payment_amount = ${Math.max(0, invPaid)}, status = ${newStatus}, updated_at = NOW() WHERE id = ${appl.billing_id}
+`);
         }
       }
       // 4. Delete payment_applications for this payment
-      await tx.execute(sql`DELETE FROM payment_applications WHERE payment_id=${paymentId}`);
+      await tx.execute(sql`DELETE FROM payment_applications WHERE payment_id = ${paymentId} `);
       res.json({ success: true, paymentId, reversed: true });
     });
   } catch (error) {
@@ -9033,23 +9413,23 @@ router.get('/payments/recent', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 50;
     const payments = await db.execute(sql`
-      SELECT 
-        cp.id,
-        cp.payment_number,
-        cp.payment_date,
-        cp.payment_amount,
-        cp.payment_method,
-        cp.reference,
-        cp.posting_status,
-        cp.accounting_document_number,
-        cp.currency,
-        c.name as customer_name,
-        c.customer_code as customer_code
+SELECT
+cp.id,
+  cp.payment_number,
+  cp.payment_date,
+  cp.payment_amount,
+  cp.payment_method,
+  cp.reference,
+  cp.posting_status,
+  cp.accounting_document_number,
+  cp.currency,
+  c.name as customer_name,
+  c.customer_code as customer_code
       FROM customer_payments cp
       LEFT JOIN erp_customers c ON cp.customer_id = c.id
       ORDER BY cp.payment_date DESC, cp.created_at DESC
       LIMIT ${limit}
-    `);
+`);
 
     res.json({
       success: true,
@@ -9069,19 +9449,19 @@ router.get('/payments/:paymentId', async (req, res) => {
   try {
     const { paymentId } = req.params;
     const payment = await db.execute(sql`
-      SELECT 
-        cp.*,
-        c.name as customer_name,
-        c.customer_code as customer_code,
-        cc.code as company_code,
-        ba.account_number as bank_account_number,
-        ba.account_name as bank_account_name
+SELECT
+cp.*,
+  c.name as customer_name,
+  c.customer_code as customer_code,
+  cc.code as company_code,
+  ba.account_number as bank_account_number,
+  ba.account_name as bank_account_name
       FROM customer_payments cp
       LEFT JOIN erp_customers c ON cp.customer_id = c.id
       LEFT JOIN company_codes cc ON cp.company_code_id = cc.id
       LEFT JOIN bank_accounts ba ON cp.bank_account_id = ba.id
       WHERE cp.id = ${parseInt(paymentId)}
-    `);
+`);
 
     if (payment.rows.length === 0) {
       return res.status(404).json({
@@ -9092,15 +9472,15 @@ router.get('/payments/:paymentId', async (req, res) => {
 
     // Get payment applications
     const applications = await db.execute(sql`
-      SELECT 
-        pa.*,
-        bd.billing_number,
-        aoi.invoice_number
+SELECT
+pa.*,
+  bd.billing_number,
+  aoi.invoice_number
       FROM payment_applications pa
       LEFT JOIN billing_documents bd ON pa.billing_id = bd.id
       LEFT JOIN ar_open_items aoi ON pa.billing_id = aoi.billing_document_id
       WHERE pa.payment_id = ${parseInt(paymentId)}
-    `);
+`);
 
     res.json({
       success: true,
@@ -9126,26 +9506,28 @@ router.get('/payments/:paymentId', async (req, res) => {
 router.get("/financial-posting/pending", async (req, res) => {
   try {
     const pendingDocs = await db.execute(sql`
-      SELECT 
-        bd.id, bd.billing_number, bd.billing_date, bd.due_date,
-        bd.net_amount, bd.tax_amount, bd.total_amount, bd.currency,
-        bd.posting_status, bd.accounting_document_number,
-        bd.sales_order_id, so.order_number as sales_order_number,
-        bd.delivery_id, dd.delivery_number,
-        bd.customer_id, c.name as customer_name,
-        bd.company_code_id, cc.code as company_code, cc.name as company_name,
-        bd.created_at
+SELECT
+bd.id, bd.billing_number, bd.billing_date, bd.due_date,
+  bd.net_amount, bd.tax_amount, bd.total_amount, bd.currency,
+  bd.posting_status, bd.accounting_document_number,
+  bd.sales_order_id, so.order_number as sales_order_number,
+  bd.delivery_id, dd.delivery_number,
+  bd.customer_id, c.name as customer_name,
+  bd.company_code_id, cc.code as company_code, cc.name as company_name,
+  bd.created_at
       FROM billing_documents bd
       LEFT JOIN sales_orders so ON bd.sales_order_id = so.id
       LEFT JOIN delivery_documents dd ON bd.delivery_id = dd.id
       LEFT JOIN erp_customers c ON bd.customer_id = c.id
       LEFT JOIN company_codes cc ON bd.company_code_id = cc.id
-      WHERE (LOWER(TRIM(bd.posting_status)) = 'open' 
+WHERE(LOWER(TRIM(bd.posting_status)) IN('open', 'draft') 
              OR bd.posting_status IS NULL 
              OR TRIM(bd.posting_status) = '')
-        AND (bd.accounting_document_number IS NULL OR bd.accounting_document_number = '')
+AND(
+  LOWER(TRIM(bd.posting_status)) != 'posted'
+)
       ORDER BY bd.billing_date DESC, bd.created_at DESC
-    `);
+  `);
 
     res.json({
       success: true,
@@ -9164,25 +9546,25 @@ router.get("/financial-posting/pending", async (req, res) => {
 router.get("/financial-posting/posted", async (req, res) => {
   try {
     const postedDocs = await db.execute(sql`
-      SELECT 
-        bd.id, bd.billing_number, bd.billing_date, bd.due_date,
-        bd.net_amount, bd.tax_amount, bd.total_amount, bd.currency,
-        bd.posting_status, bd.accounting_document_number,
-        bd.sales_order_id, so.order_number as sales_order_number,
-        bd.delivery_id, dd.delivery_number,
-        bd.customer_id, c.name as customer_name,
-        bd.company_code_id, cc.code as company_code, cc.name as company_name,
-        bd.created_at, bd.updated_at
+SELECT
+bd.id, bd.billing_number, bd.billing_date, bd.due_date,
+  bd.net_amount, bd.tax_amount, bd.total_amount, bd.currency,
+  bd.posting_status, bd.accounting_document_number,
+  bd.sales_order_id, so.order_number as sales_order_number,
+  bd.delivery_id, dd.delivery_number,
+  bd.customer_id, c.name as customer_name,
+  bd.company_code_id, cc.code as company_code, cc.name as company_name,
+  bd.created_at, bd.updated_at
       FROM billing_documents bd
       LEFT JOIN sales_orders so ON bd.sales_order_id = so.id
       LEFT JOIN delivery_documents dd ON bd.delivery_id = dd.id
       LEFT JOIN erp_customers c ON bd.customer_id = c.id
       LEFT JOIN company_codes cc ON bd.company_code_id = cc.id
-      WHERE (LOWER(TRIM(bd.posting_status)) = 'posted')
+WHERE(LOWER(TRIM(bd.posting_status)) = 'posted')
         AND bd.accounting_document_number IS NOT NULL 
         AND bd.accounting_document_number != ''
       ORDER BY bd.updated_at DESC
-    `);
+  `);
 
     res.json({
       success: true,
@@ -9204,17 +9586,17 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
 
     // Get billing document with items and company code from sales order
     const billingResult = await db.execute(sql`
-      SELECT 
-        bd.*,
-        so.order_number as sales_order_number,
-        so.company_code_id as sales_order_company_code_id,
-        c.name as customer_name,
-        c.company_code_id as customer_company_code_id
+SELECT
+bd.*,
+  so.order_number as sales_order_number,
+  so.company_code_id as sales_order_company_code_id,
+  c.name as customer_name,
+  c.company_code_id as customer_company_code_id
       FROM billing_documents bd
       LEFT JOIN sales_orders so ON bd.sales_order_id = so.id
       LEFT JOIN erp_customers c ON bd.customer_id = c.id
       WHERE bd.id = ${parseInt(billingId)}
-    `);
+`);
 
     if (billingResult.rows.length === 0) {
       return res.status(404).json({
@@ -9235,8 +9617,8 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
 
     // Get billing items with sales order info for sales organization
     const itemsResult = await db.execute(sql`
-      SELECT bi.*, 
-             COALESCE(sd_so.code, so_legacy.code, '1000') as sales_organization
+      SELECT bi.*,
+  COALESCE(sd_so.code, so_legacy.code, '1000') as sales_organization
       FROM billing_items bi
       LEFT JOIN billing_documents bd ON bi.billing_id = bd.id
       LEFT JOIN sales_orders so ON bd.sales_order_id = so.id
@@ -9244,14 +9626,14 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
       LEFT JOIN sales_organizations so_legacy ON so.sales_org_id = so_legacy.id
       WHERE bi.billing_id = ${parseInt(billingId)}
       ORDER BY bi.line_item
-    `);
+  `);
 
     // Get customer reconciliation account
     const customerResult = await db.execute(sql`
       SELECT reconciliation_account_code
       FROM erp_customers
       WHERE id = ${billingDoc.customer_id}
-    `);
+`);
 
     const reconciliationAccount = customerResult.rows[0]?.reconciliation_account_code || null;
 
@@ -9261,14 +9643,14 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
     if (!salesOrganization || salesOrganization === 'undefined') {
       const sdSalesOrgResult = await db.execute(sql`
         SELECT code FROM sd_sales_organizations WHERE is_active = true ORDER BY id LIMIT 1
-      `);
+  `);
 
       if (sdSalesOrgResult.rows.length > 0) {
         salesOrganization = String(sdSalesOrgResult.rows[0]?.code || '');
       } else {
         const legacySalesOrgResult = await db.execute(sql`
           SELECT code FROM sales_organizations WHERE is_active = true ORDER BY id LIMIT 1
-        `);
+  `);
 
         if (legacySalesOrgResult.rows.length > 0) {
           salesOrganization = String(legacySalesOrgResult.rows[0]?.code || '');
@@ -9284,41 +9666,90 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
     }
 
     // Get AR account using account determination service (no hardcoded values)
+    // SAP FI principle: Customer reconciliation account (from Customer Master) is the AR posting account.
+    // Priority: 1) Customer reconciliation_account_code  2) Account determination service  3) Fallback by GL type
     const billingAccountsResult = await accountDeterminationService.determineBillingAccounts({
       customerId: billingDoc.customer_id,
       materialIds: itemsResult.rows.map(item => item.material_id).filter(Boolean),
       salesOrganization: salesOrganization
     });
 
-    // Get AR account ID from gl_accounts table using determined account number
-    let arAccountResult = await db.execute(sql`
-      SELECT id, account_number
-      FROM gl_accounts
-      WHERE account_number = ${billingAccountsResult.arAccount}
-        AND is_active = true
-      LIMIT 1
-    `);
+    // Ã¢â€â‚¬Ã¢â€â‚¬ AR Account Resolution (SAP-standard: Customer Recon Account first) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // Step 1: Use customer's reconciliation account code if it exists as a GL account
+    let arAccount: any = null;
 
-    let arAccount = arAccountResult.rows[0];
+    if (reconciliationAccount) {
+      // Bug 3 Fix: Look up through reconciliation_accounts table first (code → gl_account_id)
+      // so code='1010' resolves to gl_account_id=358 (account 1025, Customer Recon Account)
+      // NOT a direct match of account_number='1010' which finds the wrong WIP GL account.
+      const reconResult = await db.execute(sql`
+        SELECT ga.id, ga.account_number
+        FROM reconciliation_accounts ra
+        JOIN gl_accounts ga ON ga.id = ra.gl_account_id
+        WHERE ra.code = ${reconciliationAccount}
+          AND ga.is_active = true
+        LIMIT 1
+      `);
+      arAccount = reconResult.rows[0] || null;
+      if (arAccount) {
+        console.log(`[AR] Using customer reconciliation account: code=${reconciliationAccount} -> GL ${arAccount.account_number}`);
+      } else {
+        // Fallback: try direct gl_accounts match (for cases where reconciliation_accounts not configured)
+        const directResult = await db.execute(sql`
+          SELECT id, account_number FROM gl_accounts
+          WHERE account_number = ${reconciliationAccount}
+            AND is_active = true
+          LIMIT 1
+        `);
+        arAccount = directResult.rows[0] || null;
+        if (arAccount) {
+          console.log(`[AR] Fallback: direct GL account match for ${reconciliationAccount} -> GL ${arAccount.account_number}`);
+        }
+      }
+    }
 
-    if (!arAccount) {
-      // Fallback: try to find AR account by type
-      const fallbackArResult = await db.execute(sql`
+    // Step 2: Fall back to account determination service result
+    if (!arAccount && billingAccountsResult.arAccount) {
+      const arFromDetResult = await db.execute(sql`
         SELECT id, account_number
         FROM gl_accounts
-        WHERE account_type = 'ASSETS'
-          AND reconciliation_account = true
+        WHERE account_number = ${billingAccountsResult.arAccount}
           AND is_active = true
         LIMIT 1
       `);
-
-      if (!fallbackArResult.rows[0]) {
-        return res.status(400).json({
-          success: false,
-          error: 'Accounts Receivable GL account not found. Please configure GL accounts.'
-        });
+      arAccount = arFromDetResult.rows[0] || null;
+      if (arAccount) {
+        console.log(`Ã¢Å“â€¦[AR] Using account determination service AR: ${billingAccountsResult.arAccount} `);
       }
-      arAccount = fallbackArResult.rows[0];
+    }
+
+    // Step 3: Final fallback Ã¢â‚¬â€ any active receivable/reconciliation account
+    if (!arAccount) {
+      const fallbackArResult = await db.execute(sql`
+        SELECT id, account_number
+        FROM gl_accounts
+        WHERE account_type IN ('A', 'ASSETS')
+AND(reconciliation_account = true
+               OR account_name ILIKE '%receivable%'
+               OR account_name ILIKE '% AR %'
+               OR account_name ILIKE '%debtor%')
+          AND is_active = true
+        ORDER BY
+          CASE WHEN reconciliation_account = true THEN 0 ELSE 1 END,
+  account_number
+        LIMIT 1
+      `);
+      arAccount = fallbackArResult.rows[0] || null;
+      if (arAccount) {
+        console.log(`Ã¢Å“â€¦[AR] Fallback receivable account: ${arAccount.account_number} `);
+      }
+    }
+
+    if (!arAccount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Accounts Receivable GL account not found. Please configure a reconciliation account on the customer or set up GL accounts with account type ASSETS.'
+      });
     }
 
     // Get company code - Priority: 1) Sales Order, 2) Customer, 3) Error if neither available
@@ -9330,11 +9761,11 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
         SELECT code as company_code
         FROM company_codes
         WHERE id = ${billingDoc.sales_order_company_code_id}
-      `);
+`);
 
       if (salesOrderCompanyCodeResult.rows[0]?.company_code) {
-        companyCode = salesOrderCompanyCodeResult.rows[0].company_code;
-        console.log(`✅ Using company code from sales order: ${companyCode}`);
+        companyCode = String(salesOrderCompanyCodeResult.rows[0].company_code);
+        console.log(`Ã¢Å“â€¦ Using company code from sales order: ${companyCode} `);
       }
     }
 
@@ -9344,11 +9775,11 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
         SELECT code as company_code
         FROM company_codes
         WHERE id = ${billingDoc.customer_company_code_id}
-    `);
+`);
 
       if (customerCompanyCodeResult.rows[0]?.company_code) {
-        companyCode = customerCompanyCodeResult.rows[0].company_code;
-        console.log(`✅ Using company code from customer (fallback): ${companyCode}`);
+        companyCode = String(customerCompanyCodeResult.rows[0].company_code);
+        console.log(`Ã¢Å“â€¦ Using company code from customer(fallback): ${companyCode} `);
       }
     }
 
@@ -9356,7 +9787,7 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
     if (!companyCode) {
       return res.status(400).json({
         success: false,
-        error: `Company code not found. Sales order ${billingDoc.sales_order_id || 'N/A'} and customer ${billingDoc.customer_id} both missing company code. Please configure company code in sales order or customer master data.`
+        error: `Company code not found.Sales order ${billingDoc.sales_order_id || 'N/A'} and customer ${billingDoc.customer_id} both missing company code.Please configure company code in sales order or customer master data.`
       });
     }
 
@@ -9368,7 +9799,7 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
     // CRITICAL: Validate Fiscal Period Status
     try {
       await FiscalPeriodService.validatePostingPeriod(postingDate, companyCode);
-      console.log(`✅ Fiscal period ${period}/${fiscalYear} is Open for company ${companyCode}`);
+      console.log(`Ã¢Å“â€¦ Fiscal period ${period}/${fiscalYear} is Open for company ${companyCode}`);
     } catch (validationError: any) {
       return res.status(400).json({
         success: false,
@@ -9410,10 +9841,11 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
     if (!existingAccountingDocNumber) {
       // Fallback: Generate if somehow missing (for backward compatibility with old invoices)
       // Get billing type for document type mapping
-      const billingType = billingDoc.billing_type || (await db.execute(sql`
+      const billingType = String(billingDoc.billing_type || (await db.execute(sql`
         SELECT code FROM sd_document_types 
         WHERE category = 'BILLING' AND is_active = true ORDER BY id LIMIT 1
-      `)).rows[0]?.code;
+      `)).rows[0]?.code || '');
+
 
       if (!billingType) {
         return res.status(400).json({
@@ -9425,13 +9857,15 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
       const { transactionalApplicationsService } = await import("../services/transactional-applications-service");
 
       accountingDocNumber = await transactionalApplicationsService.generateEarlyAccountingDocumentNumber(
-        companyCode,
+        String(companyCode),
         billingType // Pass billing type, not hardcoded 'DR'
       );
-      console.warn('⚠️ Accounting document number missing, generated new one for backward compatibility');
+
+      console.warn(' Accounting document number missing, generated new one for backward compatibility');
     } else {
-      accountingDocNumber = existingAccountingDocNumber;
-      console.log(`✅ Using existing accounting document number: ${accountingDocNumber}`);
+      accountingDocNumber = String(existingAccountingDocNumber);
+
+      console.log(`Ã¢Å“â€¦ Using existing accounting document number: ${accountingDocNumber}`);
     }
 
     // Ensure accountingDocNumber is set - if generateEarlyAccountingDocumentNumber failed, use fallback
@@ -9484,6 +9918,7 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
         gl_account_id: arAccount.id,
         amount: totalAmount,
         debit_credit_indicator: 'D',
+        posting_key: '01',  // SAP PK01: Customer Debit (Account type D)
         description: `AR - ${billingDoc.billing_number}`
       }
     ];
@@ -9545,6 +9980,7 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
           gl_account_id: revenueAccountResult.rows[0].id,
           amount: amount,
           debit_credit_indicator: 'C',
+          posting_key: '50',  // SAP PK50: GL Credit (revenue Ã¢â‚¬â€ positive amount Ã¢â€ â€™ credit)
           description: `Revenue - ${billingDoc.billing_number} - ${glAccountNumber}`
         });
       } else {
@@ -9552,41 +9988,129 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
       }
     }
 
-    // Add tax entry if tax account exists and tax amount > 0
-    if (taxAccountNumber && taxAmount > 0) {
-      const taxAccountResult = await db.execute(sql`
-        SELECT id FROM gl_accounts 
-        WHERE account_number = ${taxAccountNumber} AND is_active = true
-        LIMIT 1
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Tax GL lookup via tax_account_determination (Tax Management UI config) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    // SAP principle: Tax Condition Record has a tax_rule_id. The Tax Account Determination
+    // maps (tax_rule_id + account_key 'MWS') Ã¢â€ â€™ GL Account. This matches what is configured
+    // in the Tax Management tile Ã¢â€ â€™ Account Determination tab.
+    //
+    // Strategy:
+    // 1. Collect unique tax_rule_ids from billing_items (from their tax condition during SO pricing)
+    // 2. For each rule, look up tax_account_determination to get the GL account
+    // 3. Sum tax amounts per GL account
+    // 4. Fall back to account_determination_mapping (MWS key) if no TAD entry found
+    // 5. Fall back to billingAccountsResult.taxAccount (legacy)
+
+    if (taxAmount > 0) {
+      // Import the resolveGLForTaxRule helper
+      const { resolveGLForTaxRule } = await import('../services/taxDeterminationService.js');
+
+      // Ã¢â€â‚¬Ã¢â€â‚¬ Strategy 1: Use tax_rule_ids stored in SO item conditions during pricing Ã¢â€â‚¬Ã¢â€â‚¬
+      // These are the canonical rule IDs that produced the tax in the sales order.
+      // Chain: Sales Order pricing Ã¢â€ â€™ tax_condition_records Ã¢â€ â€™ tax_rule_id stored on conditions
+      //        Ã¢â€ â€™ tax_account_determination Ã¢â€ â€™ GL Account
+      const soTaxRuleResult = await db.execute(sql`
+        SELECT DISTINCT soic.tax_rule_id
+        FROM billing_items bi
+        JOIN billing_documents bd ON bi.billing_id = bd.id
+        JOIN sales_order_items soi ON bi.sales_order_item_id = soi.id
+        JOIN sales_order_item_conditions soic
+          ON soic.sales_order_item_id = soi.id
+          AND soic.is_tax = true
+          AND soic.tax_rule_id IS NOT NULL
+        WHERE bi.billing_id = ${parseInt(billingId)}
+          AND soic.tax_rule_id IS NOT NULL
+        LIMIT 10
       `);
 
-      if (taxAccountResult.rows.length > 0) {
-        glEntries.push({
-          gl_account_id: taxAccountResult.rows[0].id,
-          amount: taxAmount,
-          debit_credit_indicator: 'C',
-          description: `Tax Payable - ${billingDoc.billing_number}`
-        });
-      } else {
-        // Try to find default tax account if determined one not found
-        const defaultTaxResult = await db.execute(sql`
-          SELECT id FROM gl_accounts 
-          WHERE account_type = 'LIABILITIES'
-            AND (account_name ILIKE '%tax%payable%' OR account_name ILIKE '%tax%liability%')
-            AND is_active = true
-          ORDER BY account_number
-          LIMIT 1
+      // Ã¢â€â‚¬Ã¢â€â‚¬ Strategy 2 Fallback: Scan tax_condition_records for MWST to find rule IDs Ã¢â€â‚¬Ã¢â€â‚¬
+      // Used when SO was created before tax_rule_id column was added.
+      let taxRuleIdsFallback: number[] = [];
+      if (soTaxRuleResult.rows.length === 0) {
+        const tcrFallback = await db.execute(sql`
+          SELECT DISTINCT tcr.tax_rule_id
+          FROM billing_items bi
+          JOIN tax_condition_records tcr
+            ON tcr.condition_type_code = 'MWST'
+            AND tcr.is_active = true
+            AND tcr.tax_rule_id IS NOT NULL
+          WHERE bi.billing_id = ${parseInt(billingId)}
+          LIMIT 10
         `);
+        taxRuleIdsFallback = tcrFallback.rows.map((r: any) => parseInt(String(r.tax_rule_id)));
+      }
 
-        if (defaultTaxResult.rows.length > 0) {
+      // Build a map: GL account number Ã¢â€ â€™ accumulated tax amount
+      const taxGLMap = new Map<string, number>();
+      const taxRuleIds = new Set<number>([
+        ...soTaxRuleResult.rows.map((r: any) => parseInt(String(r.tax_rule_id))),
+        ...taxRuleIdsFallback
+      ]);
+
+      // Resolve GL for each unique rule ID
+      // Divide taxAmount equally among rules if multiple rules contributed
+      const ruleCount = taxRuleIds.size || 1;
+      const perRuleTaxAmount = taxAmount / ruleCount;
+      for (const ruleId of taxRuleIds) {
+        const glNumber = await resolveGLForTaxRule(ruleId, 'MWS');
+        if (glNumber) {
+          const current = taxGLMap.get(glNumber) || 0;
+          taxGLMap.set(glNumber, current + perRuleTaxAmount);
+        }
+      }
+
+      // If no per-rule mapping found, use the single global tax account from account determination
+      if (taxGLMap.size === 0) {
+        const fallbackTaxAccount = billingAccountsResult.taxAccount
+          || await (async () => {
+            // Try MWS key from account_determination_mapping
+            const mwsResult = await db.execute(sql`
+              SELECT gl.account_number
+              FROM account_determination_mapping adm
+              JOIN gl_accounts gl ON adm.gl_account_id = gl.id
+              WHERE adm.account_key_code IN ('MWS','MW1','MW2','TAX')
+                AND adm.is_active = true AND gl.is_active = true
+              ORDER BY adm.id LIMIT 1
+            `);
+            return mwsResult.rows[0]?.account_number || null;
+          })();
+        if (fallbackTaxAccount) {
+          taxGLMap.set(String(fallbackTaxAccount), taxAmount);
+        }
+      }
+
+      // Create GL credit entries for each tax bucket
+      for (const [taxGLNumber, taxBucketAmount] of Array.from(taxGLMap.entries())) {
+        const taxGLRow = await db.execute(sql`
+          SELECT id FROM gl_accounts WHERE account_number = ${taxGLNumber} AND is_active = true LIMIT 1
+        `);
+        if (taxGLRow.rows[0]) {
           glEntries.push({
-            gl_account_id: defaultTaxResult.rows[0].id,
-            amount: taxAmount,
+            gl_account_id: taxGLRow.rows[0].id,
+            amount: taxBucketAmount,
             debit_credit_indicator: 'C',
+            posting_key: '50',  // SAP PK50: GL Credit (tax payable)
             description: `Tax Payable - ${billingDoc.billing_number}`
           });
+          console.log(`Ã¢Å“â€¦ [Tax GL] Posted ${taxBucketAmount.toFixed(2)} to GL ${taxGLNumber}`);
         } else {
-          console.warn(`Tax GL account ${taxAccountNumber} not found in gl_accounts table and no default found`);
+          console.warn(` Tax GL account ${taxGLNumber} not found in gl_accounts table`);
+          // Last resort: any liability tax account
+          const lastResort = await db.execute(sql`
+            SELECT id FROM gl_accounts
+            WHERE account_type = 'LIABILITIES'
+              AND (account_name ILIKE '%tax%' OR account_name ILIKE '%GST%' OR account_name ILIKE '%VAT%')
+              AND is_active = true
+            ORDER BY account_number LIMIT 1
+          `);
+          if (lastResort.rows[0]) {
+            glEntries.push({
+              gl_account_id: lastResort.rows[0].id,
+              amount: taxBucketAmount,
+              debit_credit_indicator: 'C',
+              posting_key: '50',
+              description: `Tax Payable - ${billingDoc.billing_number}`
+            });
+          }
         }
       }
     }
@@ -9716,7 +10240,7 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
           break;
         } else {
           // Document number exists for a different billing document - generate new one
-          console.warn(`⚠️ Document number ${accountingDocNumber} already exists for different billing document. Generating new number...`);
+          console.warn(` Document number ${accountingDocNumber} already exists for different billing document. Generating new number...`);
 
           // Generate new document number by incrementing the counter
           try {
@@ -9756,13 +10280,12 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
       await db.execute(sql`
         UPDATE accounting_documents
         SET header_text = ${`Invoice posting for ${invoiceNumber}`},
-            total_amount = ${totalAmount},
-            updated_at = NOW()
+            total_amount = ${totalAmount}
         WHERE id = ${existingDocId}
       `);
 
       accountingDocumentId = existingDocId;
-      console.log(`✅ Updated existing accounting document ${accountingDocNumber}`);
+      console.log(`Ã¢Å“â€¦ Updated existing accounting document ${accountingDocNumber}`);
     } else {
       // Create new accounting document
       try {
@@ -9791,11 +10314,11 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
           )
         `);
 
-        console.log(`✅ Created new accounting document ${accountingDocNumber}`);
+        console.log(`Ã¢Å“â€¦ Created new accounting document ${accountingDocNumber}`);
       } catch (insertError: any) {
         // If still duplicate (race condition), generate new number and retry once
         if (insertError.code === '23505' && insertError.constraint === 'accounting_documents_document_number_key') {
-          console.warn(`⚠️ Race condition detected: document number ${accountingDocNumber} was created by another process. Generating new number...`);
+          console.warn(` Race condition detected: document number ${accountingDocNumber} was created by another process. Generating new number...`);
 
           const docCountResult = await db.execute(sql`
             SELECT COUNT(*)::integer as count 
@@ -9833,7 +10356,7 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
             )
           `);
 
-          console.log(`✅ Created new accounting document ${accountingDocNumber} (after retry)`);
+          console.log(`Ã¢Å“â€¦ Created new accounting document ${accountingDocNumber} (after retry)`);
         } else {
           throw insertError;
         }
@@ -9863,18 +10386,25 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
     for (const entry of glEntries) {
       await db.execute(sql`
         INSERT INTO gl_entries (
-          document_number, gl_account_id, amount, 
-          debit_credit_indicator, posting_status, posting_date
+          document_number, gl_account_id, amount,
+          debit_credit_indicator, posting_key, posting_status, posting_date
         ) VALUES (
-          ${accountingDocNumber}, 
-          ${entry.gl_account_id}, 
-          ${entry.amount}, 
-          ${entry.debit_credit_indicator}, 
+          ${accountingDocNumber},
+          ${entry.gl_account_id},
+          ${entry.amount},
+          ${entry.debit_credit_indicator},
+          ${entry.posting_key || null},
           'posted',
           ${postingDateStr}
         )
       `);
     }
+
+    // Delete any existing items (from DRAFT phase) to avoid duplicate key errors
+    await db.execute(sql`
+      DELETE FROM accounting_document_items 
+      WHERE document_id = ${accountingDocumentId}
+    `);
 
     // Create accounting_document_items for proper GL reporting
     let lineItem = 1;
@@ -9902,7 +10432,7 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
         await db.execute(sql`
           INSERT INTO accounting_document_items (
             document_id, line_item, gl_account, account_type, partner_id,
-            debit_amount, credit_amount, currency, item_text
+            debit_amount, credit_amount, currency, posting_key, item_text
           ) VALUES (
             ${accountingDocumentId},
             ${lineItem},
@@ -9912,6 +10442,7 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
             ${debitAmount.toFixed(2)},
             ${creditAmount.toFixed(2)},
             ${currency},
+            ${entry.posting_key || null},
             ${entry.description || `GL Entry - ${billingDoc.billing_number}`}
           )
         `);
@@ -9962,15 +10493,15 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
           } else if (billingTypeUpper.includes('INVOICE') || billingTypeUpper.includes('F2')) {
             documentType = 'Invoice';
           } else {
-            // Get document type from billing document type configuration if available
+            // Look up from existing document_types table by document_type_code
             const docTypeResult = await db.execute(sql`
-              SELECT document_type FROM billing_document_types 
-              WHERE code = ${String(billingDoc.billing_type)} AND is_active = true LIMIT 1
+              SELECT document_type_code FROM document_types 
+              WHERE document_category = 'BILLING' AND is_active = true LIMIT 1
             `);
             if (docTypeResult.rows.length > 0) {
-              documentType = String(docTypeResult.rows[0].document_type);
+              documentType = String(docTypeResult.rows[0].document_type_code);
             } else {
-              throw new Error(`Document type cannot be determined for billing type: ${billingDoc.billing_type}`);
+              documentType = 'DR'; // safe fallback
             }
           }
         } else {
@@ -10083,7 +10614,7 @@ router.post("/financial-posting/post/:billingId", async (req, res) => {
           active: defaultActive,
         });
 
-        console.log(`✅ Created AR open item for billing document ${billingId}`);
+        console.log(`Ã¢Å“â€¦ Created AR open item for billing document ${billingId}`);
       }
     } catch (arOpenItemError: any) {
       // Log error but don't fail the posting
@@ -10125,6 +10656,7 @@ router.get("/financial-posting/gl-details/:billingId", async (req, res) => {
         bd.accounting_document_number, 
         bd.posting_status,
         bd.company_code_id,
+        COALESCE(bd.currency, 'INR') as currency,
         cc.code as company_code,
         cc.name as company_name
       FROM billing_documents bd
@@ -10174,6 +10706,7 @@ router.get("/financial-posting/gl-details/:billingId", async (req, res) => {
         accountingDocumentNumber: billingDoc.accounting_document_number,
         companyCode: billingDoc.company_code,
         companyName: billingDoc.company_name,
+        currency: String(billingDoc.currency || 'INR'),
         glEntries: glEntriesResult.rows
       }
     });

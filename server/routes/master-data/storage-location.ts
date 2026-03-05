@@ -41,9 +41,14 @@ export async function getStorageLocations(req: Request, res: Response) {
         COALESCE(sl.status, 'active') AS status,
         COALESCE(sl.is_active, true) AS is_active,
         sl.created_at,
-        sl.updated_at
+        sl.updated_at,
+        sl.created_by AS "_createdBy",
+        sl.updated_by AS "_updatedBy",
+        sl."_tenantId",
+        sl."_deletedAt"
       FROM storage_locations sl 
       LEFT JOIN plants p ON sl.plant_id = p.id
+      WHERE COALESCE(sl.is_active, true) IS NOT false
       ORDER BY sl.code
     `);
     // Map DB fields to UI schema
@@ -59,6 +64,10 @@ export async function getStorageLocations(req: Request, res: Response) {
       plant: r.plant_id ? { id: r.plant_id, code: r.p_code, name: r.p_name } : undefined,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
+      _createdBy: r['_createdBy'],
+      _updatedBy: r['_updatedBy'],
+      _tenantId: r['_tenantId'],
+      _deletedAt: r['_deletedAt'],
     }));
     return res.status(200).json(rows);
   } catch (error: any) {
@@ -89,10 +98,15 @@ export async function getStorageLocationById(req: Request, res: Response) {
         COALESCE(sl.status, 'active') AS status,
         COALESCE(sl.is_active, true) AS is_active,
         sl.created_at,
-        sl.updated_at
+        sl.updated_at,
+        sl.created_by AS "_createdBy",
+        sl.updated_by AS "_updatedBy",
+        sl."_tenantId",
+        sl."_deletedAt"
       FROM storage_locations sl 
       LEFT JOIN plants p ON sl.plant_id = p.id
       WHERE sl.id = ${id}
+        AND COALESCE(sl.is_active, true) IS NOT false
     `);
 
     if (result.rows.length === 0) {
@@ -112,6 +126,10 @@ export async function getStorageLocationById(req: Request, res: Response) {
       plant: r.plant_id ? { id: r.plant_id, code: r.p_code, name: r.p_name } : undefined,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
+      _createdBy: r['_createdBy'],
+      _updatedBy: r['_updatedBy'],
+      _tenantId: r['_tenantId'],
+      _deletedAt: r['_deletedAt'],
     };
     return res.status(200).json(row);
   } catch (error: any) {
@@ -124,11 +142,11 @@ export async function getStorageLocationById(req: Request, res: Response) {
 export async function createStorageLocation(req: Request, res: Response) {
   try {
     const validation = storageLocationSchema.safeParse(req.body);
-    
+
     if (!validation.success) {
-      return res.status(400).json({ 
-        error: "Validation error", 
-        message: validation.error.errors.map(e => e.message).join(", ") 
+      return res.status(400).json({
+        error: "Validation error",
+        message: validation.error.errors.map(e => e.message).join(", ")
       });
     }
 
@@ -139,7 +157,7 @@ export async function createStorageLocation(req: Request, res: Response) {
       SELECT id FROM storage_locations 
       WHERE location_code = ${data.code} OR code = ${data.code}
     `);
-    
+
     if (existingResult.rows.length > 0) {
       return res.status(409).json({ error: "Conflict", message: "Storage location code already exists" });
     }
@@ -175,13 +193,18 @@ export async function createStorageLocation(req: Request, res: Response) {
         name: data.name,
         description: data.description || null,
         plant_code: plantCode,
-        plant_id: null, // if only plant_id exists, resolve id from plants
+        plant_id: null,
         storage_type: data.type || 'GENERAL',
         type: data.type || 'GENERAL',
         status: 'active',
         is_active: data.isActive,
         created_at: new Date(),
         updated_at: new Date(),
+        // Audit trail fields
+        created_by: (req as any).user?.id ?? 1,
+        updated_by: (req as any).user?.id ?? 1,
+        '_tenantId': (req as any).user?.tenantId ?? '001',
+        '_deletedAt': null,
       };
 
       if (cols.has('plant_id') && !cols.has('plant_code')) {
@@ -201,15 +224,15 @@ export async function createStorageLocation(req: Request, res: Response) {
           params.push(v);
         }
       });
-      const placeholders = params.map((_, i) => `$${i+1}`).join(', ');
+      const placeholders = params.map((_, i) => `$${i + 1}`).join(', ');
       const sqlText = `INSERT INTO storage_locations (${finalCols.join(', ')}) VALUES (${placeholders}) RETURNING *`;
       const dynRes = await pool.query(sqlText, params);
       insertResult = { rows: dynRes.rows } as any;
     }
-    
+
     if (insertResult.rows && insertResult.rows.length > 0) {
       const newStorageLocation = insertResult.rows[0];
-      
+
       // Sync to OneProject table
       try {
         await oneProjectSyncAgent.syncBusinessToOneProject('storage_locations', newStorageLocation.id.toString(), 'INSERT', newStorageLocation);
@@ -218,7 +241,7 @@ export async function createStorageLocation(req: Request, res: Response) {
         console.error(`❌ Failed to sync storage location ${newStorageLocation.code || newStorageLocation.location_code} to OneProject:`, syncError);
         // Don't fail the request, just log the sync error
       }
-      
+
       return res.status(201).json(newStorageLocation);
     } else {
       return res.status(500).json({ error: "Failed to create storage location" });
@@ -238,11 +261,11 @@ export async function updateStorageLocation(req: Request, res: Response) {
     }
 
     const validation = storageLocationSchema.safeParse(req.body);
-    
+
     if (!validation.success) {
-      return res.status(400).json({ 
-        error: "Validation error", 
-        message: validation.error.errors.map(e => e.message).join(", ") 
+      return res.status(400).json({
+        error: "Validation error",
+        message: validation.error.errors.map(e => e.message).join(", ")
       });
     }
 
@@ -250,7 +273,7 @@ export async function updateStorageLocation(req: Request, res: Response) {
 
     // Check if storage location exists
     const existingResult = await db.execute(sql`SELECT * FROM storage_locations WHERE id = ${id}`);
-    
+
     if (existingResult.rows.length === 0) {
       return res.status(404).json({ error: "Storage location not found" });
     }
@@ -291,6 +314,7 @@ export async function updateStorageLocation(req: Request, res: Response) {
       setCol(cols.has('storage_type') ? 'storage_type' : 'type', data.type || 'GENERAL');
       setCol('is_active', data.isActive);
       if (cols.has('updated_at')) updatePairs.push(`updated_at = NOW()`);
+      if (cols.has('updated_by')) { params.push((req as any).user?.id ?? 1); updatePairs.push(`updated_by = $${params.length}`); }
 
       if (updatePairs.length === 0) {
         return res.status(400).json({ error: 'No updatable fields for current schema' });
@@ -303,7 +327,7 @@ export async function updateStorageLocation(req: Request, res: Response) {
     }
 
     const updatedStorageLocation = updateResult.rows[0];
-    
+
     // Sync to OneProject table
     try {
       await oneProjectSyncAgent.syncBusinessToOneProject('storage_locations', updatedStorageLocation.id.toString(), 'UPDATE', updatedStorageLocation);
@@ -330,23 +354,31 @@ export async function deleteStorageLocation(req: Request, res: Response) {
 
     // Check if storage location exists
     const existingResult = await db.execute(sql`SELECT * FROM storage_locations WHERE id = ${id}`);
-    
+
     if (existingResult.rows.length === 0) {
       return res.status(404).json({ error: "Storage location not found" });
     }
 
     const storageLocationToDelete = existingResult.rows[0];
 
-    // Delete storage location
-    await db.execute(sql`DELETE FROM storage_locations WHERE id = ${id}`);
-    
+    // Soft-delete: set is_active=false, _deletedAt=NOW(), updated_by=userId
+    const deleteUserId = (req as any).user?.id ?? 1;
+    await db.execute(sql`
+      UPDATE storage_locations
+      SET is_active = false,
+          status = 'inactive',
+          "_deletedAt" = NOW(),
+          updated_by = ${deleteUserId},
+          updated_at = NOW()
+      WHERE id = ${id}
+    `);
+
     // Sync deletion to OneProject table
     try {
       await oneProjectSyncAgent.syncBusinessToOneProject('storage_locations', storageLocationToDelete.id.toString(), 'DELETE', storageLocationToDelete);
-      console.log(`✅ Storage Location ${storageLocationToDelete.code || storageLocationToDelete.location_code} deletion synced to OneProject table`);
+      console.log(`✅ Storage Location ${storageLocationToDelete.code || storageLocationToDelete.location_code} soft-deletion synced to OneProject table`);
     } catch (syncError) {
       console.error(`❌ Failed to sync storage location ${storageLocationToDelete.code || storageLocationToDelete.location_code} deletion to OneProject:`, syncError);
-      // Don't fail the request, just log the sync error
     }
 
     return res.status(200).json({ success: true, message: "Storage location deleted successfully" });
@@ -366,23 +398,25 @@ export async function deactivateStorageLocation(req: Request, res: Response) {
 
     // Check if storage location exists
     const existingResult = await db.execute(sql`SELECT * FROM storage_locations WHERE id = ${id}`);
-    
+
     if (existingResult.rows.length === 0) {
       return res.status(404).json({ error: "Storage location not found" });
     }
 
     const existingStorageLocation = existingResult.rows[0];
 
-    // Deactivate storage location
+    // Soft-deactivate: set is_active=false + _deletedAt for audit trail
+    const deactivateUserId = (req as any).user?.id ?? 1;
     const updateResult = await db.execute(sql`
       UPDATE storage_locations 
-      SET is_active = false, status = 'inactive', updated_at = NOW()
+      SET is_active = false, status = 'inactive', updated_at = NOW(),
+          updated_by = ${deactivateUserId}, "_deletedAt" = NOW()
       WHERE id = ${id}
       RETURNING *
     `);
-    
+
     const deactivatedStorageLocation = updateResult.rows[0];
-    
+
     // Sync deactivation to OneProject table
     try {
       await oneProjectSyncAgent.syncBusinessToOneProject('storage_locations', deactivatedStorageLocation.id.toString(), 'UPDATE', deactivatedStorageLocation);
@@ -391,7 +425,7 @@ export async function deactivateStorageLocation(req: Request, res: Response) {
       console.error(`❌ Failed to sync storage location ${deactivatedStorageLocation.code || deactivatedStorageLocation.location_code} deactivation to OneProject:`, syncError);
       // Don't fail the request, just log the sync error
     }
-    
+
     return res.status(200).json({
       message: "Storage location deactivated successfully",
       storageLocation: deactivatedStorageLocation
@@ -406,7 +440,7 @@ export async function deactivateStorageLocation(req: Request, res: Response) {
 export async function bulkImportStorageLocations(req: Request, res: Response) {
   try {
     const storageLocations = req.body;
-    
+
     if (!Array.isArray(storageLocations)) {
       return res.status(400).json({ error: "Expected an array of storage locations" });
     }
@@ -420,7 +454,7 @@ export async function bulkImportStorageLocations(req: Request, res: Response) {
     for (const storageLocationData of storageLocations) {
       try {
         const validation = storageLocationSchema.safeParse(storageLocationData);
-        
+
         if (!validation.success) {
           results.failed++;
           results.errors.push(`${storageLocationData.code}: Validation failed - ${validation.error.errors.map(e => e.message).join(", ")}`);
@@ -431,7 +465,7 @@ export async function bulkImportStorageLocations(req: Request, res: Response) {
 
         // Check if storage location code already exists
         const existingResult = await db.execute(sql`SELECT id FROM storage_locations WHERE code = ${data.code}`);
-        
+
         if (existingResult.rows.length > 0) {
           results.failed++;
           results.errors.push(`${data.code}: Storage location code already exists`);
@@ -451,7 +485,7 @@ export async function bulkImportStorageLocations(req: Request, res: Response) {
             NOW(), NOW()
           )
         `);
-        
+
         results.success++;
       } catch (error: any) {
         results.failed++;

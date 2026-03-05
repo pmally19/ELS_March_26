@@ -51,7 +51,8 @@ router.get('/', async (req: Request, res: Response) => {
         ga.created_at,
         ga.updated_at,
         ga.created_by,
-        ga.updated_by
+        ga.updated_by,
+        ga."_tenantId" as tenant_id
       FROM gl_accounts ga
       LEFT JOIN chart_of_accounts coa ON ga.chart_of_accounts_id = coa.id
       LEFT JOIN company_codes cc ON ga.company_code_id = cc.id
@@ -116,7 +117,8 @@ router.get('/:id', async (req: Request, res: Response) => {
         ga.created_at,
         ga.updated_at,
         ga.created_by,
-        ga.updated_by
+        ga.updated_by,
+        ga."_tenantId" as tenant_id
       FROM gl_accounts ga
       LEFT JOIN chart_of_accounts coa ON ga.chart_of_accounts_id = coa.id
       LEFT JOIN company_codes cc ON ga.company_code_id = cc.id
@@ -356,10 +358,11 @@ router.post('/', async (req: Request, res: Response) => {
         interest_calculation_indicator, interest_calculation_frequency, interest_calculation_date,
         alternative_account_number, group_account_number, trading_partner,
         posting_allowed, balance_type,
+        created_by, updated_by, "_tenantId",
         created_at, updated_at
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), NOW()
+        $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, NOW(), NOW()
       )
       RETURNING *
     `, [
@@ -393,6 +396,9 @@ router.post('/', async (req: Request, res: Response) => {
       trading_partner || null,
       posting_allowed !== undefined ? posting_allowed : true,
       balance_type || null,
+      (req as any).user?.id || 1,
+      (req as any).user?.id || 1,
+      (req as any).user?.tenantId || '001',
     ]);
 
     // After successful creation, update current_number in number_ranges if group has one
@@ -484,10 +490,11 @@ router.post('/', async (req: Request, res: Response) => {
               interest_calculation_indicator, interest_calculation_frequency, interest_calculation_date,
               alternative_account_number, group_account_number, trading_partner,
               posting_allowed, balance_type,
+              created_by, updated_by, "_tenantId",
               created_at, updated_at
             ) VALUES (
               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-              $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, NOW(), NOW()
+              $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, NOW(), NOW()
             )
             RETURNING *
           `, [
@@ -521,6 +528,9 @@ router.post('/', async (req: Request, res: Response) => {
             retry_trading_partner || null,
             retry_posting_allowed !== undefined ? retry_posting_allowed : true,
             retry_balance_type || null,
+            (req as any).user?.id || 1,
+            (req as any).user?.id || 1,
+            (req as any).user?.tenantId || '001',
           ]);
 
           return res.status(201).json(retryResult.rows[0]);
@@ -762,8 +772,9 @@ router.put('/:id', async (req: Request, res: Response) => {
         trading_partner = $28,
         posting_allowed = COALESCE($29, posting_allowed),
         balance_type = $30,
-        updated_at = NOW()
-      WHERE id = $31
+        updated_at = NOW(),
+        updated_by = $31
+      WHERE id = $32
       RETURNING *
     `, [
       account_number,
@@ -796,6 +807,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       trading_partner,
       posting_allowed,
       balance_type,
+      (req as any).user?.id || 1,
       id,
     ]);
 

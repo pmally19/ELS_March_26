@@ -8,6 +8,81 @@ import { pool } from '../../db';
 
 const router = Router();
 
+// GET /api/master-data/item-category-determination/determine - Determine item category
+// Priority lookup: most specific (all 4 keys) → least specific (only docType + icGroup)
+router.get('/determine', async (req, res) => {
+    try {
+        const {
+            sales_document_type,
+            item_category_group,
+            usage = null,
+            higher_level_item_category = null
+        } = req.query as Record<string, string>;
+
+        if (!sales_document_type || !item_category_group) {
+            return res.status(400).json({
+                error: 'sales_document_type and item_category_group are required'
+            });
+        }
+
+        const sdType = sales_document_type.toUpperCase();
+        const icGroup = item_category_group.toUpperCase();
+        const usageVal = usage ? usage.toUpperCase() : null;
+        const higherVal = higher_level_item_category ? higher_level_item_category.toUpperCase() : null;
+
+        // SAP-style priority lookup: try from most specific to least specific
+        const lookups = [
+            // 1. All 4 keys match
+            [sdType, icGroup, usageVal, higherVal],
+            // 2. No higher-level
+            [sdType, icGroup, usageVal, null],
+            // 3. No usage
+            [sdType, icGroup, null, higherVal],
+            // 4. Only doc type + item category group (most common)
+            [sdType, icGroup, null, null],
+        ];
+
+        let determined = null;
+
+        for (const [dt, icg, u, hlc] of lookups) {
+            const result = await pool.query(`
+                SELECT item_category, description
+                FROM item_category_determination
+                WHERE sales_document_type = $1
+                  AND item_category_group = $2
+                  AND COALESCE(usage, '') = COALESCE($3, '')
+                  AND COALESCE(higher_level_item_category, '') = COALESCE($4, '')
+                  AND is_active = true
+                LIMIT 1
+            `, [dt, icg, u, hlc]);
+
+            if (result.rows.length > 0) {
+                determined = result.rows[0];
+                break;
+            }
+        }
+
+        if (!determined) {
+            return res.json({
+                found: false,
+                item_category: null,
+                message: `No determination found for docType=${sdType}, icGroup=${icGroup}`
+            });
+        }
+
+        return res.json({
+            found: true,
+            item_category: determined.item_category,
+            description: determined.description,
+            sales_document_type: sdType,
+            item_category_group: icGroup
+        });
+    } catch (error) {
+        console.error('Error determining item category:', error);
+        res.status(500).json({ error: 'Failed to determine item category' });
+    }
+});
+
 // GET /api/master-data/item-category-determination - List all item category determination records
 router.get('/', async (req, res) => {
     try {

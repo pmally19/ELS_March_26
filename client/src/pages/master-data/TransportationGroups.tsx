@@ -38,7 +38,7 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Plus, Search, Edit, Trash2, ArrowLeft, Truck } from "lucide-react";
+import { Plus, Search, Edit, Trash2, ArrowLeft, Truck, Eye, Info, ChevronDown, ChevronRight, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -51,6 +51,10 @@ type TransportationGroup = {
     isActive: boolean;
     createdAt: string;
     updatedAt: string;
+    createdBy?: number;
+    updatedBy?: number;
+    tenantId?: string;
+    deletedAt?: string | null;
 };
 
 // Form schema (ERP: code=4 chars, description=20 chars)
@@ -73,6 +77,9 @@ export default function TransportationGroups() {
     const [searchTerm, setSearchTerm] = useState("");
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingItem, setEditingItem] = useState<TransportationGroup | null>(null);
+    const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+    const [viewingItem, setViewingItem] = useState<TransportationGroup | null>(null);
+    const [adminDataOpen, setAdminDataOpen] = useState(false);
 
     const form = useForm<FormData>({
         resolver: zodResolver(formSchema),
@@ -161,7 +168,8 @@ export default function TransportationGroups() {
         }
     };
 
-    const handleEdit = (item: TransportationGroup) => {
+    const handleEdit = (item: TransportationGroup, e?: React.MouseEvent) => {
+        if (e) e.stopPropagation();
         setEditingItem(item);
         form.reset({
             code: item.code,
@@ -171,7 +179,14 @@ export default function TransportationGroups() {
         setIsDialogOpen(true);
     };
 
-    const handleDelete = (id: number) => {
+    const handleView = (item: TransportationGroup) => {
+        setViewingItem(item);
+        setIsViewDialogOpen(true);
+        setAdminDataOpen(false);
+    };
+
+    const handleDelete = (id: number, e?: React.MouseEvent) => {
+        if (e) e.stopPropagation();
         if (confirm("Are you sure you want to delete this transportation group?")) {
             deleteMutation.mutate(id);
         }
@@ -256,27 +271,34 @@ export default function TransportationGroups() {
                                     </TableRow>
                                 ) : (
                                     filteredGroups.map((group) => (
-                                        <TableRow key={group.id}>
-                                            <TableCell className="font-medium">{group.code}</TableCell>
+                                        <TableRow key={group.id} className="cursor-pointer hover:bg-gray-50" onClick={() => handleView(group)}>
+                                            <TableCell className="font-medium font-mono">{group.code}</TableCell>
                                             <TableCell>{group.description}</TableCell>
                                             <TableCell className="text-center">
                                                 <Badge variant={group.isActive ? "default" : "secondary"}>
                                                     {group.isActive ? "Active" : "Inactive"}
                                                 </Badge>
                                             </TableCell>
-                                            <TableCell className="text-right">
+                                            <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                                                 <div className="flex justify-end gap-2">
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
-                                                        onClick={() => handleEdit(group)}
+                                                        onClick={(e) => { e.stopPropagation(); handleView(group); }}
+                                                    >
+                                                        <Eye className="h-4 w-4" />
+                                                    </Button>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        onClick={(e) => handleEdit(group, e as any)}
                                                     >
                                                         <Edit className="h-4 w-4" />
                                                     </Button>
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
-                                                        onClick={() => handleDelete(group.id)}
+                                                        onClick={(e) => handleDelete(group.id, e as any)}
                                                     >
                                                         <Trash2 className="h-4 w-4" />
                                                     </Button>
@@ -370,6 +392,100 @@ export default function TransportationGroups() {
                             </DialogFooter>
                         </form>
                     </Form>
+                </DialogContent>
+            </Dialog>
+            {/* View Details Dialog */}
+            <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+                <DialogContent className="sm:max-w-[600px]">
+                    <DialogHeader>
+                        <DialogTitle>Transportation Group Details</DialogTitle>
+                        <DialogDescription>
+                            View complete information for this transportation group
+                        </DialogDescription>
+                    </DialogHeader>
+                    {viewingItem && (
+                        <div className="space-y-6">
+                            {/* Basic Information */}
+                            <div className="space-y-3">
+                                <h3 className="text-lg font-semibold border-b pb-2">Basic Information</h3>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <p className="text-sm text-muted-foreground">Code</p>
+                                        <p className="font-medium font-mono">{viewingItem.code}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-muted-foreground">Status</p>
+                                        <Badge variant={viewingItem.isActive ? "default" : "secondary"} className="mt-1">
+                                            {viewingItem.isActive ? "Active" : "Inactive"}
+                                        </Badge>
+                                    </div>
+                                    <div className="col-span-2">
+                                        <p className="text-sm text-muted-foreground">Description</p>
+                                        <p className="font-medium">{viewingItem.description}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* ── Administrative Data (SAP ECC style) ────────────────── */}
+                            <div className="border rounded-md overflow-hidden bg-white mt-4">
+                                <button
+                                    type="button"
+                                    onClick={() => setAdminDataOpen(o => !o)}
+                                    className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                                >
+                                    <span className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                        <Info className="h-3.5 w-3.5" />
+                                        Administrative Data
+                                    </span>
+                                    {adminDataOpen
+                                        ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                                        : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                                </button>
+
+                                {adminDataOpen && (
+                                    <dl className="px-4 py-3 space-y-2 bg-white m-0">
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Created on</dt>
+                                            <dd className="text-xs text-gray-500">
+                                                {viewingItem.createdAt ? new Date(viewingItem.createdAt).toLocaleString() : '—'}
+                                            </dd>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Created by (User ID)</dt>
+                                            <dd className="text-xs text-gray-500">{viewingItem.createdBy ?? '—'}</dd>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Last changed on</dt>
+                                            <dd className="text-xs text-gray-500">
+                                                {viewingItem.updatedAt ? new Date(viewingItem.updatedAt).toLocaleString() : '—'}
+                                            </dd>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Last changed by (User ID)</dt>
+                                            <dd className="text-xs text-gray-500">{viewingItem.updatedBy ?? '—'}</dd>
+                                        </div>
+                                        <div className="flex justify-between items-center pt-2 mt-2 border-t border-gray-100">
+                                            <dt className="text-xs text-gray-400">Tenant / Client</dt>
+                                            <dd className="text-xs text-gray-500 font-mono bg-gray-50 px-1.5 py-0.5 rounded">
+                                                {viewingItem.tenantId || '001'}
+                                            </dd>
+                                        </div>
+                                        {viewingItem.deletedAt && (
+                                            <div className="flex justify-between items-center pt-2 mt-2 border-t border-red-50">
+                                                <dt className="text-xs text-red-400 flex items-center gap-1.5">
+                                                    <AlertCircle className="h-3.5 w-3.5" />
+                                                    Deletion Flag
+                                                </dt>
+                                                <dd className="text-xs text-red-500 font-medium">
+                                                    Yes (Soft Deleted on {new Date(viewingItem.deletedAt).toLocaleDateString()})
+                                                </dd>
+                                            </div>
+                                        )}
+                                    </dl>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </DialogContent>
             </Dialog>
         </div>

@@ -31,7 +31,10 @@ router.get('/holiday-calendars', async (req, res) => {
         hc.valid_to,
         hc.status,
         hc.created_at,
-        hc.updated_at
+        hc.updated_at,
+        hc.created_by,
+        hc.updated_by,
+        hc."_tenantId"
       FROM holiday_calendars hc
       LEFT JOIN countries c ON hc.country_id = c.id
       LEFT JOIN regions r ON hc.region_id = r.id
@@ -55,6 +58,9 @@ router.get('/holiday-calendars', async (req, res) => {
             status: row.status,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
         })));
     } catch (error) {
         console.error('Error fetching holiday calendars:', error);
@@ -78,7 +84,10 @@ router.get('/holiday-calendars/:id', async (req, res) => {
         valid_to,
         status,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by,
+        "_tenantId"
       FROM holiday_calendars
       WHERE holiday_calendar_id = $1
     `, [id]);
@@ -100,6 +109,9 @@ router.get('/holiday-calendars/:id', async (req, res) => {
             status: row.status,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
         });
     } catch (error) {
         console.error('Error fetching holiday calendar:', error);
@@ -129,6 +141,9 @@ router.post('/holiday-calendars', async (req, res) => {
             });
         }
 
+        const userId = (req as any).user?.id || 1;
+        const tenantId = (req as any).user?.tenantId || '001';
+
         const result = await pool.query(`
       INSERT INTO holiday_calendars (
         holiday_calendar_id,
@@ -140,8 +155,11 @@ router.post('/holiday-calendars', async (req, res) => {
         region_id,
         valid_from,
         valid_to,
-        status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE')
+        status,
+        created_by,
+        updated_by,
+        "_tenantId"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE', $10, $11, $12)
       RETURNING *
     `, [
             holidayCalendarId,
@@ -153,6 +171,9 @@ router.post('/holiday-calendars', async (req, res) => {
             regionId ? parseInt(regionId) : null,
             validFrom || null,
             validTo || null,
+            userId,
+            userId,
+            tenantId,
         ]);
 
         const row = result.rows[0];
@@ -170,6 +191,9 @@ router.post('/holiday-calendars', async (req, res) => {
             status: row.status,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
         });
     } catch (error) {
         console.error('Error creating holiday calendar:', error);
@@ -197,6 +221,8 @@ router.put('/holiday-calendars/:id', async (req, res) => {
             status,
         } = req.body;
 
+        const userId = (req as any).user?.id || 1;
+
         const result = await pool.query(`
       UPDATE holiday_calendars
       SET 
@@ -209,8 +235,9 @@ router.put('/holiday-calendars/:id', async (req, res) => {
         valid_from = $7,
         valid_to = $8,
         status = COALESCE($9, status),
+        updated_by = $10,
         updated_at = CURRENT_TIMESTAMP
-      WHERE holiday_calendar_id = $10
+      WHERE holiday_calendar_id = $11
       RETURNING *
     `, [
             calendarCode,
@@ -222,6 +249,7 @@ router.put('/holiday-calendars/:id', async (req, res) => {
             validFrom,
             validTo,
             status,
+            userId,
             id,
         ]);
 
@@ -244,6 +272,9 @@ router.put('/holiday-calendars/:id', async (req, res) => {
             status: row.status,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
         });
     } catch (error) {
         console.error('Error updating holiday calendar:', error);

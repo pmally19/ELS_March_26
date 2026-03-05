@@ -1,30 +1,30 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { 
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardHeader, 
-  CardTitle 
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
 } from "@/components/ui/card";
-import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogDescription, 
-  DialogFooter, 
-  DialogHeader, 
-  DialogTitle 
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
 } from "@/components/ui/dialog";
 import {
   Form,
@@ -52,7 +52,7 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Plus, Search, Edit, Trash2, X, Download, ArrowLeft, RefreshCw, MoreHorizontal } from "lucide-react";
+import { Plus, Search, Edit, Trash2, X, Download, ArrowLeft, RefreshCw, MoreHorizontal, Eye, Info, ChevronRight, ChevronDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { useAgentPermissions } from "@/hooks/useAgentPermissions";
@@ -75,6 +75,10 @@ type Employee = {
   active: boolean;
   created_at: string;
   updated_at: string;
+  created_by?: number | null;
+  updated_by?: number | null;
+  tenant_id?: string | null;
+  deleted_at?: string | null;
 };
 
 // Employee Form Schema
@@ -102,6 +106,9 @@ const Employees = () => {
   const [filteredEmployees, setFilteredEmployees] = useState<Employee[]>([]);
   const [showDialog, setShowDialog] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [viewingEmployee, setViewingEmployee] = useState<Employee | null>(null);
+  const [showViewDialog, setShowViewDialog] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
   const permissions = useAgentPermissions();
 
   // Fetch employees
@@ -327,7 +334,7 @@ const Employees = () => {
     const headers = Object.keys(exportData[0]);
     const csvContent = [
       headers.join(','),
-      ...exportData.map(row => 
+      ...exportData.map(row =>
         headers.map(header => `"${row[header]}"`).join(',')
       )
     ].join('\n');
@@ -388,13 +395,13 @@ const Employees = () => {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center">
           <Link href="/master-data" className="mr-4 p-2 rounded-md hover:bg-gray-100">
-          <ArrowLeft className="h-5 w-5" />
+            <ArrowLeft className="h-5 w-5" />
           </Link>
-        <div>
-          <h1 className="text-2xl font-bold">Employees</h1>
-          <p className="text-gray-600">Manage employee records and HR data</p>
+          <div>
+            <h1 className="text-2xl font-bold">Employees</h1>
+            <p className="text-gray-600">Manage employee records and HR data</p>
+          </div>
         </div>
-      </div>
         <div className="flex gap-2">
           <Button
             variant="outline"
@@ -407,7 +414,7 @@ const Employees = () => {
           </Button>
           {permissions.hasDataModificationRights && (
             <Button
-            onClick={() => {
+              onClick={() => {
                 setEditingEmployee(null);
                 setShowDialog(true);
               }}
@@ -445,10 +452,10 @@ const Employees = () => {
             </Button>
           </div>
 
-      {isLoading ? (
-        <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-600"></div>
-        </div>
+          {isLoading ? (
+            <div className="flex justify-center items-center h-64">
+              <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-600"></div>
+            </div>
           ) : filteredEmployees.length === 0 ? (
             <div className="text-center py-12 text-gray-500">
               No employees found. {permissions.hasDataModificationRights && 'Click "New Employee" to add one.'}
@@ -492,6 +499,14 @@ const Employees = () => {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => {
+                              setViewingEmployee(employee);
+                              setShowViewDialog(true);
+                              setAdminDataOpen(false);
+                            }}>
+                              <Eye className="h-4 w-4 mr-2" />
+                              View Details
+                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleEdit(employee)}>
                               <Edit className="h-4 w-4 mr-2" />
                               Edit
@@ -510,8 +525,8 @@ const Employees = () => {
                   ))}
                 </TableBody>
               </Table>
-        </div>
-      )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -668,6 +683,128 @@ const Employees = () => {
               </DialogFooter>
             </form>
           </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-hidden flex flex-col p-0">
+          <DialogHeader className="p-6 pb-2">
+            <DialogTitle>Employee Details</DialogTitle>
+          </DialogHeader>
+
+          {viewingEmployee && (
+            <div className="flex-1 overflow-y-auto space-y-6 p-6 pt-2">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Basic Information</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <dl className="grid grid-cols-2 gap-4">
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Employee ID</dt>
+                      <dd className="text-sm font-bold text-gray-900 mt-1">{viewingEmployee.employee_id || `#${viewingEmployee.id}`}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Name</dt>
+                      <dd className="text-sm font-bold text-gray-900 mt-1">{viewingEmployee.first_name} {viewingEmployee.last_name}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Email</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{viewingEmployee.email || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Phone</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{viewingEmployee.phone || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Department</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{viewingEmployee.department || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Position</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{viewingEmployee.position || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Join Date</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{formatDate(viewingEmployee.join_date)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Status</dt>
+                      <dd className="text-sm mt-1">{getStatusBadge(viewingEmployee)}</dd>
+                    </div>
+                  </dl>
+                </CardContent>
+              </Card>
+
+              {/* ── Administrative Data (SAP ECC style) ────────────────── */}
+              <div className="border rounded-md overflow-hidden bg-white">
+                <button
+                  type="button"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                >
+                  <span className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <Info className="h-3.5 w-3.5" />
+                    Administrative Data
+                  </span>
+                  {adminDataOpen
+                    ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                    : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                </button>
+
+                {adminDataOpen && (
+                  <dl className="px-4 py-3 space-y-2 bg-white">
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingEmployee.created_at
+                          ? new Date(viewingEmployee.created_at).toLocaleString()
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingEmployee.created_by ?? '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingEmployee.updated_at
+                          ? new Date(viewingEmployee.updated_at).toLocaleString()
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingEmployee.updated_by ?? '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Tenant ID</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingEmployee.tenant_id ?? '—'}
+                      </dd>
+                    </div>
+                    {viewingEmployee.deleted_at && (
+                      <div className="flex justify-between items-center">
+                        <dt className="text-xs text-red-500 font-medium">Deleted on</dt>
+                        <dd className="text-xs text-red-500 font-medium">
+                          {new Date(viewingEmployee.deleted_at).toLocaleString()}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="p-4 border-t bg-gray-50 flex justify-end">
+            <Button variant="outline" onClick={() => setShowViewDialog(false)}>Close</Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

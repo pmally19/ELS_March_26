@@ -61,6 +61,10 @@ interface Customer {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  created_by?: string | number;
+  updated_by?: string | number;
+  _tenantId?: string;
+  _deletedAt?: string;
 
   // Multiple address management fields
   sold_to_addresses?: any[];
@@ -411,8 +415,10 @@ export default function CustomerMaster() {
           // Company and versioning
           company_code_id: r.companyCodeId ?? r.company_code_id ?? undefined,
           version: r.version ?? undefined,
-          created_by: r.created_by ?? undefined,
-          updated_by: r.updated_by ?? undefined,
+          created_by: r.createdBy ?? r.created_by ?? undefined,
+          updated_by: r.updatedBy ?? r.updated_by ?? undefined,
+          _tenantId: r._tenantId ?? undefined,
+          _deletedAt: r._deletedAt ?? undefined,
 
           // === CRITICAL FINANCIAL FIELDS ===
           // Dunning and Payment Controls
@@ -3454,6 +3460,53 @@ export default function CustomerMaster() {
                         <dd className="text-sm text-gray-900">
                           {new Date(viewingCustomerDetails.updated_at).toLocaleString()}
                         </dd>
+                      </div>
+                    </dl>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="pb-2 cursor-pointer" onClick={(e) => {
+                    const content = e.currentTarget.nextElementSibling;
+                    if (content) {
+                      content.classList.toggle('hidden');
+                      const icon = e.currentTarget.querySelector('.chevron-icon');
+                      if (icon) {
+                        icon.classList.toggle('rotate-180');
+                      }
+                    }
+                  }}>
+                    <div className="flex justify-between items-center">
+                      <CardTitle className="text-lg">Administrative Data</CardTitle>
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="chevron-icon transition-transform duration-200"
+                      >
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="hidden">
+                    <dl className="grid grid-cols-2 gap-4">
+                      <div>
+                        <dt className="text-sm font-medium text-gray-500">Created By:</dt>
+                        <dd className="text-sm text-gray-900">{viewingCustomerDetails.created_by || "—"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-sm font-medium text-gray-500">Updated By:</dt>
+                        <dd className="text-sm text-gray-900">{viewingCustomerDetails.updated_by || "—"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-sm font-medium text-gray-500">Tenant ID:</dt>
+                        <dd className="text-sm text-gray-900">{viewingCustomerDetails._tenantId || "—"}</dd>
                       </div>
                     </dl>
                   </CardContent>

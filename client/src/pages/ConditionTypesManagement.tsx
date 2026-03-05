@@ -16,7 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Edit, Trash2, Copy, Calculator, DollarSign, Percent, Hash, CheckCircle, ArrowLeft, HelpCircle, RefreshCw, Search, Eye, Download, MoreHorizontal } from "lucide-react";
+import { Plus, Edit, Trash2, Copy, Calculator, DollarSign, Percent, Hash, CheckCircle, ArrowLeft, HelpCircle, RefreshCw, Search, Eye, Download, MoreHorizontal, Info, ChevronDown, ChevronRight } from "lucide-react";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -40,18 +40,21 @@ const conditionTypeSchema = z.object({
 
 type ConditionType = z.infer<typeof conditionTypeSchema> & {
   id?: number;
-  company_code_id?: number;
   created_at?: string;
   updated_at?: string;
+  created_by?: number | null;
+  updated_by?: number | null;
+  tenant_id?: string;
+  company_code_id?: number | null;
 };
 
 export default function ConditionTypesManagement() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingCondition, setEditingCondition] = useState<ConditionType | null>(null);
-  const [selectedCompany, setSelectedCompany] = useState<string>("1000");
   const [searchQuery, setSearchQuery] = useState("");
   const [viewingCondition, setViewingCondition] = useState<ConditionType | null>(null);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -70,24 +73,12 @@ export default function ConditionTypesManagement() {
     }
   });
 
-  // Fetch condition types
+  // Fetch condition types — client-level (no company code, SAP standard)
   const { data: conditionTypes = [], isLoading, error } = useQuery({
-    queryKey: ['/api/condition-types', selectedCompany],
+    queryKey: ['/api/condition-types'],
     queryFn: async () => {
-      const response = await apiRequest(`/api/condition-types?company_code=${selectedCompany}`);
+      const response = await apiRequest('/api/condition-types');
       return await response.json();
-    },
-    enabled: !!selectedCompany
-  });
-
-  // Fetch companies from API
-  const { data: companies = [] } = useQuery({
-    queryKey: ['/api/master-data/company-codes'],
-    queryFn: async () => {
-      const res = await apiRequest('/api/master-data/company-codes');
-      if (!res.ok) throw new Error('Failed to fetch company codes');
-      const data = await res.json();
-      return Array.isArray(data) ? data : [];
     }
   });
 
@@ -244,7 +235,7 @@ export default function ConditionTypesManagement() {
 
       const response = await apiRequest(url, {
         method,
-        body: JSON.stringify({ ...data, company_code: selectedCompany })
+        body: JSON.stringify(data)
       });
       return await response.json();
     },
@@ -332,14 +323,6 @@ export default function ConditionTypesManagement() {
 
   // Apply Template function
   const applyTemplate = async (templateType: string) => {
-    if (!selectedCompany) {
-      toast({
-        title: "Error",
-        description: "Please select a company first"
-      });
-      return;
-    }
-
     const template = businessTemplates[templateType as keyof typeof businessTemplates];
     if (!template) {
       toast({
@@ -358,11 +341,7 @@ export default function ConditionTypesManagement() {
         try {
           await apiRequest('/api/condition-types', {
             method: 'POST',
-            body: JSON.stringify({
-              ...conditionType,
-              company_code: selectedCompany,
-              access_sequence: 'STDCUST'
-            })
+            body: JSON.stringify(conditionType)
           });
           createdCount++;
         } catch (err: any) {
@@ -506,7 +485,7 @@ export default function ConditionTypesManagement() {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `condition-types-${selectedCompany}-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `condition-types-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
 
@@ -551,19 +530,6 @@ export default function ConditionTypesManagement() {
         </div>
 
         <div className="flex items-center space-x-4">
-          <Select value={selectedCompany} onValueChange={setSelectedCompany}>
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="Select Company" />
-            </SelectTrigger>
-            <SelectContent>
-              {companies?.map((company: any) => (
-                <SelectItem key={company.code} value={company.code}>
-                  {company.code} - {company.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
           <Button variant="outline" onClick={handleExport}>
             <Download className="h-4 w-4 mr-2" />
             Export to CSV
@@ -934,7 +900,7 @@ export default function ConditionTypesManagement() {
         <TabsContent value="list">
           <Card>
             <CardHeader>
-              <CardTitle>Condition Types for {selectedCompany}</CardTitle>
+              <CardTitle>Condition Types</CardTitle>
               <CardDescription>
                 Manage your pricing components and calculation rules
               </CardDescription>
@@ -1402,148 +1368,178 @@ export default function ConditionTypesManagement() {
           </DialogHeader>
 
           {viewingCondition && (
-            <Tabs defaultValue="basic" className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="basic">Basic Info</TabsTrigger>
-                <TabsTrigger value="configuration">Configuration</TabsTrigger>
-                <TabsTrigger value="metadata">Metadata</TabsTrigger>
-              </TabsList>
+            <div className="flex-1 overflow-y-auto space-y-6 px-1">
+              <Tabs defaultValue="basic" className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="basic">Basic Info</TabsTrigger>
+                  <TabsTrigger value="configuration">Configuration</TabsTrigger>
+                </TabsList>
 
-              <TabsContent value="basic" className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Condition Code</Label>
-                    <p className="text-lg font-mono">{viewingCondition.condition_code}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Sequence Number</Label>
-                    <p className="text-lg">{viewingCondition.sequence_number}</p>
-                  </div>
-                </div>
-
-                <div>
-                  <Label className="text-sm font-medium text-muted-foreground">Condition Name</Label>
-                  <p className="text-lg">{viewingCondition.condition_name}</p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Category</Label>
-                    <div className="mt-1">
-                      <Badge className={getCategoryColor(viewingCondition.condition_category)}>
-                        {getCategoryIcon(viewingCondition.condition_category)}
-                        <span className="ml-1">{viewingCondition.condition_category}</span>
-                      </Badge>
+                <TabsContent value="basic" className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm font-medium text-muted-foreground">Condition Code</Label>
+                      <p className="text-lg font-mono">{viewingCondition.condition_code}</p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium text-muted-foreground">Sequence Number</Label>
+                      <p className="text-lg">{viewingCondition.sequence_number}</p>
                     </div>
                   </div>
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Calculation Type</Label>
-                    <p className="text-lg capitalize">{viewingCondition.calculation_type.replace('_', ' ')}</p>
-                  </div>
-                </div>
 
-                {viewingCondition.description && (
                   <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Description</Label>
-                    <p className="text-sm mt-1">{viewingCondition.description}</p>
+                    <Label className="text-sm font-medium text-muted-foreground">Condition Name</Label>
+                    <p className="text-lg">{viewingCondition.condition_name}</p>
                   </div>
-                )}
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Account Key</Label>
-                    <p className="text-lg font-mono">{(viewingCondition as any).account_key || 'Not set'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Condition Class</Label>
-                    <p className="text-lg">
-                      {(viewingCondition as any).condition_class_code
-                        ? `${(viewingCondition as any).condition_class_code} - ${(viewingCondition as any).condition_class_name}`
-                        : 'None'}
-                    </p>
-                  </div>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="configuration" className="space-y-4">
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Default Value</Label>
-                    <p className="text-lg font-semibold">
-                      {viewingCondition.default_value !== undefined
-                        ? (viewingCondition.calculation_type === 'percentage'
-                          ? `${viewingCondition.default_value}%`
-                          : `$${viewingCondition.default_value}`)
-                        : 'Not set'}
-                    </p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Min Value</Label>
-                    <p className="text-lg font-semibold">
-                      {viewingCondition.min_value !== undefined ? viewingCondition.min_value : 'Not set'}
-                    </p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Max Value</Label>
-                    <p className="text-lg font-semibold">
-                      {viewingCondition.max_value !== undefined ? viewingCondition.max_value : 'Not set'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 pt-4">
-                  <div className="flex items-center space-x-2 p-4 border rounded-lg">
-                    <Switch checked={viewingCondition.is_mandatory} disabled />
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <Label>Mandatory</Label>
-                      <p className="text-xs text-muted-foreground">
-                        {viewingCondition.is_mandatory ? 'This condition is required' : 'This condition is optional'}
+                      <Label className="text-sm font-medium text-muted-foreground">Category</Label>
+                      <div className="mt-1">
+                        <Badge className={getCategoryColor(viewingCondition.condition_category)}>
+                          {getCategoryIcon(viewingCondition.condition_category)}
+                          <span className="ml-1">{viewingCondition.condition_category}</span>
+                        </Badge>
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium text-muted-foreground">Calculation Type</Label>
+                      <p className="text-lg capitalize">{viewingCondition.calculation_type.replace('_', ' ')}</p>
+                    </div>
+                  </div>
+
+                  {viewingCondition.description && (
+                    <div>
+                      <Label className="text-sm font-medium text-muted-foreground">Description</Label>
+                      <p className="text-sm mt-1">{viewingCondition.description}</p>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm font-medium text-muted-foreground">Account Key</Label>
+                      <p className="text-lg font-mono">{(viewingCondition as any).account_key || 'Not set'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium text-muted-foreground">Condition Class</Label>
+                      <p className="text-lg">
+                        {(viewingCondition as any).condition_class_code
+                          ? `${(viewingCondition as any).condition_class_code} - ${(viewingCondition as any).condition_class_name}`
+                          : 'None'}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-2 p-4 border rounded-lg">
-                    <Switch checked={viewingCondition.is_active} disabled />
+                </TabsContent>
+
+                <TabsContent value="configuration" className="space-y-4">
+                  <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <Label>Active Status</Label>
-                      <p className="text-xs text-muted-foreground">
-                        {viewingCondition.is_active ? 'Currently active' : 'Currently inactive'}
+                      <Label className="text-sm font-medium text-muted-foreground">Default Value</Label>
+                      <p className="text-lg font-semibold">
+                        {viewingCondition.default_value !== undefined
+                          ? (viewingCondition.calculation_type === 'percentage'
+                            ? `${viewingCondition.default_value}%`
+                            : `$${viewingCondition.default_value}`)
+                          : 'Not set'}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium text-muted-foreground">Min Value</Label>
+                      <p className="text-lg font-semibold">
+                        {viewingCondition.min_value !== undefined ? viewingCondition.min_value : 'Not set'}
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium text-muted-foreground">Max Value</Label>
+                      <p className="text-lg font-semibold">
+                        {viewingCondition.max_value !== undefined ? viewingCondition.max_value : 'Not set'}
                       </p>
                     </div>
                   </div>
-                </div>
-              </TabsContent>
 
-              <TabsContent value="metadata" className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Condition ID</Label>
-                    <p className="text-sm font-mono">{viewingCondition.id}</p>
+                  <div className="grid grid-cols-2 gap-4 pt-4">
+                    <div className="flex items-center space-x-2 p-4 border rounded-lg">
+                      <Switch checked={viewingCondition.is_mandatory} disabled />
+                      <div>
+                        <Label>Mandatory</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {viewingCondition.is_mandatory ? 'This condition is required' : 'This condition is optional'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2 p-4 border rounded-lg">
+                      <Switch checked={viewingCondition.is_active} disabled />
+                      <div>
+                        <Label>Active Status</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {viewingCondition.is_active ? 'Currently active' : 'Currently inactive'}
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Company Code ID</Label>
-                    <p className="text-sm font-mono">{viewingCondition.company_code_id || 'Not set'}</p>
-                  </div>
-                </div>
+                </TabsContent>
+              </Tabs>
 
-                {viewingCondition.created_at && (
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Created At</Label>
-                    <p className="text-sm">
-                      {new Date(viewingCondition.created_at).toLocaleString()}
-                    </p>
-                  </div>
+              {/* ── Administrative Data (SAP ECC style) ────────────────── */}
+              <div className="border rounded-md overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                >
+                  <span className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <Info className="h-3.5 w-3.5" />
+                    Administrative Data
+                  </span>
+                  {adminDataOpen
+                    ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                    : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                </button>
+
+                {adminDataOpen && (
+                  <dl className="px-4 py-3 space-y-2 bg-white">
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Condition ID</dt>
+                      <dd className="text-xs font-mono text-gray-500">{viewingCondition.id}</dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingCondition.created_at
+                          ? new Date(viewingCondition.created_at).toLocaleString()
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingCondition.created_by ?? '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingCondition.updated_at
+                          ? new Date(viewingCondition.updated_at).toLocaleString()
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingCondition.updated_by ?? '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Tenant ID</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingCondition.tenant_id ?? '—'}
+                      </dd>
+                    </div>
+                  </dl>
                 )}
-
-                {viewingCondition.updated_at && (
-                  <div>
-                    <Label className="text-sm font-medium text-muted-foreground">Last Updated</Label>
-                    <p className="text-sm">
-                      {new Date(viewingCondition.updated_at).toLocaleString()}
-                    </p>
-                  </div>
-                )}
-              </TabsContent>
-            </Tabs>
+              </div>
+            </div>
           )}
 
           <div className="flex justify-end pt-4">

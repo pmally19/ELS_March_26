@@ -53,7 +53,7 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Plus, Search, Edit, Trash2, X, FileUp, Download, Globe, ArrowLeft, RefreshCw, MoreHorizontal, PowerOff, Building, MapPin, DollarSign, Calendar, Phone, Mail, ExternalLink } from "lucide-react";
+import { Plus, Search, Edit, Trash2, X, FileUp, Download, Globe, ArrowLeft, RefreshCw, MoreHorizontal, PowerOff, Building, MapPin, DollarSign, Calendar, Phone, Mail, ExternalLink, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { useAgentPermissions } from "@/hooks/useAgentPermissions";
@@ -136,6 +136,7 @@ export default function CompanyCodePage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const permissions = useAgentPermissions();
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
 
   // Fetch company codes directly to avoid JSON parsing issues
   const [companyCodes, setCompanyCodes] = useState<CompanyCode[]>([]);
@@ -168,6 +169,7 @@ export default function CompanyCodePage() {
             id: c.id,
             code: c.code || "",
             name: c.name || "",
+            currencyCode: c.currencyCode || "",
           })) : [];
       } catch (error) {
         console.error("Error fetching countries:", error);
@@ -175,6 +177,7 @@ export default function CompanyCodePage() {
       }
     },
   });
+
 
   // Fetch data function - extracted for reuse
   const fetchData = async () => {
@@ -421,6 +424,39 @@ export default function CompanyCodePage() {
       });
     }
   }, [editingCompanyCode, form, fiscalYearVariants]);
+
+  // States filtered by selected country (must be after form is initialized)
+  const [countryStates, setCountryStates] = useState<Array<{ id: number; code: string; name: string }>>([]);
+  const [statesLoading, setStatesLoading] = useState(false);
+  const watchedCountry = form.watch("country");
+
+  useEffect(() => {
+    if (!watchedCountry || !countries.length) return;
+
+    const selectedCountry = (countries as any[]).find((c: any) => c.code === watchedCountry);
+
+    // Auto-fill currency from country's currency code
+    if (selectedCountry?.currencyCode) {
+      form.setValue("currency", selectedCountry.currencyCode, { shouldValidate: true });
+    }
+
+    // Fetch states for selected country
+    if (selectedCountry?.id) {
+      setStatesLoading(true);
+      fetch(`/api/master-data/states/country/${selectedCountry.id}`, { headers: { 'Accept': 'application/json' } })
+        .then(r => r.json())
+        .then(data => {
+          setCountryStates(Array.isArray(data) ? data.filter((s: any) => s.isActive !== false) : []);
+          setStatesLoading(false);
+        })
+        .catch(() => { setCountryStates([]); setStatesLoading(false); });
+    } else {
+      setCountryStates([]);
+    }
+
+    // Reset state field when country changes
+    form.setValue("state", "");
+  }, [watchedCountry, countries]);
 
   // Create company code mutation
   const createCompanyCodeMutation = useMutation({
@@ -1047,7 +1083,9 @@ export default function CompanyCodePage() {
                           <FormItem>
                             <FormLabel>Country*</FormLabel>
                             <Select
-                              onValueChange={field.onChange}
+                              onValueChange={(val) => {
+                                field.onChange(val);
+                              }}
                               defaultValue={field.value}
                               value={field.value}
                               disabled={countriesLoading}
@@ -1072,7 +1110,7 @@ export default function CompanyCodePage() {
                               </SelectContent>
                             </Select>
                             <FormDescription>
-                              Select the country for this company code
+                              Select the country — currency will auto-fill
                             </FormDescription>
                             <FormMessage />
                           </FormItem>
@@ -1277,13 +1315,39 @@ export default function CompanyCodePage() {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>State/Province</FormLabel>
-                            <FormControl>
-                              <Input
-                                placeholder="State or province"
-                                {...field}
-                                value={field.value || ""}
-                              />
-                            </FormControl>
+                            {countryStates.length > 0 ? (
+                              <Select
+                                onValueChange={(val) => field.onChange(val === "__NONE__" ? "" : val)}
+                                value={field.value || "__NONE__"}
+                                disabled={statesLoading}
+                              >
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select state/province" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="__NONE__">-- None --</SelectItem>
+                                  {countryStates.map((s: any) => (
+                                    <SelectItem key={s.id} value={s.code}>
+                                      {s.code} - {s.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <FormControl>
+                                <Input
+                                  placeholder={statesLoading ? "Loading..." : (watchedCountry ? "No states configured for this country" : "Select country first")}
+                                  {...field}
+                                  value={field.value || ""}
+                                  disabled={statesLoading}
+                                />
+                              </FormControl>
+                            )}
+                            <FormDescription>
+                              {countryStates.length > 0 ? `${countryStates.length} states/provinces available` : "State or province"}
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -1757,6 +1821,62 @@ export default function CompanyCodePage() {
                     </div>
                   </div>
                 )}
+
+                {/* ── Administrative Data (SAP ECC style) ────────────────── */}
+                <div className="border rounded-md overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setAdminDataOpen(o => !o)}
+                    className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                  >
+                    <span className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      <Info className="h-3.5 w-3.5" />
+                      Administrative Data
+                    </span>
+                    {adminDataOpen
+                      ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                      : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                  </button>
+
+                  {adminDataOpen && (
+                    <dl className="px-4 py-3 space-y-2 bg-white">
+                      <div className="flex justify-between items-center">
+                        <dt className="text-xs text-gray-400">Created on</dt>
+                        <dd className="text-xs text-gray-500">
+                          {viewingCompanyCodeDetails.created_at
+                            ? new Date(viewingCompanyCodeDetails.created_at).toLocaleString()
+                            : '—'}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <dt className="text-xs text-gray-400">Created by (User ID)</dt>
+                        <dd className="text-xs text-gray-500">
+                          {(viewingCompanyCodeDetails as any)._createdBy ?? '—'}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <dt className="text-xs text-gray-400">Last changed on</dt>
+                        <dd className="text-xs text-gray-500">
+                          {viewingCompanyCodeDetails.updated_at
+                            ? new Date(viewingCompanyCodeDetails.updated_at).toLocaleString()
+                            : '—'}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <dt className="text-xs text-gray-400">Last changed by (User ID)</dt>
+                        <dd className="text-xs text-gray-500">
+                          {(viewingCompanyCodeDetails as any)._updatedBy ?? '—'}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <dt className="text-xs text-gray-400">Tenant ID</dt>
+                        <dd className="text-xs text-gray-500">
+                          {(viewingCompanyCodeDetails as any)._tenantId ?? '—'}
+                        </dd>
+                      </div>
+                    </dl>
+                  )}
+                </div>
               </div>
             </>
           )}

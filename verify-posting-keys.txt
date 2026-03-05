@@ -1,0 +1,12 @@
+gl_entries.posting_key exists: ✅ YES
+accounting_document_items.posting_key exists: ✅ YES
+document_types:
+  5: account_types=D,G | debit_pk=01 | credit_pk=50
+  AA: account_types=A,G | debit_pk=70 | credit_pk=75
+  AB: account_types=D,G | debit_pk=01 | credit_pk=50
+  DZ: account_types=D,G | debit_pk=40 | credit_pk=11
+  KR: account_types=K,G | debit_pk=40 | credit_pk=31
+  KZ: account_types=K,G | debit_pk=31 | credit_pk=50
+  RE: account_types=K,G | debit_pk=40 | credit_pk=31
+  SA: account_types=G | debit_pk=40 | credit_pk=50
+  WE: account_types=G | debit_pk=40 | credit_pk=50

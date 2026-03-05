@@ -14,7 +14,7 @@ async function ensureRoutingTables(): Promise<void> {
     const checkResult = await pool.query(`
       SELECT to_regclass('public.routing_master') as exists
     `);
-    
+
     if (checkResult.rows[0]?.exists === null) {
       console.log('🔧 Creating routing_master and related tables...');
       // Create routing_master table
@@ -34,6 +34,9 @@ async function ensureRoutingTables(): Promise<void> {
           valid_to DATE,
           is_active BOOLEAN DEFAULT true,
           created_by INTEGER,
+          updated_by INTEGER,
+          "_tenantId" VARCHAR(3) DEFAULT '001',
+          "_deletedAt" TIMESTAMP WITH TIME ZONE,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           UNIQUE(material_code, plant_code, routing_group_code)
@@ -152,13 +155,18 @@ router.get('/', async (req: Request, res: Response) => {
         rm.is_active,
         rm.created_at,
         rm.updated_at,
+        rm.created_by,
+        rm.updated_by,
+        rm."_tenantId",
+        rm."_deletedAt",
         (SELECT COUNT(*) FROM routing_operations ro WHERE ro.routing_master_id = rm.id) as operations_count
       FROM routing_master rm
       LEFT JOIN materials m ON rm.material_code = m.code
       LEFT JOIN plants p ON rm.plant_code = p.code
+      WHERE rm."_deletedAt" IS NULL
       ORDER BY rm.routing_group_code, rm.created_at DESC
     `);
-    
+
     return res.status(200).json(result.rows);
   } catch (error: any) {
     console.error('Error fetching routing masters:', error);
@@ -171,7 +179,7 @@ router.get('/:routingMasterId/operations', async (req: Request, res: Response) =
   try {
     await ensureRoutingTables();
     const { routingMasterId } = req.params;
-    
+
     const result = await pool.query(`
       SELECT 
         ro.id,
@@ -194,7 +202,7 @@ router.get('/:routingMasterId/operations', async (req: Request, res: Response) =
       WHERE ro.routing_master_id = $1
       ORDER BY ro.sequence_order, ro.operation_number
     `, [routingMasterId]);
-    
+
     return res.status(200).json(result.rows);
   } catch (error: any) {
     console.error('Error fetching routing operations:', error);
@@ -207,7 +215,7 @@ router.get('/:id', async (req: Request, res: Response) => {
   try {
     await ensureRoutingTables();
     const { id } = req.params;
-    
+
     const result = await pool.query(`
       SELECT 
         rm.id,
@@ -226,17 +234,21 @@ router.get('/:id', async (req: Request, res: Response) => {
         rm.valid_to,
         rm.is_active,
         rm.created_at,
-        rm.updated_at
+        rm.updated_at,
+        rm.created_by,
+        rm.updated_by,
+        rm."_tenantId",
+        rm."_deletedAt"
       FROM routing_master rm
       LEFT JOIN materials m ON rm.material_code = m.code
       LEFT JOIN plants p ON rm.plant_code = p.code
-      WHERE rm.id = $1
+      WHERE rm.id = $1 AND rm."_deletedAt" IS NULL
     `, [id]);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Routing master not found" });
     }
-    
+
     return res.status(200).json(result.rows[0]);
   } catch (error: any) {
     console.error('Error fetching routing master:', error);
@@ -249,7 +261,7 @@ router.post('/', async (req: Request, res: Response) => {
   try {
     await ensureRoutingTables();
     const validatedData = routingMasterSchema.parse(req.body);
-    
+
     // Get material_id if materialCode is provided
     let materialId = null;
     if (validatedData.materialCode) {
@@ -261,7 +273,7 @@ router.post('/', async (req: Request, res: Response) => {
         materialId = materialResult.rows[0].id;
       }
     }
-    
+
     // Get plant_id if plantCode is provided
     let plantId = null;
     if (validatedData.plantCode) {
@@ -273,12 +285,16 @@ router.post('/', async (req: Request, res: Response) => {
         plantId = plantResult.rows[0].id;
       }
     }
-    
+
+    const userId = (req as any).user?.id || 1;
+    const tenantId = (req as any).user?.tenantId || '001';
+
     const result = await pool.query(`
       INSERT INTO routing_master (
         material_id, material_code, plant_code, plant_id, routing_group_code,
-        base_quantity, base_unit, description, status, valid_from, valid_to, is_active
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        base_quantity, base_unit, description, status, valid_from, valid_to, is_active,
+        created_by, updated_by, "_tenantId"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *
     `, [
       materialId,
@@ -292,9 +308,12 @@ router.post('/', async (req: Request, res: Response) => {
       validatedData.status,
       validatedData.validFrom || null,
       validatedData.validTo || null,
-      validatedData.isActive
+      validatedData.isActive,
+      userId,
+      userId,
+      tenantId
     ]);
-    
+
     return res.status(201).json(result.rows[0]);
   } catch (error: any) {
     if (error instanceof z.ZodError) {
@@ -311,7 +330,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     await ensureRoutingTables();
     const { id } = req.params;
     const validatedData = routingMasterSchema.partial().parse(req.body);
-    
+
     // Get material_id if materialCode is provided
     let materialId = null;
     if (validatedData.materialCode) {
@@ -323,7 +342,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         materialId = materialResult.rows[0].id;
       }
     }
-    
+
     // Get plant_id if plantCode is provided
     let plantId = null;
     if (validatedData.plantCode) {
@@ -335,11 +354,11 @@ router.put('/:id', async (req: Request, res: Response) => {
         plantId = plantResult.rows[0].id;
       }
     }
-    
+
     const updateFields: string[] = [];
     const updateValues: any[] = [];
     let paramIndex = 1;
-    
+
     if (materialId !== null) {
       updateFields.push(`material_id = $${paramIndex++}`);
       updateValues.push(materialId);
@@ -388,23 +407,27 @@ router.put('/:id', async (req: Request, res: Response) => {
       updateFields.push(`is_active = $${paramIndex++}`);
       updateValues.push(validatedData.isActive);
     }
-    
+
+    const userId = (req as any).user?.id || 1;
+
     updateFields.push(`updated_at = NOW()`);
+    updateFields.push(`updated_by = $${paramIndex++}`);
+    updateValues.push(userId);
     updateValues.push(id);
-    
+
     const query = `
       UPDATE routing_master 
       SET ${updateFields.join(', ')}
       WHERE id = $${paramIndex}
       RETURNING *
     `;
-    
+
     const result = await pool.query(query, updateValues);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Routing master not found" });
     }
-    
+
     return res.status(200).json(result.rows[0]);
   } catch (error: any) {
     if (error instanceof z.ZodError) {
@@ -415,21 +438,25 @@ router.put('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// Delete routing master
+// Delete routing master (Soft Delete)
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
     await ensureRoutingTables();
     const { id } = req.params;
-    
+    const userId = (req as any).user?.id || 1;
+
     const result = await pool.query(
-      'DELETE FROM routing_master WHERE id = $1 RETURNING *',
-      [id]
+      `UPDATE routing_master 
+       SET is_active = false, "_deletedAt" = NOW(), updated_by = $1, updated_at = NOW() 
+       WHERE id = $2 
+       RETURNING *`,
+      [userId, id]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Routing master not found" });
     }
-    
+
     return res.status(200).json({ message: "Routing master deleted successfully" });
   } catch (error: any) {
     console.error('Error deleting routing master:', error);
@@ -445,7 +472,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
 router.get('/operations/:operationId/components', async (req: Request, res: Response) => {
   try {
     const { operationId } = req.params;
-    
+
     const result = await pool.query(`
       SELECT 
         roc.id,
@@ -463,7 +490,7 @@ router.get('/operations/:operationId/components', async (req: Request, res: Resp
       WHERE roc.routing_operation_id = $1
       ORDER BY roc.material_code
     `, [operationId]);
-    
+
     return res.status(200).json(result.rows);
   } catch (error: any) {
     console.error('Error fetching routing operation components:', error);
@@ -475,7 +502,7 @@ router.get('/operations/:operationId/components', async (req: Request, res: Resp
 router.get('/operations/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     const result = await pool.query(`
       SELECT 
         ro.id,
@@ -496,11 +523,11 @@ router.get('/operations/:id', async (req: Request, res: Response) => {
       LEFT JOIN work_centers wc ON ro.work_center_id = wc.id
       WHERE ro.id = $1
     `, [id]);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Routing operation not found" });
     }
-    
+
     return res.status(200).json(result.rows[0]);
   } catch (error: any) {
     console.error('Error fetching routing operation:', error);
@@ -513,7 +540,7 @@ router.post('/:routingMasterId/operations', async (req: Request, res: Response) 
   try {
     const { routingMasterId } = req.params;
     const validatedData = routingOperationSchema.parse(req.body);
-    
+
     // Get work_center_id if workCenterCode is provided
     let workCenterId = validatedData.workCenterId || null;
     if (!workCenterId && validatedData.workCenterCode) {
@@ -525,7 +552,7 @@ router.post('/:routingMasterId/operations', async (req: Request, res: Response) 
         workCenterId = wcResult.rows[0].id;
       }
     }
-    
+
     const result = await pool.query(`
       INSERT INTO routing_operations (
         routing_master_id, operation_number, operation_description,
@@ -545,7 +572,7 @@ router.post('/:routingMasterId/operations', async (req: Request, res: Response) 
       validatedData.sequenceOrder,
       validatedData.isActive
     ]);
-    
+
     return res.status(201).json(result.rows[0]);
   } catch (error: any) {
     if (error instanceof z.ZodError) {
@@ -561,7 +588,7 @@ router.put('/operations/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const validatedData = routingOperationSchema.partial().parse(req.body);
-    
+
     // Get work_center_id if workCenterCode is provided
     let workCenterId = validatedData.workCenterId;
     if (workCenterId === undefined && validatedData.workCenterCode) {
@@ -573,11 +600,11 @@ router.put('/operations/:id', async (req: Request, res: Response) => {
         workCenterId = wcResult.rows[0].id;
       }
     }
-    
+
     const updateFields: string[] = [];
     const updateValues: any[] = [];
     let paramIndex = 1;
-    
+
     if (validatedData.operationNumber !== undefined) {
       updateFields.push(`operation_number = $${paramIndex++}`);
       updateValues.push(validatedData.operationNumber);
@@ -614,23 +641,23 @@ router.put('/operations/:id', async (req: Request, res: Response) => {
       updateFields.push(`is_active = $${paramIndex++}`);
       updateValues.push(validatedData.isActive);
     }
-    
+
     updateFields.push(`updated_at = NOW()`);
     updateValues.push(id);
-    
+
     const query = `
       UPDATE routing_operations 
       SET ${updateFields.join(', ')}
       WHERE id = $${paramIndex}
       RETURNING *
     `;
-    
+
     const result = await pool.query(query, updateValues);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Routing operation not found" });
     }
-    
+
     return res.status(200).json(result.rows[0]);
   } catch (error: any) {
     if (error instanceof z.ZodError) {
@@ -645,16 +672,16 @@ router.put('/operations/:id', async (req: Request, res: Response) => {
 router.delete('/operations/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     const result = await pool.query(
       'DELETE FROM routing_operations WHERE id = $1 RETURNING *',
       [id]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Routing operation not found" });
     }
-    
+
     return res.status(200).json({ message: "Routing operation deleted successfully" });
   } catch (error: any) {
     console.error('Error deleting routing operation:', error);
@@ -670,7 +697,7 @@ router.delete('/operations/:id', async (req: Request, res: Response) => {
 router.get('/components/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     const result = await pool.query(`
       SELECT 
         roc.id,
@@ -687,11 +714,11 @@ router.get('/components/:id', async (req: Request, res: Response) => {
       LEFT JOIN materials m ON roc.material_code = m.code
       WHERE roc.id = $1
     `, [id]);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Routing operation component not found" });
     }
-    
+
     return res.status(200).json(result.rows[0]);
   } catch (error: any) {
     console.error('Error fetching routing operation component:', error);
@@ -704,7 +731,7 @@ router.post('/operations/:operationId/components', async (req: Request, res: Res
   try {
     const { operationId } = req.params;
     const validatedData = routingComponentSchema.parse(req.body);
-    
+
     // Get material_id if materialCode is provided
     let materialId = null;
     if (validatedData.materialCode) {
@@ -716,7 +743,7 @@ router.post('/operations/:operationId/components', async (req: Request, res: Res
         materialId = materialResult.rows[0].id;
       }
     }
-    
+
     const result = await pool.query(`
       INSERT INTO routing_operation_components (
         routing_operation_id, material_id, material_code, quantity, unit, is_active
@@ -730,7 +757,7 @@ router.post('/operations/:operationId/components', async (req: Request, res: Res
       validatedData.unit,
       validatedData.isActive
     ]);
-    
+
     return res.status(201).json(result.rows[0]);
   } catch (error: any) {
     if (error instanceof z.ZodError) {
@@ -746,7 +773,7 @@ router.put('/components/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const validatedData = routingComponentSchema.partial().parse(req.body);
-    
+
     // Get material_id if materialCode is provided
     let materialId = null;
     if (validatedData.materialCode) {
@@ -758,11 +785,11 @@ router.put('/components/:id', async (req: Request, res: Response) => {
         materialId = materialResult.rows[0].id;
       }
     }
-    
+
     const updateFields: string[] = [];
     const updateValues: any[] = [];
     let paramIndex = 1;
-    
+
     if (materialId !== null) {
       updateFields.push(`material_id = $${paramIndex++}`);
       updateValues.push(materialId);
@@ -783,23 +810,23 @@ router.put('/components/:id', async (req: Request, res: Response) => {
       updateFields.push(`is_active = $${paramIndex++}`);
       updateValues.push(validatedData.isActive);
     }
-    
+
     updateFields.push(`updated_at = NOW()`);
     updateValues.push(id);
-    
+
     const query = `
       UPDATE routing_operation_components 
       SET ${updateFields.join(', ')}
       WHERE id = $${paramIndex}
       RETURNING *
     `;
-    
+
     const result = await pool.query(query, updateValues);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Routing operation component not found" });
     }
-    
+
     return res.status(200).json(result.rows[0]);
   } catch (error: any) {
     if (error instanceof z.ZodError) {
@@ -814,16 +841,16 @@ router.put('/components/:id', async (req: Request, res: Response) => {
 router.delete('/components/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    
+
     const result = await pool.query(
       'DELETE FROM routing_operation_components WHERE id = $1 RETURNING *',
       [id]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Routing operation component not found" });
     }
-    
+
     return res.status(200).json({ message: "Routing operation component deleted successfully" });
   } catch (error: any) {
     console.error('Error deleting routing operation component:', error);

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { db, pool } from '../../db';
 import { transactionKeys } from '@shared/transaction-keys-schema';
 import { insertTransactionKeySchema, updateTransactionKeySchema } from '@shared/transaction-keys-schema';
-import { eq, ilike, or, and, desc } from 'drizzle-orm';
+import { eq, ilike, or, and, desc, isNull } from 'drizzle-orm';
 
 const router = Router();
 
@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
         } = req.query;
 
         let query = db.select().from(transactionKeys);
-        const conditions = [];
+        const conditions = [isNull(transactionKeys.deletedAt)];
 
         // Search filter
         if (search && typeof search === 'string') {
@@ -81,7 +81,7 @@ router.get('/:id', async (req, res) => {
         const result = await db
             .select()
             .from(transactionKeys)
-            .where(eq(transactionKeys.id, parseInt(id, 10)))
+            .where(and(eq(transactionKeys.id, parseInt(id, 10)), isNull(transactionKeys.deletedAt)))
             .limit(1);
 
         if (result.length === 0) {
@@ -105,7 +105,7 @@ router.post('/', async (req, res) => {
         const existing = await db
             .select()
             .from(transactionKeys)
-            .where(eq(transactionKeys.code, validatedData.code))
+            .where(and(eq(transactionKeys.code, validatedData.code), isNull(transactionKeys.deletedAt)))
             .limit(1);
 
         if (existing.length > 0) {
@@ -120,7 +120,9 @@ router.post('/', async (req, res) => {
             .insert(transactionKeys)
             .values({
                 ...validatedData,
-                createdBy: (req as any).user?.id || null,
+                createdBy: (req as any).user?.id || 1,
+                updatedBy: (req as any).user?.id || 1,
+                tenantId: (req as any).user?.tenantId || '001',
                 createdAt: new Date(),
                 updatedAt: new Date()
             })
@@ -153,7 +155,7 @@ router.put('/:id', async (req, res) => {
         const existing = await db
             .select()
             .from(transactionKeys)
-            .where(eq(transactionKeys.id, parseInt(id, 10)))
+            .where(and(eq(transactionKeys.id, parseInt(id, 10)), isNull(transactionKeys.deletedAt)))
             .limit(1);
 
         if (existing.length === 0) {
@@ -165,7 +167,7 @@ router.put('/:id', async (req, res) => {
             const codeExists = await db
                 .select()
                 .from(transactionKeys)
-                .where(eq(transactionKeys.code, validatedData.code))
+                .where(and(eq(transactionKeys.code, validatedData.code), isNull(transactionKeys.deletedAt)))
                 .limit(1);
 
             if (codeExists.length > 0) {
@@ -181,9 +183,10 @@ router.put('/:id', async (req, res) => {
             .update(transactionKeys)
             .set({
                 ...validatedData,
+                updatedBy: (req as any).user?.id || 1,
                 updatedAt: new Date()
             })
-            .where(eq(transactionKeys.id, parseInt(id, 10)))
+            .where(and(eq(transactionKeys.id, parseInt(id, 10)), isNull(transactionKeys.deletedAt)))
             .returning();
 
         res.json(result[0]);
@@ -210,7 +213,7 @@ router.delete('/:id', async (req, res) => {
         const existing = await db
             .select()
             .from(transactionKeys)
-            .where(eq(transactionKeys.id, parseInt(id, 10)))
+            .where(and(eq(transactionKeys.id, parseInt(id, 10)), isNull(transactionKeys.deletedAt)))
             .limit(1);
 
         if (existing.length === 0) {
@@ -233,8 +236,12 @@ router.delete('/:id', async (req, res) => {
 
         // Delete record
         await db
-            .delete(transactionKeys)
-            .where(eq(transactionKeys.id, parseInt(id, 10)));
+            .update(transactionKeys)
+            .set({
+                deletedAt: new Date(),
+                updatedBy: (req as any).user?.id || 1
+            })
+            .where(and(eq(transactionKeys.id, parseInt(id, 10)), isNull(transactionKeys.deletedAt)));
 
         res.json({ message: 'Posting key deleted successfully' });
     } catch (error: any) {

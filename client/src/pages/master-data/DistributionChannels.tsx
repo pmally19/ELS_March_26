@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
-import { Plus, Search, RefreshCw, Upload, Download, Edit2, Trash2, ArrowLeft, MoreHorizontal, Eye, Building, Globe } from "lucide-react";
+import { Plus, Search, RefreshCw, Upload, Download, Edit2, Trash2, ArrowLeft, MoreHorizontal, Eye, Building, Globe, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { Link } from "wouter";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -24,6 +24,11 @@ interface DistributionChannel {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  // Audit trail fields
+  _tenantId?: string | null;
+  _createdBy?: number | null;
+  _updatedBy?: number | null;
+  _deletedAt?: string | null;
 }
 
 interface DistributionChannelFormData {
@@ -38,6 +43,7 @@ export default function DistributionChannels() {
   const [editingDistributionChannel, setEditingDistributionChannel] = useState<DistributionChannel | null>(null);
   const [viewingChannel, setViewingChannel] = useState<DistributionChannel | null>(null);
   const [isViewDetailsOpen, setIsViewDetailsOpen] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
   const [formData, setFormData] = useState<DistributionChannelFormData>({
     code: "",
     description: "",
@@ -555,6 +561,8 @@ export default function DistributionChannels() {
                     </CardContent>
                   </Card>
 
+
+                  {/* Administrative Data — collapsible */}
                   <Card>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-lg flex items-center">
@@ -577,6 +585,26 @@ export default function DistributionChannels() {
                           </dd>
                         </div>
                       </dl>
+
+                      {/* Collapsible Administrative Data */}
+                      <div className="border-t mt-3 pt-3">
+                        <button
+                          type="button"
+                          className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+                          onClick={() => setAdminDataOpen(o => !o)}
+                        >
+                          {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                          <Info className="h-3 w-3" />
+                          Administrative Data
+                        </button>
+                        {adminDataOpen && (
+                          <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                            <div><dt className="font-medium">Created By (ID)</dt><dd>{viewingChannel._createdBy ?? "—"}</dd></div>
+                            <div><dt className="font-medium">Updated By (ID)</dt><dd>{viewingChannel._updatedBy ?? "—"}</dd></div>
+                            <div><dt className="font-medium">Tenant ID</dt><dd>{viewingChannel._tenantId ?? "—"}</dd></div>
+                          </dl>
+                        )}
+                      </div>
                     </CardContent>
                   </Card>
                 </div>

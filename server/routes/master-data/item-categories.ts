@@ -25,8 +25,13 @@ router.get('/', async (req, res) => {
         billing_relevant,
         pricing_relevant,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by,
+        "_tenantId",
+        "_deletedAt"
       FROM sd_item_categories
+      WHERE "_deletedAt" IS NULL
       ORDER BY code
     `);
 
@@ -40,6 +45,10 @@ router.get('/', async (req, res) => {
             pricingRelevant: row.pricing_relevant,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            deletedAt: row._deletedAt,
         })));
     } catch (error) {
         console.error('Error fetching item categories:', error);
@@ -62,9 +71,13 @@ router.get('/:id', async (req, res) => {
         billing_relevant,
         pricing_relevant,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by,
+        "_tenantId",
+        "_deletedAt"
       FROM sd_item_categories
-      WHERE id = $1
+      WHERE id = $1 AND "_deletedAt" IS NULL
     `, [id]);
 
         if (result.rows.length === 0) {
@@ -82,6 +95,10 @@ router.get('/:id', async (req, res) => {
             pricingRelevant: row.pricing_relevant,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            deletedAt: row._deletedAt,
         });
     } catch (error) {
         console.error('Error fetching item category:', error);
@@ -90,7 +107,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/master-data/item-categories - Create new item category
-router.post('/', async (req, res) => {
+router.post('/', async (req: any, res) => {
     try {
         const {
             code,
@@ -100,6 +117,9 @@ router.post('/', async (req, res) => {
             billingRelevant = true,
             pricingRelevant = true,
         } = req.body;
+
+        const tenantId = req.user?.tenantId || '001';
+        const userId = req.user?.id || 1;
 
         // Validation
         if (!code || !name || !itemType) {
@@ -116,22 +136,28 @@ router.post('/', async (req, res) => {
         }
 
         const result = await pool.query(`
-      INSERT INTO sd_item_categories (
-        code,
-        name,
-        item_type,
-        delivery_relevant,
-        billing_relevant,
-        pricing_relevant
-      ) VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING *
-    `, [
+      INSERT INTO sd_item_categories(
+            code,
+            name,
+            item_type,
+            delivery_relevant,
+            billing_relevant,
+            pricing_relevant,
+            "_tenantId",
+            created_by,
+            updated_by
+        ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    RETURNING *
+        `, [
             code.toUpperCase(),
             name,
             itemType,
             deliveryRelevant,
             billingRelevant,
             pricingRelevant,
+            tenantId,
+            userId,
+            userId
         ]);
 
         const row = result.rows[0];
@@ -145,6 +171,10 @@ router.post('/', async (req, res) => {
             pricingRelevant: row.pricing_relevant,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            deletedAt: row._deletedAt,
         });
     } catch (error) {
         console.error('Error creating item category:', error);
@@ -157,7 +187,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /api/master-data/item-categories/:id - Update item category
-router.put('/:id', async (req, res) => {
+router.put('/:id', async (req: any, res) => {
     try {
         const { id } = req.params;
         const {
@@ -168,6 +198,8 @@ router.put('/:id', async (req, res) => {
             pricingRelevant,
         } = req.body;
 
+        const userId = req.user?.id || 1;
+
         const result = await pool.query(`
       UPDATE sd_item_categories
       SET 
@@ -176,8 +208,9 @@ router.put('/:id', async (req, res) => {
         delivery_relevant = COALESCE($3, delivery_relevant),
         billing_relevant = COALESCE($4, billing_relevant),
         pricing_relevant = COALESCE($5, pricing_relevant),
-        updated_at = NOW()
-      WHERE id = $6
+        updated_at = NOW(),
+        updated_by = $6
+      WHERE id = $7 AND "_deletedAt" IS NULL
       RETURNING *
     `, [
             name,
@@ -185,6 +218,7 @@ router.put('/:id', async (req, res) => {
             deliveryRelevant,
             billingRelevant,
             pricingRelevant,
+            userId,
             id,
         ]);
 
@@ -203,6 +237,10 @@ router.put('/:id', async (req, res) => {
             pricingRelevant: row.pricing_relevant,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            deletedAt: row._deletedAt,
         });
     } catch (error) {
         console.error('Error updating item category:', error);
@@ -211,15 +249,17 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /api/master-data/item-categories/:id - Delete item category
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', async (req: any, res) => {
     try {
         const { id } = req.params;
+        const userId = req.user?.id || 1;
 
         const result = await pool.query(`
-      DELETE FROM sd_item_categories
-      WHERE id = $1
+      UPDATE sd_item_categories
+      SET "_deletedAt" = NOW(), updated_by = $1, updated_at = NOW()
+      WHERE id = $2 AND "_deletedAt" IS NULL
       RETURNING id
-    `, [id]);
+    `, [userId, id]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Item category not found' });

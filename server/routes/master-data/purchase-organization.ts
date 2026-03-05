@@ -15,8 +15,10 @@ export async function getPurchaseOrganization(req: Request, res: Response) {
     const params: any[] = [];
 
     if (company_code_id) {
-      whereClause = 'WHERE po.company_code_id = $1';
+      whereClause = 'WHERE po.company_code_id = $1 AND COALESCE(po.is_active, true) IS NOT false';
       params.push(parseInt(company_code_id as string));
+    } else {
+      whereClause = 'WHERE COALESCE(po.is_active, true) IS NOT false';
     }
 
     // Query data from the original table with proper aliasing for the UI
@@ -41,6 +43,10 @@ export async function getPurchaseOrganization(req: Request, res: Response) {
         po.is_active AS "isActive",
         po.created_at AS "createdAt",
         po.updated_at AS "updatedAt",
+        po.created_by AS "_createdBy",
+        po.updated_by AS "_updatedBy",
+        po."_tenantId",
+        po."_deletedAt",
         cc.code AS "companyCode.code",
         cc.name AS "companyCode.name"
       FROM purchase_organizations po
@@ -132,12 +138,12 @@ export async function createPurchaseOrganization(req: Request, res: Response) {
             code, name, description, notes, company_code_id, 
             currency, address, city, state, country, postal_code, 
             phone, email, manager, status, is_active, 
-            created_at, updated_at
+            created_at, updated_at, created_by, updated_by, "_tenantId", "_deletedAt"
         ) VALUES (
             $1, $2, $3, $4, $5, 
             $6, $7, $8, $9, $10, $11, 
             $12, $13, $14, $15, $16, 
-            NOW(), NOW()
+            NOW(), NOW(), $17, $18, $19, NULL
         )
         RETURNING *
     `, [
@@ -169,6 +175,10 @@ export async function createPurchaseOrganization(req: Request, res: Response) {
       isActive: newOrg.is_active,
       createdAt: newOrg.created_at,
       updatedAt: newOrg.updated_at,
+      _createdBy: newOrg.created_by,
+      _updatedBy: newOrg.updated_by,
+      _tenantId: newOrg._tenantId,
+      _deletedAt: newOrg._deletedAt,
       plants: plants || []
     });
 
@@ -241,6 +251,8 @@ export async function updatePurchaseOrganization(req: Request, res: Response) {
     if (isActive !== undefined) add('is_active', !!isActive);
 
     sets.push(`updated_at = NOW()`);
+    sets.push(`updated_by = $${paramIdx++}`);
+    params.push((req as any).user?.id ?? 1);
 
     params.push(id); // ID is the last param
 
@@ -291,6 +303,10 @@ export async function updatePurchaseOrganization(req: Request, res: Response) {
       isActive: updatedOrg.is_active,
       createdAt: updatedOrg.created_at,
       updatedAt: updatedOrg.updated_at,
+      _createdBy: updatedOrg.created_by,
+      _updatedBy: updatedOrg.updated_by,
+      _tenantId: updatedOrg._tenantId,
+      _deletedAt: updatedOrg._deletedAt,
       plants: plants // Just echo back for now
     });
 
@@ -310,7 +326,11 @@ export async function deletePurchaseOrganization(req: Request, res: Response) {
       return res.status(400).json({ message: "Invalid ID" });
     }
 
-    const result = await pool.query(`DELETE FROM purchase_organizations WHERE id = $1 RETURNING id`, [id]);
+    const userId = (req as any).user?.id ?? 1;
+    const result = await pool.query(
+      `UPDATE purchase_organizations SET is_active = false, "_deletedAt" = NOW(), updated_by = $1, updated_at = NOW() WHERE id = $2 RETURNING id`,
+      [userId, id]
+    );
 
     if (!result.rows || result.rows.length === 0) {
       return res.status(404).json({ message: "Purchase organization not found" });

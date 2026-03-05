@@ -76,10 +76,18 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
+    const userId = (req as any).user?.id || 1;
+    const tenantId = (req as any).user?.tenantId || '001';
+
     // Insert new variant
     const [variant] = await db
       .insert(fiscalYearVariants)
-      .values(validatedData)
+      .values({
+        ...validatedData,
+        created_by: userId,
+        updated_by: userId,
+        tenant_id: tenantId,
+      })
       .returning();
 
     res.status(201).json(variant);
@@ -149,11 +157,14 @@ router.put("/:id", async (req: Request, res: Response) => {
       }
     }
 
+    const userId = (req as any).user?.id || 1;
+
     // Update variant
     const [updatedVariant] = await db
       .update(fiscalYearVariants)
       .set({
         ...validatedData,
+        updated_by: userId,
         updated_at: new Date()
       })
       .where(eq(fiscalYearVariants.id, id))

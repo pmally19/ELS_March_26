@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Edit, Trash2, RefreshCw, ArrowLeft, Search } from "lucide-react";
+import { Plus, Edit, Trash2, RefreshCw, ArrowLeft, Search, Eye, Info, ChevronDown, ChevronRight, AlertCircle } from "lucide-react";
 import { Link } from "wouter";
 
 interface MovementTransactionType {
@@ -30,6 +30,11 @@ interface MovementTransactionType {
     requires_reference: boolean;
     sort_order: number;
     is_active: boolean;
+    is_active: boolean;
+    created_by?: number;
+    updated_by?: number;
+    _tenantId?: string;
+    _deletedAt?: string | null;
     created_at?: string;
     updated_at?: string;
 }
@@ -53,6 +58,9 @@ export default function MovementTransactionTypes() {
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [editing, setEditing] = useState<MovementTransactionType | null>(null);
     const [deletingId, setDeletingId] = useState<number | null>(null);
+    const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+    const [viewingType, setViewingType] = useState<MovementTransactionType | null>(null);
+    const [adminDataOpen, setAdminDataOpen] = useState(false);
     const [search, setSearch] = useState("");
     const { toast } = useToast();
     const queryClient = useQueryClient();
@@ -186,6 +194,12 @@ export default function MovementTransactionTypes() {
         }
     };
 
+    const handleView = (type: MovementTransactionType) => {
+        setViewingType(type);
+        setIsViewDialogOpen(true);
+        setAdminDataOpen(false);
+    };
+
     const handleEdit = (type: MovementTransactionType) => {
         setEditing(type);
         setOpen(true);
@@ -291,7 +305,7 @@ export default function MovementTransactionTypes() {
                                     </TableRow>
                                 ) : (
                                     filtered.map((type) => (
-                                        <TableRow key={type.id}>
+                                        <TableRow key={type.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => handleView(type)}>
                                             <TableCell className="font-mono font-semibold">{type.code}</TableCell>
                                             <TableCell>{type.name}</TableCell>
                                             <TableCell className="hidden md:table-cell">
@@ -307,7 +321,10 @@ export default function MovementTransactionTypes() {
                                                     {type.is_active ? "Active" : "Inactive"}
                                                 </Badge>
                                             </TableCell>
-                                            <TableCell className="text-right space-x-2">
+                                            <TableCell className="text-right space-x-2" onClick={(e) => e.stopPropagation()}>
+                                                <Button variant="ghost" size="sm" onClick={() => handleView(type)}>
+                                                    <Eye className="h-4 w-4" />
+                                                </Button>
                                                 <Button variant="ghost" size="sm" onClick={() => handleEdit(type)}>
                                                     <Edit className="h-4 w-4" />
                                                 </Button>
@@ -524,6 +541,139 @@ export default function MovementTransactionTypes() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            {/* View Details Dialog */}
+            <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+                <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-hidden flex flex-col">
+                    {viewingType && (
+                        <>
+                            <DialogHeader className="flex-shrink-0">
+                                <div className="flex items-center space-x-4">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setIsViewDialogOpen(false)}
+                                        className="flex items-center space-x-2"
+                                    >
+                                        <ArrowLeft className="h-4 w-4" />
+                                        <span>Back</span>
+                                    </Button>
+                                    <div className="flex-1">
+                                        <DialogTitle>Movement Transaction Type Details</DialogTitle>
+                                        <DialogDescription>
+                                            Comprehensive information about {viewingType.name}
+                                        </DialogDescription>
+                                    </div>
+                                </div>
+                            </DialogHeader>
+
+                            <div className="flex-1 overflow-y-auto space-y-6 px-1">
+                                <div className="bg-gray-50 p-4 rounded-lg flex justify-between items-start">
+                                    <div>
+                                        <h3 className="text-xl font-bold">{viewingType.name}</h3>
+                                        <div className="flex items-center mt-1 gap-2">
+                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-800">
+                                                {viewingType.code}
+                                            </span>
+                                            <Badge variant={viewingType.is_active ? "default" : "secondary"}>
+                                                {viewingType.is_active ? "Active" : "Inactive"}
+                                            </Badge>
+                                            {viewingType.category && (
+                                                <Badge variant="outline">{viewingType.category.replace('_', ' ')}</Badge>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <Card className="shadow-sm border-gray-100">
+                                        <CardHeader className="pb-3 border-b border-gray-50 bg-gray-50/50">
+                                            <CardTitle className="text-sm font-semibold flex items-center text-gray-700">
+                                                <Info className="mr-2 h-4 w-4 text-gray-500" />
+                                                Basic Information
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="pt-4 space-y-3">
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-500 mb-1">Code</p>
+                                                    <p className="text-sm font-mono">{viewingType.code}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-500 mb-1">Direction</p>
+                                                    <p className="text-sm capitalize">{viewingType.direction?.toLowerCase()}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-500 mb-1">Category</p>
+                                                    <p className="text-sm">{viewingType.category?.replace('_', ' ') || '—'}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-500 mb-1">Affects Inventory</p>
+                                                    <p className="text-sm">{viewingType.affects_inventory ? 'Yes' : 'No'}</p>
+                                                </div>
+                                                <div className="col-span-2">
+                                                    <p className="text-sm font-medium text-gray-500 mb-1">Description</p>
+                                                    <p className="text-sm">{viewingType.description || '—'}</p>
+                                                </div>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+
+                                    <Card className="shadow-sm border-gray-100">
+                                        <CardHeader className="pb-3 border-b border-gray-50 bg-gray-50/50">
+                                            <CardTitle className="text-sm font-semibold flex items-center text-gray-700">
+                                                <Info className="mr-2 h-4 w-4 text-gray-500" />
+                                                Administrative Data
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="pt-4 space-y-4">
+                                            <dl className="space-y-3">
+                                                <div className="flex justify-between">
+                                                    <dt className="text-sm text-gray-500">Created on</dt>
+                                                    <dd className="text-sm font-medium">
+                                                        {viewingType.created_at ? new Date(viewingType.created_at).toLocaleString() : '—'}
+                                                    </dd>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <dt className="text-sm text-gray-500">Created by</dt>
+                                                    <dd className="text-sm font-medium">{viewingType.created_by ?? '—'}</dd>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <dt className="text-sm text-gray-500">Last changed on</dt>
+                                                    <dd className="text-sm font-medium">
+                                                        {viewingType.updated_at ? new Date(viewingType.updated_at).toLocaleString() : '—'}
+                                                    </dd>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <dt className="text-sm text-gray-500">Last changed by</dt>
+                                                    <dd className="text-sm font-medium">{viewingType.updated_by ?? '—'}</dd>
+                                                </div>
+                                                <div className="flex justify-between pt-2 border-t border-gray-100">
+                                                    <dt className="text-sm text-gray-500">Tenant</dt>
+                                                    <dd className="text-sm font-mono bg-gray-100 px-2 py-0.5 rounded">
+                                                        {viewingType._tenantId || '001'}
+                                                    </dd>
+                                                </div>
+                                                {viewingType._deletedAt && (
+                                                    <div className="flex justify-between pt-2 border-t border-red-100">
+                                                        <dt className="text-sm text-red-500 flex items-center">
+                                                            <AlertCircle className="mr-1 h-3.5 w-3.5" />
+                                                            Deletion Flag
+                                                        </dt>
+                                                        <dd className="text-sm text-red-600 font-medium">
+                                                            Yes (Soft Deleted on {new Date(viewingType._deletedAt).toLocaleDateString()})
+                                                        </dd>
+                                                    </div>
+                                                )}
+                                            </dl>
+                                        </CardContent>
+                                    </Card>
+                                </div>
+                            </div>
+                        </>
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

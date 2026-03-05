@@ -526,7 +526,7 @@ export default function CustomerAddressManager({
                   <SelectItem value="no-countries" disabled>No countries available</SelectItem>
                 ) : (
                   (countriesList as any[]).map((c: any) => (
-                    <SelectItem key={c.id} value={c.name}>
+                    <SelectItem key={c.id} value={c.code}>
                       {c.code} - {c.name}
                     </SelectItem>
                   ))

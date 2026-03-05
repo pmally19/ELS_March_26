@@ -16,6 +16,10 @@ export async function getSalesAreas(req: Request, res: Response) {
         sa.is_active,
         sa.created_at,
         sa.updated_at,
+        sa.created_by,
+        sa.updated_by,
+        sa."_tenantId",
+        sa."_deletedAt",
         so.name as sales_org_name,
         dc.name as distribution_channel_name,
         d.name as division_name
@@ -23,7 +27,7 @@ export async function getSalesAreas(req: Request, res: Response) {
       LEFT JOIN sd_sales_organizations so ON sa.sales_org_code = so.code
       LEFT JOIN distribution_channels dc ON sa.distribution_channel_code = dc.code
       LEFT JOIN sd_divisions d ON sa.division_code = d.code
-      WHERE 1=1
+      WHERE COALESCE(sa.is_active, true) IS NOT false
     `;
     const params: any[] = [];
     let paramIndex = 1;
@@ -72,7 +76,11 @@ export async function getSalesAreas(req: Request, res: Response) {
       name: row.name,
       is_active: row.is_active !== false,
       created_at: row.created_at,
-      updated_at: row.updated_at
+      updated_at: row.updated_at,
+      _createdBy: row.created_by,
+      _updatedBy: row.updated_by,
+      _tenantId: row['_tenantId'],
+      _deletedAt: row['_deletedAt'],
     }));
 
     return res.status(200).json(transformedRows);
@@ -123,7 +131,11 @@ export async function getSalesAreaById(req: Request, res: Response) {
       name: row.name,
       is_active: row.is_active !== false,
       created_at: row.created_at,
-      updated_at: row.updated_at
+      updated_at: row.updated_at,
+      _createdBy: row.created_by,
+      _updatedBy: row.updated_by,
+      _tenantId: row['_tenantId'],
+      _deletedAt: row['_deletedAt'],
     };
 
     return res.status(200).json(transformed);
@@ -213,12 +225,14 @@ export async function createSalesArea(req: Request, res: Response) {
 
     // Insert new sales area (no hardcoded defaults)
     const insertQuery = `
-      INSERT INTO sd_sales_areas (sales_org_code, distribution_channel_code, division_code, name, is_active)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO sd_sales_areas (sales_org_code, distribution_channel_code, division_code, name, is_active, created_by, updated_by, "_tenantId", "_deletedAt")
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)
       RETURNING *
     `;
 
     const isActiveValue = is_active !== undefined ? is_active : true;
+    const userId = (req as any).user?.id ?? 1;
+    const tenantId = (req as any).user?.tenantId ?? '001';
 
     let result;
     try {
@@ -227,7 +241,10 @@ export async function createSalesArea(req: Request, res: Response) {
         distribution_channel_code,
         division_code,
         name,
-        isActiveValue
+        isActiveValue,
+        userId,
+        userId,
+        tenantId
       ]);
     } catch (insertError: any) {
       // Handle sequence out-of-sync error
@@ -247,7 +264,10 @@ export async function createSalesArea(req: Request, res: Response) {
             distribution_channel_code,
             division_code,
             name,
-            isActiveValue
+            isActiveValue,
+            userId,
+            userId,
+            tenantId
           ]);
         } catch (retryError: any) {
           console.error('Error retrying insert after sequence fix:', retryError);
@@ -285,7 +305,11 @@ export async function createSalesArea(req: Request, res: Response) {
       name: row.name,
       is_active: row.is_active !== false,
       created_at: row.created_at,
-      updated_at: row.updated_at
+      updated_at: row.updated_at,
+      _createdBy: row.created_by,
+      _updatedBy: row.updated_by,
+      _tenantId: row['_tenantId'],
+      _deletedAt: row['_deletedAt'],
     };
 
     return res.status(201).json(transformed);
@@ -438,8 +462,10 @@ export async function updateSalesArea(req: Request, res: Response) {
       }
     }
 
-    // Always update updated_at timestamp
+    // Always update updated_at and updated_by
     updates.push(`updated_at = NOW()`);
+    updates.push(`updated_by = $${paramIndex++}`);
+    values.push((req as any).user?.id ?? 1);
 
     values.push(id);
 
@@ -479,7 +505,11 @@ export async function updateSalesArea(req: Request, res: Response) {
       name: row.name,
       is_active: row.is_active !== false,
       created_at: row.created_at,
-      updated_at: row.updated_at
+      updated_at: row.updated_at,
+      _createdBy: row.created_by,
+      _updatedBy: row.updated_by,
+      _tenantId: row['_tenantId'],
+      _deletedAt: row['_deletedAt'],
     };
 
     return res.status(200).json(transformed);
@@ -530,8 +560,16 @@ export async function deleteSalesArea(req: Request, res: Response) {
       });
     }
 
-    // Delete the sales area
-    await pool.query("DELETE FROM sd_sales_areas WHERE id = $1", [id]);
+    // Soft-delete: set is_active=false + _deletedAt
+    const deleteUserId = (req as any).user?.id ?? 1;
+    await pool.query(`
+      UPDATE sd_sales_areas
+      SET is_active = false,
+          "_deletedAt" = NOW(),
+          updated_by = $1,
+          updated_at = NOW()
+      WHERE id = $2
+    `, [deleteUserId, id]);
 
     return res.status(200).json({ message: "Sales area deleted successfully" });
   } catch (error: any) {

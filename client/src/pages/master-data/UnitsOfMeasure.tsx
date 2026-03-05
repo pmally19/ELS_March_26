@@ -5,11 +5,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Plus, Edit2, Trash2, ArrowLeft, RefreshCw, Ruler, Upload, Download, MoreHorizontal, Search } from "lucide-react";
+import { Plus, Edit2, Trash2, ArrowLeft, RefreshCw, Ruler, Upload, Download, MoreHorizontal, Search, Eye, Info, ChevronDown, ChevronRight } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@/components/ui/table";
 // import UOMExcelImport from "@/components/master-data/UOMExcelImport"; // REMOVED: File does not exist
 
 interface UOM {
@@ -22,11 +30,18 @@ interface UOM {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  createdBy?: number | null;
+  updatedBy?: number | null;
+  _tenantId?: string | null;
+  _deletedAt?: string | null;
 }
 
 export default function UnitsOfMeasure() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingUOM, setEditingUOM] = useState<UOM | null>(null);
+  const [viewingUOM, setViewingUOM] = useState<UOM | null>(null);
+  const [showViewDialog, setShowViewDialog] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [formData, setFormData] = useState({
@@ -338,88 +353,203 @@ export default function UnitsOfMeasure() {
             </Dialog>
           </div>
 
-          <div className="grid gap-6">
-            {isLoading ? (
-              <div className="flex justify-center items-center h-64">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              </div>
-            ) : filteredUOMs.length === 0 ? (
-              <Card>
-                <CardContent className="flex flex-col items-center justify-center h-64">
-                  <Ruler className="h-12 w-12 text-gray-400 mb-4" />
-                  <h3 className="text-lg font-semibold text-gray-600 mb-2">
-                    {searchTerm ? 'No UOMs match your search' : 'No UOMs found'}
-                  </h3>
-                  <p className="text-gray-500 text-center mb-4">
-                    {searchTerm
-                      ? 'Try adjusting your search criteria or clear the search to see all UOMs.'
-                      : 'Get started by creating your first Unit of Measure.'
-                    }
-                  </p>
-                  {!searchTerm && (
-                    <Button onClick={() => setIsDialogOpen(true)}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add First UOM
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="grid gap-4">
-                {filteredUOMs.map((uom: UOM) => (
-                  <Card key={uom.id}>
-                    <CardContent className="p-6">
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-4">
-                            <h3 className="text-lg font-semibold">{uom.code}</h3>
-                            <span className="text-lg text-gray-600">{uom.name}</span>
-                            <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
-                              {uom.category}
-                            </span>
-                            {uom.isBase && (
-                              <span className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded">
-                                Base Unit
+          <Card>
+            <CardHeader>
+              <CardTitle>Units of Measure</CardTitle>
+              <CardDescription>
+                All measurement units for your materials and processes.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-md border">
+                <div className="max-h-[500px] overflow-y-auto">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-white z-10">
+                      <TableRow>
+                        <TableHead className="w-[100px]">Code</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead className="hidden md:table-cell">Category</TableHead>
+                        <TableHead className="hidden lg:table-cell">Description</TableHead>
+                        <TableHead className="hidden sm:table-cell text-center">Base Unit</TableHead>
+                        <TableHead className="w-[100px] text-center">Status</TableHead>
+                        <TableHead className="w-[100px] text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {isLoading ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center h-24">
+                            <div className="flex justify-center items-center">
+                              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ) : filteredUOMs.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center h-24 text-muted-foreground">
+                            {searchTerm ? 'No UOMs match your search.' : 'No UOMs found. Get started by creating your first Unit of Measure.'}
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        filteredUOMs.map((uom: UOM) => (
+                          <TableRow
+                            key={uom.id}
+                            className="cursor-pointer hover:bg-gray-50"
+                            onClick={() => { setViewingUOM(uom); setShowViewDialog(true); }}
+                          >
+                            <TableCell className="font-medium">{uom.code}</TableCell>
+                            <TableCell>{uom.name}</TableCell>
+                            <TableCell className="hidden md:table-cell">
+                              <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
+                                {uom.category}
                               </span>
-                            )}
-                          </div>
-                          {uom.description && (
-                            <div className="text-sm text-gray-600">{uom.description}</div>
-                          )}
-                          <div className="text-sm text-gray-600">
-                            Status: {uom.isActive ? 'Active' : 'Inactive'}
-                          </div>
+                            </TableCell>
+                            <TableCell className="hidden lg:table-cell text-muted-foreground">
+                              {uom.description || "—"}
+                            </TableCell>
+                            <TableCell className="hidden sm:table-cell text-center">
+                              {uom.isBase ? (
+                                <span className="px-2 py-0.5 text-xs bg-indigo-100 text-indigo-800 rounded">
+                                  Base Unit
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${uom.isActive ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"}`}>
+                                {uom.isActive ? 'Active' : 'Inactive'}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" title="More actions">
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => { setViewingUOM(uom); setShowViewDialog(true); }}>
+                                    <Eye className="h-4 w-4 mr-2" />
+                                    View Details
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleEdit(uom)}>
+                                    <Edit2 className="h-4 w-4 mr-2" />
+                                    Edit
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => deleteMutation.mutate(uom.id)}
+                                    className="text-red-600"
+                                  >
+                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    Delete
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* View UOM Details Dialog */}
+        <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+          <DialogContent className="sm:max-w-[600px]">
+            {viewingUOM && (
+              <>
+                <DialogHeader>
+                  <div className="flex items-center justify-between">
+                    <DialogTitle>Unit of Measure Details</DialogTitle>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setShowViewDialog(false);
+                        handleEdit(viewingUOM);
+                      }}
+                    >
+                      <Edit2 className="h-3 w-3 mr-1" />
+                      Edit
+                    </Button>
+                  </div>
+                </DialogHeader>
+
+                <div className="space-y-6">
+                  <div className="bg-muted/50 p-4 rounded-lg flex items-start justify-between">
+                    <div>
+                      <h3 className="font-semibold text-lg">{viewingUOM.code}</h3>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border bg-white">{viewingUOM.name}</span>
+                        <span className={`px-2 py-0.5 text-xs rounded ${viewingUOM.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                          {viewingUOM.isActive ? 'ACTIVE' : 'INACTIVE'}
+                        </span>
+                        {viewingUOM.isBase && (
+                          <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded">
+                            Base Unit
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-muted-foreground">General Information</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <span className="text-sm text-muted-foreground">Category</span>
+                          <p className="font-medium mt-1">{viewingUOM.category || "—"}</p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="outline" size="sm">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handleEdit(uom)}>
-                                <Edit2 className="h-4 w-4 mr-2" />
-                                Edit UOM
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() => deleteMutation.mutate(uom.id)}
-                                className="text-red-600"
-                              >
-                                <Trash2 className="h-4 w-4 mr-2" />
-                                Delete UOM
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                        <div className="col-span-2">
+                          <span className="text-sm text-muted-foreground">Description</span>
+                          <p className="font-medium mt-1">{viewingUOM.description || "—"}</p>
                         </div>
                       </div>
                     </CardContent>
                   </Card>
-                ))}
-              </div>
+
+                  <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                    <div>
+                      <h4 className="font-medium text-sm text-gray-500">Created At</h4>
+                      <p>{viewingUOM.createdAt ? new Date(viewingUOM.createdAt).toLocaleString() : "—"}</p>
+                    </div>
+                    <div>
+                      <h4 className="font-medium text-sm text-gray-500">Updated At</h4>
+                      <p>{viewingUOM.updatedAt ? new Date(viewingUOM.updatedAt).toLocaleString() : "—"}</p>
+                    </div>
+                  </div>
+
+                  <div className="border-t pt-3">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 focus:outline-none"
+                      onClick={() => setAdminDataOpen(o => !o)}
+                    >
+                      {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                      <Info className="h-3 w-3" />
+                      Administrative Data
+                    </button>
+                    {adminDataOpen && (
+                      <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                        <div><dt className="font-medium inline">Created By (ID): </dt><dd className="inline">{viewingUOM.createdBy ?? "—"}</dd></div>
+                        <div><dt className="font-medium inline">Updated By (ID): </dt><dd className="inline">{viewingUOM.updatedBy ?? "—"}</dd></div>
+                        <div><dt className="font-medium inline">Tenant ID: </dt><dd className="inline">{viewingUOM._tenantId ?? "—"}</dd></div>
+                      </dl>
+                    )}
+                  </div>
+                </div>
+              </>
             )}
-          </div>
-        </TabsContent>
+          </DialogContent>
+        </Dialog>
 
         <TabsContent value="import" className="space-y-6">
           <Card>

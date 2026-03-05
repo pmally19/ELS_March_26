@@ -8,12 +8,14 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/apiClient";
+import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Edit, Trash2, RefreshCw, ArrowLeft, BarChart2 } from "lucide-react";
+import { Plus, Edit, Trash2, RefreshCw, ArrowLeft, BarChart2, Eye, Building, User, Calendar, Database } from "lucide-react";
 import { useLocation } from "wouter";
 
 const profitCenterSchema = z.object({
@@ -42,7 +44,14 @@ const profitCenterSchema = z.object({
   active: z.boolean().default(true)
 });
 
-type ProfitCenter = z.infer<typeof profitCenterSchema> & { id: number };
+type ProfitCenter = z.infer<typeof profitCenterSchema> & {
+  id: number;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: number | null;
+  updated_by?: number | null;
+  tenant_id?: string;
+};
 
 interface CompanyCode {
   id: number;
@@ -62,6 +71,8 @@ export default function ProfitCenters() {
   const [, setLocation] = useLocation();
   const [open, setOpen] = useState(false);
   const [editingProfitCenter, setEditingProfitCenter] = useState<ProfitCenter | null>(null);
+  const [viewingProfitCenter, setViewingProfitCenter] = useState<ProfitCenter | null>(null);
+  const [showAdminData, setShowAdminData] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -94,7 +105,12 @@ export default function ProfitCenters() {
         responsible_person_id: center.responsible_person_id,
         person_responsible: center.person_responsible || center.responsible_person || "",
         cost_center_id: center.cost_center_id,
-        active: center.active !== false
+        active: center.active !== false,
+        created_at: center.created_at,
+        updated_at: center.updated_at,
+        created_by: center.created_by,
+        updated_by: center.updated_by,
+        tenant_id: center.tenant_id
       }));
     },
   });
@@ -791,6 +807,13 @@ export default function ProfitCenters() {
                     <TableCell>
                       <div className="flex space-x-2">
                         <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setViewingProfitCenter(center)}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button
                           variant="outline"
                           size="sm"
                           onClick={() => handleEdit(center)}
@@ -839,6 +862,236 @@ export default function ProfitCenters() {
           )}
         </CardContent>
       </Card>
+
+      {/* View Profit Center Details Dialog */}
+      <Dialog open={!!viewingProfitCenter} onOpenChange={(open) => !open && setViewingProfitCenter(null)}>
+        <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-hidden flex flex-col">
+          {viewingProfitCenter && (
+            <>
+              <DialogHeader className="flex-shrink-0">
+                <div className="flex items-center space-x-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setViewingProfitCenter(null)}
+                    className="flex items-center space-x-2"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    <span>Back</span>
+                  </Button>
+                  <div className="flex-1">
+                    <DialogTitle>Profit Center Details</DialogTitle>
+                    <DialogDescription>
+                      Comprehensive information about {viewingProfitCenter.name}
+                    </DialogDescription>
+                  </div>
+                </div>
+              </DialogHeader>
+
+              <div className="flex-1 overflow-y-auto space-y-6 px-1 mt-4">
+                <div className="bg-gray-50 p-4 rounded-lg flex justify-between items-start">
+                  <div>
+                    <h3 className="text-xl font-bold">{viewingProfitCenter.name}</h3>
+                    <div className="flex items-center mt-1">
+                      <Badge variant="outline" className="mr-2">
+                        {viewingProfitCenter.code}
+                      </Badge>
+                      <Badge
+                        variant={viewingProfitCenter.active ? "default" : "secondary"}
+                        className={viewingProfitCenter.active ? "bg-green-100 text-green-800" : ""}
+                      >
+                        {viewingProfitCenter.active ? "Active" : "Inactive"}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="space-x-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        handleEdit(viewingProfitCenter);
+                        setViewingProfitCenter(null);
+                      }}
+                    >
+                      <Edit className="h-4 w-4 mr-1" />
+                      Edit
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-red-600 border-red-200"
+                      onClick={() => {
+                        deleteMutation.mutate(viewingProfitCenter.id);
+                        setViewingProfitCenter(null);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-6">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg flex items-center">
+                        <BarChart2 className="h-4 w-4 mr-2" />
+                        Basic Information
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <dl className="space-y-2">
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Code:</dt>
+                          <dd className="text-sm text-gray-900">{viewingProfitCenter.code}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Name:</dt>
+                          <dd className="text-sm text-gray-900">{viewingProfitCenter.name}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Description:</dt>
+                          <dd className="text-sm text-gray-900">{viewingProfitCenter.description}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Group:</dt>
+                          <dd className="text-sm text-gray-900">
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700">
+                              {viewingProfitCenter.profit_center_group || 'N/A'}
+                            </Badge>
+                          </dd>
+                        </div>
+                      </dl>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg flex items-center">
+                        <Building className="h-4 w-4 mr-2" />
+                        Organizational Assignment
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <dl className="space-y-2">
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Company Code:</dt>
+                          <dd className="text-sm text-gray-900">{viewingProfitCenter.company_code}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Controlling Area:</dt>
+                          <dd className="text-sm text-gray-900">{viewingProfitCenter.controlling_area}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Segment:</dt>
+                          <dd className="text-sm text-gray-900">{viewingProfitCenter.segment || "—"}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Hierarchy Area:</dt>
+                          <dd className="text-sm text-gray-900">{viewingProfitCenter.hierarchy_area || "—"}</dd>
+                        </div>
+                      </dl>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg flex items-center">
+                        <User className="h-4 w-4 mr-2" />
+                        Accountability
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <dl className="space-y-2">
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Person Responsible:</dt>
+                          <dd className="text-sm text-gray-900">{viewingProfitCenter.person_responsible || viewingProfitCenter.responsible_person || "—"}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Linked Cost Center:</dt>
+                          <dd className="text-sm text-gray-900">
+                            {viewingProfitCenter.cost_center_id ? (
+                              <Badge variant="secondary">ID: {viewingProfitCenter.cost_center_id}</Badge>
+                            ) : "—"}
+                          </dd>
+                        </div>
+                      </dl>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg flex items-center">
+                        <Calendar className="h-4 w-4 mr-2" />
+                        Validity
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <dl className="space-y-2">
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Valid From:</dt>
+                          <dd className="text-sm text-gray-900">
+                            {viewingProfitCenter.valid_from ? new Date(viewingProfitCenter.valid_from).toLocaleDateString() : "—"}
+                          </dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Valid To:</dt>
+                          <dd className="text-sm text-gray-900">
+                            {viewingProfitCenter.valid_to ? new Date(viewingProfitCenter.valid_to).toLocaleDateString() : "Infinite"}
+                          </dd>
+                        </div>
+                      </dl>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="col-span-2">
+                    <CardHeader className="pb-2 cursor-pointer select-none" onClick={() => setShowAdminData(!showAdminData)}>
+                      <div className="flex justify-between items-center w-full">
+                        <CardTitle className="text-lg flex items-center">
+                          <Database className="h-4 w-4 mr-2" />
+                          Administrative Data
+                        </CardTitle>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                          viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                          style={{ transform: showAdminData ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                          <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                      </div>
+                    </CardHeader>
+                    {showAdminData && (
+                      <CardContent>
+                        <dl className="grid grid-cols-2 gap-4">
+                          <div className="flex flex-col">
+                            <dt className="text-sm font-medium text-gray-500">Created By</dt>
+                            <dd className="text-sm text-gray-900">{viewingProfitCenter.created_by ?? '—'}</dd>
+                          </div>
+                          <div className="flex flex-col">
+                            <dt className="text-sm font-medium text-gray-500">Updated By</dt>
+                            <dd className="text-sm text-gray-900">{viewingProfitCenter.updated_by ?? '—'}</dd>
+                          </div>
+                          <div className="flex flex-col">
+                            <dt className="text-sm font-medium text-gray-500">Created At</dt>
+                            <dd className="text-sm text-gray-900">{viewingProfitCenter.created_at ? new Date(viewingProfitCenter.created_at).toLocaleString() : '—'}</dd>
+                          </div>
+                          <div className="flex flex-col">
+                            <dt className="text-sm font-medium text-gray-500">Updated At</dt>
+                            <dd className="text-sm text-gray-900">{viewingProfitCenter.updated_at ? new Date(viewingProfitCenter.updated_at).toLocaleString() : '—'}</dd>
+                          </div>
+                          <div className="flex flex-col">
+                            <dt className="text-sm font-medium text-gray-500">Tenant ID</dt>
+                            <dd className="text-sm text-gray-900">{viewingProfitCenter.tenant_id ?? '—'}</dd>
+                          </div>
+                        </dl>
+                      </CardContent>
+                    )}
+                  </Card>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

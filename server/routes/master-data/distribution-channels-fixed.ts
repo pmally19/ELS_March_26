@@ -53,22 +53,28 @@ export async function getDistributionChannels(req: Request, res: Response) {
         description,
         is_active,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by,
+        "_tenantId",
+        "_deletedAt"
       FROM distribution_channels
-      WHERE 1=1
+      WHERE is_active IS NOT false
     `;
     const params: any[] = [];
     let paramIndex = 1;
 
-    // Filter by active status
+    // Additional active filter from query param (keeps backward compat)
     if (active_only === 'true' || active === 'true') {
-      query += ` AND is_active = $${paramIndex}`;
-      params.push(true);
-      paramIndex++;
+      // already filtered by is_active above
     } else if (active === 'false') {
-      query += ` AND is_active = $${paramIndex}`;
-      params.push(false);
-      paramIndex++;
+      // override: show only inactive
+      query = `
+        SELECT id, code, name, description, is_active, created_at, updated_at,
+               created_by, updated_by, "_tenantId", "_deletedAt"
+        FROM distribution_channels
+        WHERE is_active = false
+      `;
     }
 
     query += " ORDER BY code";
@@ -87,7 +93,11 @@ export async function getDistributionChannels(req: Request, res: Response) {
       channelType: null,
       isActive: row.is_active !== false,
       createdAt: row.created_at,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
+      _createdBy: row.created_by,
+      _updatedBy: row.updated_by,
+      _tenantId: row['_tenantId'],
+      _deletedAt: row['_deletedAt'],
     }));
 
     return res.status(200).json(transformedRows);
@@ -123,7 +133,11 @@ export async function getDistributionChannelById(req: Request, res: Response) {
       description: row.description || row.name,
       isActive: row.is_active !== false,
       createdAt: row.created_at,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
+      _createdBy: row.created_by,
+      _updatedBy: row.updated_by,
+      _tenantId: row['_tenantId'],
+      _deletedAt: row['_deletedAt'],
     };
 
     return res.status(200).json(transformed);
@@ -166,10 +180,18 @@ export async function createDistributionChannel(req: Request, res: Response) {
     }
 
     const result = await pool.query(`
-      INSERT INTO distribution_channels (code, name, description, is_active, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, NOW(), NOW())
+      INSERT INTO distribution_channels (
+        code, name, description, is_active, created_at, updated_at,
+        created_by, updated_by, "_tenantId", "_deletedAt"
+      )
+      VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7, NULL)
       RETURNING *
-    `, [code, name, description || null, isActive !== false]);
+    `, [
+      code, name, description || null, isActive !== false,
+      (req as any).user?.id ?? 1,
+      (req as any).user?.id ?? 1,
+      (req as any).user?.tenantId ?? '001'
+    ]);
 
     const row = result.rows[0];
     const transformed = {
@@ -183,7 +205,11 @@ export async function createDistributionChannel(req: Request, res: Response) {
       channelType: null,
       isActive: row.is_active !== false,
       createdAt: row.created_at,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
+      _createdBy: row.created_by,
+      _updatedBy: row.updated_by,
+      _tenantId: row['_tenantId'],
+      _deletedAt: row['_deletedAt'],
     };
 
     return res.status(201).json(transformed);
@@ -266,6 +292,8 @@ export async function updateDistributionChannel(req: Request, res: Response) {
     }
 
     updates.push(`updated_at = NOW()`);
+    updates.push(`updated_by = $${paramCount++}`);
+    values.push((req as any).user?.id ?? 1);
     values.push(id);
 
     const query = `
@@ -289,7 +317,11 @@ export async function updateDistributionChannel(req: Request, res: Response) {
       channelType: null,
       isActive: row.is_active !== false,
       createdAt: row.created_at,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
+      _createdBy: row.created_by,
+      _updatedBy: row.updated_by,
+      _tenantId: row['_tenantId'],
+      _deletedAt: row['_deletedAt'],
     };
 
     return res.status(200).json(transformed);
@@ -346,7 +378,17 @@ export async function deleteDistributionChannel(req: Request, res: Response) {
       });
     }
 
-    const result = await pool.query("DELETE FROM distribution_channels WHERE id = $1 RETURNING id, code, name", [id]);
+    // Soft-delete: preserve data, mark as deleted
+    const deleteUserId = (req as any).user?.id ?? 1;
+    const result = await pool.query(`
+      UPDATE distribution_channels
+      SET is_active = false,
+          "_deletedAt" = NOW(),
+          updated_by = $1,
+          updated_at = NOW()
+      WHERE id = $2
+      RETURNING id, code, name
+    `, [deleteUserId, id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Distribution channel not found" });

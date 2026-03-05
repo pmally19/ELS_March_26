@@ -51,6 +51,7 @@ import { Plus, Search, Edit, Trash2, Download, ArrowLeft, RefreshCw, FileText } 
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
+import { Eye, Info, ChevronDown, ChevronRight, ListFilter } from "lucide-react";
 
 // Define the Document Pricing Procedure type
 type DocumentPricingProcedure = {
@@ -63,6 +64,10 @@ type DocumentPricingProcedure = {
     is_active: boolean;
     created_at: string;
     updated_at: string;
+    created_by?: number | null;
+    updated_by?: number | null;
+    tenant_id?: string;
+    _deletedAt?: string;
 };
 
 // Form Schema
@@ -83,7 +88,10 @@ const pricingProcedureSchema = z.object({
 export default function DocumentPricingProcedures() {
     const [searchQuery, setSearchQuery] = useState("");
     const [showDialog, setShowDialog] = useState(false);
+    const [showViewDialog, setShowViewDialog] = useState(false);
     const [editingProcedure, setEditingProcedure] = useState<DocumentPricingProcedure | null>(null);
+    const [viewingProcedure, setViewingProcedure] = useState<DocumentPricingProcedure | null>(null);
+    const [adminDataOpen, setAdminDataOpen] = useState(false);
     const { toast } = useToast();
     const queryClient = useQueryClient();
 
@@ -259,6 +267,12 @@ export default function DocumentPricingProcedures() {
         setShowDialog(true);
     };
 
+    const handleViewDetails = (procedure: DocumentPricingProcedure) => {
+        setViewingProcedure(procedure);
+        setShowViewDialog(true);
+        setAdminDataOpen(false);
+    };
+
     const handleDelete = (id: number) => {
         if (window.confirm("Are you sure you want to delete this pricing procedure?")) {
             deleteMutation.mutate(id);
@@ -429,9 +443,18 @@ export default function DocumentPricingProcedures() {
                                                         <Button
                                                             variant="outline"
                                                             size="sm"
-                                                            onClick={() => handleEdit(procedure)}
+                                                            onClick={() => handleViewDetails(procedure)}
+                                                            title="View Details"
                                                         >
-                                                            <Edit className="h-4 w-4" />
+                                                            <Eye className="h-4 w-4 text-blue-600" />
+                                                        </Button>
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={() => handleEdit(procedure)}
+                                                            title="Edit"
+                                                        >
+                                                            <Edit className="h-4 w-4 text-green-600" />
                                                         </Button>
                                                         <Button
                                                             variant="outline"
@@ -451,6 +474,134 @@ export default function DocumentPricingProcedures() {
                     </div>
                 </CardContent>
             </Card>
+
+            {/* View Details Dialog */}
+            <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+                <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-hidden flex flex-col p-0">
+                    <DialogHeader className="p-6 pb-2">
+                        <DialogTitle>Pricing Procedure Details</DialogTitle>
+                        <DialogDescription>
+                            Comprehensive information about {viewingProcedure?.procedure_code}
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {viewingProcedure && (
+                        <div className="flex-1 overflow-y-auto space-y-6 p-6 pt-2">
+                            <Card>
+                                <CardHeader className="pb-2">
+                                    <CardTitle className="text-lg flex items-center">
+                                        <ListFilter className="h-4 w-4 mr-2" />
+                                        Basic Information
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <dl className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <dt className="text-sm font-medium text-gray-500">Procedure Code</dt>
+                                            <dd className="text-lg font-mono font-bold text-gray-900">{viewingProcedure.procedure_code}</dd>
+                                        </div>
+                                        <div>
+                                            <dt className="text-sm font-medium text-gray-500">Status</dt>
+                                            <dd className="mt-1">
+                                                <Badge variant={viewingProcedure.is_active ? "default" : "secondary"}>
+                                                    {viewingProcedure.is_active ? "Active" : "Inactive"}
+                                                </Badge>
+                                            </dd>
+                                        </div>
+                                        <div>
+                                            <dt className="text-sm font-medium text-gray-500">Name</dt>
+                                            <dd className="text-sm text-gray-900">{viewingProcedure.procedure_name}</dd>
+                                        </div>
+                                        <div>
+                                            <dt className="text-sm font-medium text-gray-500">Pricing Control</dt>
+                                            <dd className="text-sm mt-1">{getPricingControlBadge(viewingProcedure.pricing_control)}</dd>
+                                        </div>
+                                        <div>
+                                            <dt className="text-sm font-medium text-gray-500">Manual Price</dt>
+                                            <dd className="text-sm mt-1">
+                                                <Badge variant={viewingProcedure.manual_price_allowed ? "default" : "secondary"}>
+                                                    {viewingProcedure.manual_price_allowed ? "Yes" : "No"}
+                                                </Badge>
+                                            </dd>
+                                        </div>
+                                        <div className="col-span-2">
+                                            <dt className="text-sm font-medium text-gray-500">Description</dt>
+                                            <dd className="text-sm text-gray-900">{viewingProcedure.description || "—"}</dd>
+                                        </div>
+                                    </dl>
+                                </CardContent>
+                            </Card>
+
+                            {/* ── Administrative Data (SAP ECC style) ────────────────── */}
+                            <div className="border rounded-md overflow-hidden bg-white">
+                                <button
+                                    type="button"
+                                    onClick={() => setAdminDataOpen(o => !o)}
+                                    className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                                >
+                                    <span className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                        <Info className="h-3.5 w-3.5" />
+                                        Administrative Data
+                                    </span>
+                                    {adminDataOpen
+                                        ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                                        : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                                </button>
+
+                                {adminDataOpen && (
+                                    <dl className="px-4 py-3 space-y-2 bg-white">
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Created on</dt>
+                                            <dd className="text-xs text-gray-500">
+                                                {viewingProcedure.created_at
+                                                    ? new Date(viewingProcedure.created_at).toLocaleString()
+                                                    : '—'}
+                                            </dd>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Created by (User ID)</dt>
+                                            <dd className="text-xs text-gray-500">
+                                                {viewingProcedure.created_by ?? '—'}
+                                            </dd>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Last changed on</dt>
+                                            <dd className="text-xs text-gray-500">
+                                                {viewingProcedure.updated_at
+                                                    ? new Date(viewingProcedure.updated_at).toLocaleString()
+                                                    : '—'}
+                                            </dd>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Last changed by (User ID)</dt>
+                                            <dd className="text-xs text-gray-500">
+                                                {viewingProcedure.updated_by ?? '—'}
+                                            </dd>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Tenant ID</dt>
+                                            <dd className="text-xs text-gray-500">
+                                                {viewingProcedure.tenant_id ?? '—'}
+                                            </dd>
+                                        </div>
+                                        {viewingProcedure._deletedAt && (
+                                            <div className="flex justify-between items-center">
+                                                <dt className="text-xs text-red-500 font-medium">Deleted on</dt>
+                                                <dd className="text-xs text-red-500 font-medium">
+                                                    {new Date(viewingProcedure._deletedAt).toLocaleString()}
+                                                </dd>
+                                            </div>
+                                        )}
+                                    </dl>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                    <div className="p-4 border-t bg-gray-50 flex justify-end">
+                        <Button variant="outline" onClick={() => setShowViewDialog(false)}>Close</Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             {/* Create/Edit Dialog */}
             <Dialog open={showDialog} onOpenChange={setShowDialog}>

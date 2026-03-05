@@ -23,7 +23,11 @@ async function ensureEmployeesTable(): Promise<void> {
       is_active BOOLEAN DEFAULT true,
       active BOOLEAN DEFAULT true,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      "_tenantId" CHAR(3) DEFAULT '001',
+      created_by INTEGER,
+      updated_by INTEGER,
+      "_deletedAt" TIMESTAMPTZ
     );
     
     -- Ensure sequence is synced with table to prevent duplicate key errors
@@ -50,13 +54,13 @@ router.get("/", async (req: Request, res: Response) => {
   try {
     ensureActivePool();
     await ensureEmployeesTable();
-    
+
     const { search, department, position, status, limit = '100', offset = '0' } = req.query;
-    
-    let conditions: string[] = [];
+
+    let conditions: string[] = ['"_deletedAt" IS NULL'];
     let params: any[] = [];
     let paramIndex = 1;
-    
+
     if (search) {
       conditions.push(`(
         first_name ILIKE $${paramIndex} OR 
@@ -67,19 +71,19 @@ router.get("/", async (req: Request, res: Response) => {
       params.push(`%${search}%`);
       paramIndex++;
     }
-    
+
     if (department) {
       conditions.push(`department = $${paramIndex}`);
       params.push(department);
       paramIndex++;
     }
-    
+
     if (position) {
       conditions.push(`position = $${paramIndex}`);
       params.push(position);
       paramIndex++;
     }
-    
+
     if (status) {
       if (status === 'active') {
         conditions.push(`(is_active = true AND active = true)`);
@@ -87,9 +91,9 @@ router.get("/", async (req: Request, res: Response) => {
         conditions.push(`(is_active = false OR active = false)`);
       }
     }
-    
+
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    
+
     const result = await pool.query(`
       SELECT 
         id,
@@ -107,20 +111,24 @@ router.get("/", async (req: Request, res: Response) => {
         is_active,
         active,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by,
+        "_deletedAt" as deleted_at,
+        "_tenantId" as tenant_id
       FROM employees
       ${whereClause}
       ORDER BY last_name, first_name
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `, [...params, parseInt(limit as string), parseInt(offset as string)]);
-    
+
     // Get total count
     const countResult = await pool.query(`
       SELECT COUNT(*) as count
       FROM employees
       ${whereClause}
     `, params);
-    
+
     return res.status(200).json({
       data: result.rows,
       total: parseInt(countResult.rows[0].count)
@@ -135,12 +143,12 @@ router.get("/:id", async (req: Request, res: Response) => {
   try {
     ensureActivePool();
     await ensureEmployeesTable();
-    
+
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ error: "Invalid ID format" });
     }
-    
+
     const result = await pool.query(`
       SELECT 
         id,
@@ -158,15 +166,19 @@ router.get("/:id", async (req: Request, res: Response) => {
         is_active,
         active,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by,
+        "_deletedAt" as deleted_at,
+        "_tenantId" as tenant_id
       FROM employees
-      WHERE id = $1
+      WHERE id = $1 AND "_deletedAt" IS NULL
     `, [id]);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Employee not found" });
     }
-    
+
     return res.status(200).json(result.rows[0]);
   } catch (error: any) {
     console.error("Error fetching employee:", error);
@@ -178,7 +190,7 @@ router.post("/", async (req: Request, res: Response) => {
   try {
     ensureActivePool();
     await ensureEmployeesTable();
-    
+
     const {
       employee_id,
       first_name,
@@ -194,19 +206,19 @@ router.post("/", async (req: Request, res: Response) => {
       is_active,
       active
     } = req.body;
-    
+
     // Validate required fields
     if (!first_name || !last_name) {
       return res.status(400).json({ error: "First name and last name are required" });
     }
-    
+
     // Sync sequence before insert
     const maxIdResult = await pool.query('SELECT COALESCE(MAX(id), 0) as max_id FROM employees');
     const maxId = parseInt(maxIdResult.rows[0].max_id) || 0;
     if (maxId > 0) {
       await pool.query(`SELECT setval('employees_id_seq', $1, false)`, [maxId + 1]);
     }
-    
+
     const result = await pool.query(`
       INSERT INTO employees (
         employee_id,
@@ -223,7 +235,10 @@ router.post("/", async (req: Request, res: Response) => {
         is_active,
         active,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by,
+        "_tenantId"
       ) VALUES (
         NULLIF($1, ''),
         $2,
@@ -239,7 +254,10 @@ router.post("/", async (req: Request, res: Response) => {
         COALESCE($12, true),
         COALESCE($13, true),
         CURRENT_TIMESTAMP,
-        CURRENT_TIMESTAMP
+        CURRENT_TIMESTAMP,
+        $14,
+        $15,
+        $16
       )
       RETURNING *
     `, [
@@ -255,9 +273,12 @@ router.post("/", async (req: Request, res: Response) => {
       join_date && join_date.trim() !== '' ? join_date : null,
       manager_id || null,
       is_active !== undefined ? is_active : true,
-      active !== undefined ? active : true
+      active !== undefined ? active : true,
+      (req as any).user?.id || 1,
+      (req as any).user?.id || 1,
+      (req as any).user?.tenantId || '001'
     ]);
-    
+
     return res.status(201).json(result.rows[0]);
   } catch (error: any) {
     console.error("Error creating employee:", error);
@@ -269,12 +290,12 @@ router.put("/:id", async (req: Request, res: Response) => {
   try {
     ensureActivePool();
     await ensureEmployeesTable();
-    
+
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ error: "Invalid ID format" });
     }
-    
+
     const {
       employee_id,
       first_name,
@@ -290,11 +311,11 @@ router.put("/:id", async (req: Request, res: Response) => {
       is_active,
       active
     } = req.body;
-    
+
     const updates: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
-    
+
     if (employee_id !== undefined) {
       updates.push(`employee_id = $${paramIndex}`);
       values.push(employee_id || null);
@@ -361,25 +382,29 @@ router.put("/:id", async (req: Request, res: Response) => {
       values.push(active);
       paramIndex++;
     }
-    
+
     if (updates.length === 0) {
       return res.status(400).json({ error: "No fields to update" });
     }
-    
+
     updates.push(`updated_at = CURRENT_TIMESTAMP`);
+    updates.push(`updated_by = $${paramIndex}`);
+    values.push((req as any).user?.id || 1);
+    paramIndex++;
+
     values.push(id);
-    
+
     const result = await pool.query(`
       UPDATE employees
       SET ${updates.join(', ')}
       WHERE id = $${paramIndex}
       RETURNING *
     `, values);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Employee not found" });
     }
-    
+
     return res.status(200).json(result.rows[0]);
   } catch (error: any) {
     console.error("Error updating employee:", error);
@@ -391,22 +416,23 @@ router.delete("/:id", async (req: Request, res: Response) => {
   try {
     ensureActivePool();
     await ensureEmployeesTable();
-    
+
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
       return res.status(400).json({ error: "Invalid ID format" });
     }
-    
+
     const result = await pool.query(`
-      DELETE FROM employees
-      WHERE id = $1
+      UPDATE employees
+      SET "_deletedAt" = NOW(), updated_by = $2
+      WHERE id = $1 AND "_deletedAt" IS NULL
       RETURNING id
-    `, [id]);
-    
+    `, [id, (req as any).user?.id || 1]);
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Employee not found" });
     }
-    
+
     return res.status(200).json({ message: "Employee deleted successfully" });
   } catch (error: any) {
     console.error("Error deleting employee:", error);

@@ -399,21 +399,100 @@ export class AccountDeterminationService {
     const chartOfAccounts = params.chartOfAccounts || 'INT';
     const customerGroup = await this.getCustomerAccountGroup(params.customerId);
 
-    // Get AR Account (Accounts Receivable - same for all invoices)
-    const arAccountResult = await pool.query(`
-      SELECT account_number
-      FROM gl_accounts
-      WHERE account_type = 'ASSETS'
-        AND (account_name ILIKE '%receivable%' OR account_name ILIKE '%AR%')
-        AND reconciliation_account = true
-        AND is_active = true
-      ORDER BY account_number
-      LIMIT 1
-    `);
+    // Get AR Account — 5-level priority chain (Customer Recon Code -> Mapping -> Fallbacks)
+    let arAccountNumber: string | null = null;
 
-    if (arAccountResult.rows.length === 0) {
-      throw new Error('No accounts receivable account found in database. Please configure GL accounts.');
+    // Priority 0: Customer specific reconciliation account
+    if (params.customerId) {
+      try {
+        // Return the recon code directly from the customer — do NOT filter by gl_accounts here.
+        // The FI posting layer will validate the GL account exists; account determination just surfaces the configured code.
+        const reconRes = await pool.query(`
+                SELECT c.reconciliation_account_code
+                FROM erp_customers c
+                WHERE c.id = $1
+                  AND c.reconciliation_account_code IS NOT NULL
+                  AND c.reconciliation_account_code != ''
+                LIMIT 1
+            `, [params.customerId]);
+
+        if (reconRes.rows.length > 0 && reconRes.rows[0].reconciliation_account_code) {
+          arAccountNumber = String(reconRes.rows[0].reconciliation_account_code);
+          console.log(`✅ [AR] Found via Customer Reconciliation Account: ${arAccountNumber}`);
+        }
+      } catch (e) {
+        console.warn('⚠️ Error checking customer reconciliation account:', e);
+      }
     }
+
+    // Priority 1: account_determination_mapping with account key 'ACAR' or 'AR'
+    if (!arAccountNumber) {
+
+      const arFromMapping = await pool.query(`
+      SELECT gl.account_number
+      FROM account_determination_mapping adm
+      JOIN gl_accounts gl ON adm.gl_account_id = gl.id
+      WHERE adm.account_key_code IN ('ACAR', 'AR', 'RAF')
+        AND adm.is_active = true AND gl.is_active = true
+        AND gl.account_number IS NOT NULL
+      ORDER BY adm.id LIMIT 1
+    `);
+      if (arFromMapping.rows.length > 0) {
+        arAccountNumber = String(arFromMapping.rows[0].account_number);
+        console.log(`✅ [AR] Found via account_determination_mapping: ${arAccountNumber}`);
+      }
+    }
+
+    // Priority 2: ASSETS + name contains receivable/AR + reconciliation_account = true
+    if (!arAccountNumber) {
+      const r2 = await pool.query(`
+        SELECT account_number FROM gl_accounts
+        WHERE account_type = 'ASSETS'
+          AND (account_name ILIKE '%receivable%' OR account_name ILIKE '%AR%')
+          AND reconciliation_account = true AND is_active = true
+        ORDER BY account_number LIMIT 1
+      `);
+      if (r2.rows.length > 0) {
+        arAccountNumber = String(r2.rows[0].account_number);
+        console.log(`✅ [AR] Found via ASSETS+name+reconciliation: ${arAccountNumber}`);
+      }
+    }
+
+    // Priority 3: ASSETS + name contains receivable/AR (no reconciliation_account requirement)
+    if (!arAccountNumber) {
+      const r3 = await pool.query(`
+        SELECT account_number FROM gl_accounts
+        WHERE account_type = 'ASSETS'
+          AND (account_name ILIKE '%receivable%' OR account_name ILIKE '%AR%'
+               OR account_name ILIKE '%debtor%' OR account_name ILIKE '%trade receiv%')
+          AND is_active = true
+        ORDER BY account_number LIMIT 1
+      `);
+      if (r3.rows.length > 0) {
+        arAccountNumber = String(r3.rows[0].account_number);
+        console.log(`✅ [AR] Found via ASSETS+name (relaxed): ${arAccountNumber}`);
+      }
+    }
+
+    // Priority 4: Any ASSETS account with reconciliation_account = true
+    if (!arAccountNumber) {
+      const r4 = await pool.query(`
+        SELECT account_number FROM gl_accounts
+        WHERE account_type = 'ASSETS'
+          AND reconciliation_account = true AND is_active = true
+        ORDER BY account_number LIMIT 1
+      `);
+      if (r4.rows.length > 0) {
+        arAccountNumber = String(r4.rows[0].account_number);
+        console.log(`✅ [AR] Found via ASSETS+reconciliation_account (last resort): ${arAccountNumber}`);
+      }
+    }
+
+    if (!arAccountNumber) {
+      throw new Error('No accounts receivable account found in database. Please configure GL accounts with account type ASSETS and a name containing "Receivable" or "AR".');
+    }
+
+    const arAccountResult = { rows: [{ account_number: arAccountNumber }] };
 
     const arAccount = String(arAccountResult.rows[0].account_number);
 
@@ -448,7 +527,7 @@ export class AccountDeterminationService {
           salesOrganization: params.salesOrganization,
           customerAccountGroup: customerGroup,
           materialAccountGroup: materialGroup,
-          accountKey: 'REVENUE'
+          accountKey: 'ERL' // SAP standard revenue account key
         });
 
         if (revenueResult.success) {
@@ -462,20 +541,33 @@ export class AccountDeterminationService {
       }
     }
 
-    // Get Tax Account
-    const taxAccountResult = await pool.query(`
-      SELECT account_number
-      FROM gl_accounts
-      WHERE account_type = 'LIABILITIES'
-        AND (account_name ILIKE '%tax%payable%' OR account_name ILIKE '%tax%liability%')
-        AND is_active = true
-      ORDER BY account_number
-      LIMIT 1
-    `);
+    // Get Tax Account — try account_determination_mapping (MWS key) first, then relax
+    let taxAccount = '';
 
-    const taxAccount = taxAccountResult.rows.length > 0
-      ? String(taxAccountResult.rows[0].account_number)
-      : ''; // Optional tax account
+    const taxFromMapping = await pool.query(`
+      SELECT gl.account_number
+      FROM account_determination_mapping adm
+      JOIN gl_accounts gl ON adm.gl_account_id = gl.id
+      WHERE adm.account_key_code IN ('MWS', 'MW1', 'MW2', 'TAX')
+        AND adm.is_active = true AND gl.is_active = true
+        AND gl.account_number IS NOT NULL
+      ORDER BY adm.id LIMIT 1
+    `);
+    if (taxFromMapping.rows.length > 0) {
+      taxAccount = String(taxFromMapping.rows[0].account_number);
+    } else {
+      const taxFallback = await pool.query(`
+        SELECT account_number FROM gl_accounts
+        WHERE account_type = 'LIABILITIES'
+          AND (account_name ILIKE '%tax%' OR account_name ILIKE '%GST%'
+               OR account_name ILIKE '%VAT%' OR account_name ILIKE '%duty%')
+          AND is_active = true
+        ORDER BY account_number LIMIT 1
+      `);
+      taxAccount = taxFallback.rows.length > 0
+        ? String(taxFallback.rows[0].account_number)
+        : ''; // Tax is optional — posting continues without it
+    }
 
     return {
       arAccount,

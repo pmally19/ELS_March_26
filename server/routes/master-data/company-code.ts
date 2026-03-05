@@ -4,7 +4,7 @@ import { sql } from 'drizzle-orm';
 import { companyCodeSchema } from '../../schemas/company-code-schema';
 import { oneProjectSyncAgent } from '../../services/oneproject-sync-agent';
 
-// GET /api/master-data/company-code - Get all company codes
+// GET /api/master-data/company-code - Get all company codes (excludes soft-deleted)
 export async function getCompanyCodes(req: Request, res: Response) {
   try {
     const result = await db.execute(sql`
@@ -18,17 +18,9 @@ export async function getCompanyCodes(req: Request, res: Response) {
       FROM company_codes cc
       LEFT JOIN fiscal_year_variants fyv ON cc.fiscal_year_variant_id = fyv.id
       LEFT JOIN chart_of_accounts coa ON cc.chart_of_accounts_id = coa.id
+      WHERE cc."_isActive" IS NOT false
       ORDER BY cc.code
     `);
-
-    // Debug: Log first few rows to check fiscal_year data
-    if (result.rows.length > 0) {
-      console.log('Sample company code from DB:', {
-        code: result.rows[0].code,
-        fiscal_year_variant_id: result.rows[0].fiscal_year_variant_id,
-        fiscal_year: result.rows[0].fiscal_year
-      });
-    }
 
     return res.status(200).json(result.rows);
   } catch (error: any) {
@@ -37,7 +29,7 @@ export async function getCompanyCodes(req: Request, res: Response) {
   }
 }
 
-// GET /api/master-data/company-code/:id - Get company code by ID
+// GET /api/master-data/company-code/:id - Get company code by ID (excludes soft-deleted)
 export async function getCompanyCodeById(req: Request, res: Response) {
   try {
     const id = parseInt(req.params.id);
@@ -57,6 +49,7 @@ export async function getCompanyCodeById(req: Request, res: Response) {
       LEFT JOIN fiscal_year_variants fyv ON cc.fiscal_year_variant_id = fyv.id
       LEFT JOIN chart_of_accounts coa ON cc.chart_of_accounts_id = coa.id
       WHERE cc.id = ${id}
+        AND cc."_isActive" IS NOT false
     `);
 
     if (result.rows.length === 0) {
@@ -147,19 +140,30 @@ export async function createCompanyCode(req: Request, res: Response) {
       });
     }
 
-    // Create company code - include all fields from database schema
+    // Audit trail: resolve userId from session if available, default to 1
+    const userId: number = (req as any).user?.id ?? 1;
+    // _tenantId is CHAR(3), range '001'-'999'. Default '001' = Default Tenant
+    // (will be replaced by req.user.tenantId once auth middleware is active)
+    const tenantId: string = (req as any).user?.tenantId ?? '001';
+
+    // Create company code — 5 audit trail fields (_tenantId, _createdBy, _updatedBy, _isActive, _deletedAt)
+    // created_at / updated_at already exist on the table (not redundant)
     const insertResult = await db.execute(sql`
       INSERT INTO company_codes (
         code, name, city, country, currency, language, active,
         description, tax_id, address, state, postal_code, phone, email, website, logo_url,
         fiscal_year_variant_id, chart_of_accounts_id,
-        created_at, updated_at
+        created_at, updated_at,
+        "_tenantId", "_createdBy", "_updatedBy",
+        "_isActive", "_deletedAt"
       )
       VALUES (
         ${data.code}, ${data.name}, ${data.city || null}, ${data.country}, ${data.currency}, ${data.language || null}, ${data.active},
         ${data.description || null}, ${data.taxId || null}, ${data.address || null}, ${data.state || null}, ${data.postalCode || null}, ${data.phone || null}, ${data.email || null}, ${data.website || null}, ${data.logoUrl || null},
         ${fiscalYearVariantId}, ${chartOfAccountsId},
-        NOW(), NOW()
+        NOW(), NOW(),
+        ${tenantId}, ${userId}, ${userId},
+        true, NULL
       )
       RETURNING *
     `);
@@ -289,7 +293,11 @@ export async function updateCompanyCode(req: Request, res: Response) {
       }
     }
 
-    // Update company code - include all fields from database schema
+    // Audit trail: resolve userId from session if available, default to 1
+    const userId: number = (req as any).user?.id ?? 1;
+
+    // Update company code — _updatedBy set for audit trail
+    // updated_at is auto-refreshed by DB trigger (ACID-safe)
     const updateResult = await db.execute(sql`
       UPDATE company_codes 
       SET 
@@ -311,8 +319,10 @@ export async function updateCompanyCode(req: Request, res: Response) {
         logo_url = ${data.logoUrl || null},
         fiscal_year_variant_id = ${fiscalYearVariantId}, 
         chart_of_accounts_id = ${chartOfAccountsId}, 
-        updated_at = NOW()
+        updated_at = NOW(),
+        "_updatedBy" = ${userId}
       WHERE id = ${id}
+        AND "_isActive" IS NOT false
       RETURNING *
     `);
 
@@ -334,7 +344,8 @@ export async function updateCompanyCode(req: Request, res: Response) {
   }
 }
 
-// DELETE /api/master-data/company-code/:id - Delete a company code
+// DELETE /api/master-data/company-code/:id - Soft-delete a company code
+// Sets isActive=false and deletedAt=NOW() — data is preserved for audit trail
 export async function deleteCompanyCode(req: Request, res: Response) {
   try {
     const id = parseInt(req.params.id);
@@ -342,8 +353,13 @@ export async function deleteCompanyCode(req: Request, res: Response) {
       return res.status(400).json({ error: "Invalid ID format" });
     }
 
-    // Check if company code exists
-    const existingResult = await db.execute(sql`SELECT * FROM company_codes WHERE id = ${id}`);
+    // Audit trail: resolve userId from session if available, default to 1
+    const userId: number = (req as any).user?.id ?? 1;
+
+    // Check if company code exists and is not already soft-deleted
+    const existingResult = await db.execute(sql`
+      SELECT * FROM company_codes WHERE id = ${id} AND "_isActive" IS NOT false
+    `);
 
     if (existingResult.rows.length === 0) {
       return res.status(404).json({ error: "Company code not found" });
@@ -351,15 +367,27 @@ export async function deleteCompanyCode(req: Request, res: Response) {
 
     const companyCodeToDelete = existingResult.rows[0];
 
-    // Delete company code
-    await db.execute(sql`DELETE FROM company_codes WHERE id = ${id}`);
+    // Soft-delete: set isActive=false, deletedAt=NOW(), updatedBy=userId
+    // Data is preserved in DB — ACID compliant (atomic with the same transaction)
+    const softDeleteResult = await db.execute(sql`
+      UPDATE company_codes
+      SET
+        "_isActive"  = false,
+        "_deletedAt" = NOW(),
+        "_updatedBy" = ${userId},
+        updated_at   = NOW()
+      WHERE id = ${id}
+      RETURNING *
+    `);
 
-    // Sync deletion to OneProject table
+    const deletedCompanyCode = softDeleteResult.rows[0];
+
+    // Sync soft-deletion to OneProject table
     try {
-      await oneProjectSyncAgent.syncBusinessToOneProject('company_codes', companyCodeToDelete.id.toString(), 'DELETE', companyCodeToDelete);
-      console.log(`✅ Company code ${companyCodeToDelete.code} deletion synced to OneProject table`);
+      await oneProjectSyncAgent.syncBusinessToOneProject('company_codes', deletedCompanyCode.id.toString(), 'DELETE', deletedCompanyCode);
+      console.log(`✅ Company code ${deletedCompanyCode.code} soft-deletion synced to OneProject table`);
     } catch (syncError) {
-      console.error(`❌ Failed to sync company code ${companyCodeToDelete.code} deletion to OneProject:`, syncError);
+      console.error(`❌ Failed to sync company code ${deletedCompanyCode.code} soft-deletion to OneProject:`, syncError);
       // Don't fail the request, just log the sync error
     }
 

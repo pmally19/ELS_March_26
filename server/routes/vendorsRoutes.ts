@@ -26,9 +26,13 @@ router.get('/', async (req, res) => {
         supplier_type,
         is_active,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by,
+        "_tenantId" as "tenantId"
       FROM vendors
-      WHERE is_active = true OR is_active IS NULL
+      WHERE (is_active = true OR is_active IS NULL) 
+        AND ("_deletedAt" IS NULL)
       ORDER BY name ASC
     `);
 
@@ -71,9 +75,12 @@ router.get('/:id', async (req, res) => {
         contact_name,
         is_active,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by,
+        "_tenantId" as "tenantId"
       FROM vendors
-      WHERE id = $1
+      WHERE id = $1 AND ("_deletedAt" IS NULL)
     `, [id]);
 
         if (result.rows.length === 0) {
@@ -115,6 +122,11 @@ router.post('/', async (req, res) => {
             contact_name
         } = req.body;
 
+        // Get user ID and tenant ID from request if available, otherwise use defaults
+        // Need to add this to the Request type/interface in a real auth setup
+        const userId = (req as any).user?.id || 1;
+        const tenantId = (req as any).user?.tenantId || '001';
+
         // Validate required fields
         if (!name) {
             return res.status(400).json({ message: 'Vendor name is required' });
@@ -124,14 +136,15 @@ router.post('/', async (req, res) => {
       INSERT INTO vendors (
         code, name, type, email, phone, address, city, state, country, 
         postal_code, currency, payment_terms, status, category, supplier_type,
-        tax_id, description, website, contact_name, is_active
+        tax_id, description, website, contact_name, is_active,
+        created_by, updated_by, "_tenantId"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, true)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, true, $20, $21, $22)
       RETURNING *
     `, [
             code, name, type, email, phone, address, city, state, country,
             postal_code, currency, payment_terms, status || 'active', category, supplier_type,
-            tax_id, description, website, contact_name
+            tax_id, description, website, contact_name, userId, userId, tenantId
         ]);
 
         res.status(201).json(result.rows[0]);
@@ -171,6 +184,8 @@ router.put('/:id', async (req, res) => {
             is_active
         } = req.body;
 
+        const userId = (req as any).user?.id || 1;
+
         const result = await pool.query(`
       UPDATE vendors SET
         code = COALESCE($1, code),
@@ -193,13 +208,14 @@ router.put('/:id', async (req, res) => {
         website = COALESCE($18, website),
         contact_name = COALESCE($19, contact_name),
         is_active = COALESCE($20, is_active),
+        updated_by = $21,
         updated_at = NOW()
-      WHERE id = $21
+      WHERE id = $22 AND ("_deletedAt" IS NULL)
       RETURNING *
     `, [
             code, name, type, email, phone, address, city, state, country,
             postal_code, currency, payment_terms, status, category, supplier_type,
-            tax_id, description, website, contact_name, is_active, id
+            tax_id, description, website, contact_name, is_active, userId, id
         ]);
 
         if (result.rows.length === 0) {
@@ -220,14 +236,17 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        const userId = (req as any).user?.id || 1;
 
         const result = await pool.query(`
       UPDATE vendors SET
         is_active = false,
+        "_deletedAt" = NOW(),
+        updated_by = $2,
         updated_at = NOW()
-      WHERE id = $1
+      WHERE id = $1 AND ("_deletedAt" IS NULL)
       RETURNING *
-    `, [id]);
+    `, [id, userId]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Vendor not found' });

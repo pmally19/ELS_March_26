@@ -13,7 +13,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Plus, Upload, Download, RefreshCw, Edit, Trash2, ArrowLeft } from "lucide-react";
+import { Search, Plus, Upload, Download, RefreshCw, Edit, Trash2, ArrowLeft, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -30,6 +30,11 @@ interface SupplyType {
   validFrom: string;
   validTo: string | null;
   active: boolean;
+  // Audit trail fields
+  _tenantId?: string | null;
+  _createdBy?: string | null;
+  _updatedBy?: string | null;
+  _deletedAt?: string | null;
 }
 
 interface InsertSupplyType {
@@ -63,6 +68,8 @@ export default function SupplyTypes() {
   const [searchTerm, setSearchTerm] = useState("");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [editingSupplyType, setEditingSupplyType] = useState<SupplyType | null>(null);
+  const [viewDetailsSupplyType, setViewDetailsSupplyType] = useState<SupplyType | null>(null);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -85,7 +92,7 @@ export default function SupplyTypes() {
 
   // Create mutation
   const createMutation = useMutation({
-    mutationFn: (data: InsertSupplyType) => 
+    mutationFn: (data: InsertSupplyType) =>
       apiRequest("/api/master-data/supply-type", {
         method: "POST",
         body: JSON.stringify(data),
@@ -233,20 +240,20 @@ export default function SupplyTypes() {
   };
 
   // Filter supply types based on search
-  const filteredSupplyTypes = Array.isArray(supplyTypes) 
+  const filteredSupplyTypes = Array.isArray(supplyTypes)
     ? supplyTypes.filter((item: SupplyType) =>
-        item.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase()))
-      )
+      item.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase()))
+    )
     : [];
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-4 mb-6">
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           size="sm"
           onClick={() => window.history.back()}
           className="flex items-center gap-2"
@@ -320,9 +327,9 @@ export default function SupplyTypes() {
                           <FormItem>
                             <FormLabel>Code *</FormLabel>
                             <FormControl>
-                              <Input 
-                                {...field} 
-                                placeholder="e.g., DIRECT, INDIRECT, SERVICES" 
+                              <Input
+                                {...field}
+                                placeholder="e.g., DIRECT, INDIRECT, SERVICES"
                                 className="uppercase"
                                 maxLength={10}
                               />
@@ -341,9 +348,9 @@ export default function SupplyTypes() {
                           <FormItem>
                             <FormLabel>Name *</FormLabel>
                             <FormControl>
-                              <Input 
-                                {...field} 
-                                placeholder="e.g., Direct Materials, Indirect Supplies" 
+                              <Input
+                                {...field}
+                                placeholder="e.g., Direct Materials, Indirect Supplies"
                                 maxLength={100}
                               />
                             </FormControl>
@@ -361,9 +368,9 @@ export default function SupplyTypes() {
                           <FormItem>
                             <FormLabel>Description</FormLabel>
                             <FormControl>
-                              <Input 
-                                {...field} 
-                                placeholder="e.g., Raw materials used directly in production processes" 
+                              <Input
+                                {...field}
+                                placeholder="e.g., Raw materials used directly in production processes"
                                 maxLength={500}
                               />
                             </FormControl>
@@ -451,11 +458,10 @@ export default function SupplyTypes() {
                       <TableCell>{supplyType.description || "-"}</TableCell>
                       <TableCell>
                         <span
-                          className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                            supplyType.isActive
+                          className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${supplyType.isActive
                               ? "bg-green-100 text-green-800"
                               : "bg-red-100 text-red-800"
-                          }`}
+                            }`}
                         >
                           {supplyType.isActive ? "Active" : "Inactive"}
                         </span>
@@ -469,6 +475,10 @@ export default function SupplyTypes() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="z-[9999]">
+                            <DropdownMenuItem onClick={() => { setViewDetailsSupplyType(supplyType); setAdminDataOpen(false); }}>
+                              <Search className="mr-2 h-4 w-4" />
+                              View Details
+                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleEdit(supplyType)}>
                               <Edit className="mr-2 h-4 w-4" />
                               Edit
@@ -491,6 +501,82 @@ export default function SupplyTypes() {
           )}
         </CardContent>
       </Card>
+
+      {/* View Details Dialog */}
+      <Dialog open={!!viewDetailsSupplyType} onOpenChange={(open) => !open && setViewDetailsSupplyType(null)}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Supply Type Details</DialogTitle>
+          </DialogHeader>
+          {viewDetailsSupplyType && (
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Code</h4>
+                  <p>{viewDetailsSupplyType.code}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Status</h4>
+                  <p>
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewDetailsSupplyType.isActive
+                          ? "bg-green-100 text-green-800"
+                          : "bg-red-100 text-red-800"
+                        }`}
+                    >
+                      {viewDetailsSupplyType.isActive ? "Active" : "Inactive"}
+                    </span>
+                  </p>
+                </div>
+              </div>
+              <div>
+                <h4 className="font-medium text-sm text-gray-500">Name</h4>
+                <p>{viewDetailsSupplyType.name}</p>
+              </div>
+              <div>
+                <h4 className="font-medium text-sm text-gray-500">Description</h4>
+                <p>{viewDetailsSupplyType.description || "—"}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Created At</h4>
+                  <p>{viewDetailsSupplyType.createdAt ? new Date(viewDetailsSupplyType.createdAt).toLocaleString() : "—"}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Updated At</h4>
+                  <p>{viewDetailsSupplyType.updatedAt ? new Date(viewDetailsSupplyType.updatedAt).toLocaleString() : "—"}</p>
+                </div>
+              </div>
+
+              {/* Collapsible Administrative Data */}
+              <div className="border-t pt-3">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                >
+                  {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  <Info className="h-3 w-3" />
+                  Administrative Data
+                </button>
+                {adminDataOpen && (
+                  <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                    <div><dt className="font-medium inline">Created By (ID): </dt><dd className="inline">{viewDetailsSupplyType._createdBy ?? "—"}</dd></div>
+                    <div><dt className="font-medium inline">Updated By (ID): </dt><dd className="inline">{viewDetailsSupplyType._updatedBy ?? "—"}</dd></div>
+                    <div><dt className="font-medium inline">Tenant ID: </dt><dd className="inline">{viewDetailsSupplyType._tenantId ?? "—"}</dd></div>
+                  </dl>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="flex justify-end mt-4">
+            <Button variant="outline" onClick={() => setViewDetailsSupplyType(null)}>
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

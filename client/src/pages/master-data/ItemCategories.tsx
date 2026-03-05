@@ -53,7 +53,7 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Plus, Search, Edit, Download, ArrowLeft, RefreshCw, MoreHorizontal, Tag, CheckCircle2, XCircle } from "lucide-react";
+import { Plus, Search, Edit, Download, ArrowLeft, RefreshCw, MoreHorizontal, Tag, CheckCircle2, Info, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
@@ -69,6 +69,10 @@ type ItemCategory = {
     pricingRelevant: boolean;
     createdAt: string;
     updatedAt: string;
+    createdBy?: number;
+    updatedBy?: number;
+    tenantId?: string;
+    deletedAt?: string | null;
 };
 
 // Item Category Form Schema
@@ -88,6 +92,7 @@ export default function ItemCategories() {
     const [activeTab, setActiveTab] = useState("basic");
     const [viewingCategoryDetails, setViewingCategoryDetails] = useState<ItemCategory | null>(null);
     const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+    const [adminDataOpen, setAdminDataOpen] = useState(false);
     const { toast } = useToast();
     const queryClient = useQueryClient();
 
@@ -595,80 +600,138 @@ export default function ItemCategories() {
 
             {/* Details Dialog - View Only */}
             <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
-                <DialogContent className="sm:max-w-[600px]">
-                    <DialogHeader>
-                        <DialogTitle>Item Category Details</DialogTitle>
-                        <DialogDescription>
-                            View complete information for this item category
-                        </DialogDescription>
-                    </DialogHeader>
+                <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-hidden flex flex-col">
                     {viewingCategoryDetails && (
-                        <div className="space-y-6">
-                            {/* Basic Information */}
-                            <div className="space-y-3">
-                                <h3 className="text-lg font-semibold border-b pb-2">Basic Information</h3>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <p className="text-sm text-muted-foreground">Code</p>
-                                        <p className="font-medium">{viewingCategoryDetails.code}</p>
-                                    </div>
-                                    <div>
-                                        <p className="text-sm text-muted-foreground">Name</p>
-                                        <p className="font-medium">{viewingCategoryDetails.name}</p>
-                                    </div>
-                                    <div>
-                                        <p className="text-sm text-muted-foreground">Item Type</p>
-                                        <p className="font-medium">{viewingCategoryDetails.itemType}</p>
+                        <>
+                            <DialogHeader className="flex-shrink-0">
+                                <div className="flex items-center space-x-4">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setIsDetailsOpen(false)}
+                                        className="flex items-center space-x-2"
+                                    >
+                                        <ArrowLeft className="h-4 w-4" />
+                                        <span>Back</span>
+                                    </Button>
+                                    <div className="flex-1">
+                                        <DialogTitle>Item Category Details</DialogTitle>
+                                        <DialogDescription>
+                                            Comprehensive information about {viewingCategoryDetails.name}
+                                        </DialogDescription>
                                     </div>
                                 </div>
-                            </div>
+                            </DialogHeader>
 
-                            {/* Relevance Settings */}
-                            <div className="space-y-3">
-                                <h3 className="text-lg font-semibold border-b pb-2">Relevance Settings</h3>
-                                <div className="grid grid-cols-3 gap-4">
-                                    <div className="text-center">
-                                        <p className="text-sm text-muted-foreground mb-2">Delivery Relevant</p>
-                                        {viewingCategoryDetails.deliveryRelevant ? (
-                                            <CheckCircle2 className="h-6 w-6 text-green-600 mx-auto" />
-                                        ) : (
-                                            <XCircle className="h-6 w-6 text-gray-400 mx-auto" />
-                                        )}
+                            <div className="flex-1 overflow-y-auto space-y-6 px-1">
+                                <div className="bg-gray-50 p-4 rounded-lg flex justify-between items-start">
+                                    <div>
+                                        <h3 className="text-xl font-bold">{viewingCategoryDetails.name}</h3>
+                                        <div className="flex items-center mt-1 gap-2">
+                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-800">
+                                                {viewingCategoryDetails.code}
+                                            </span>
+                                            <Badge variant="outline">{viewingCategoryDetails.itemType}</Badge>
+                                        </div>
                                     </div>
-                                    <div className="text-center">
-                                        <p className="text-sm text-muted-foreground mb-2">Billing Relevant</p>
-                                        {viewingCategoryDetails.billingRelevant ? (
-                                            <CheckCircle2 className="h-6 w-6 text-green-600 mx-auto" />
-                                        ) : (
-                                            <XCircle className="h-6 w-6 text-gray-400 mx-auto" />
-                                        )}
-                                    </div>
-                                    <div className="text-center">
-                                        <p className="text-sm text-muted-foreground mb-2">Pricing Relevant</p>
-                                        {viewingCategoryDetails.pricingRelevant ? (
-                                            <CheckCircle2 className="h-6 w-6 text-green-600 mx-auto" />
-                                        ) : (
-                                            <XCircle className="h-6 w-6 text-gray-400 mx-auto" />
-                                        )}
-                                    </div>
+                                    <Button variant="outline" size="sm" onClick={() => { setIsDetailsOpen(false); handleEdit(viewingCategoryDetails); }}>
+                                        <Edit className="mr-2 h-4 w-4" />
+                                        Edit
+                                    </Button>
                                 </div>
-                            </div>
 
-                            {/* Record Information */}
-                            <div className="space-y-3">
-                                <h3 className="text-lg font-semibold border-b pb-2">Record Information</h3>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <p className="text-sm text-muted-foreground">Created At</p>
-                                        <p className="font-medium">{new Date(viewingCategoryDetails.createdAt).toLocaleString()}</p>
-                                    </div>
-                                    <div>
-                                        <p className="text-sm text-muted-foreground">Updated At</p>
-                                        <p className="font-medium">{new Date(viewingCategoryDetails.updatedAt).toLocaleString()}</p>
-                                    </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <Card className="shadow-sm border-gray-100">
+                                        <CardHeader className="pb-3 border-b border-gray-50 bg-gray-50/50">
+                                            <CardTitle className="text-sm font-semibold flex items-center text-gray-700">
+                                                <Tag className="mr-2 h-4 w-4 text-gray-500" />
+                                                Basic Information
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="pt-4 space-y-4">
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-500 mb-1">Code</p>
+                                                    <p className="text-sm font-mono">{viewingCategoryDetails.code}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-500 mb-1">Name</p>
+                                                    <p className="text-sm">{viewingCategoryDetails.name}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-500 mb-1">Item Type</p>
+                                                    <p className="text-sm">{viewingCategoryDetails.itemType}</p>
+                                                </div>
+                                            </div>
+                                            <div className="border-t pt-3">
+                                                <p className="text-sm font-medium text-gray-500 mb-2">Relevance Settings</p>
+                                                <div className="flex flex-wrap gap-2">
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewingCategoryDetails.deliveryRelevant ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500 line-through'}`}>
+                                                        <CheckCircle2 className="mr-1 h-3 w-3" /> Delivery
+                                                    </span>
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewingCategoryDetails.billingRelevant ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500 line-through'}`}>
+                                                        <CheckCircle2 className="mr-1 h-3 w-3" /> Billing
+                                                    </span>
+                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewingCategoryDetails.pricingRelevant ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500 line-through'}`}>
+                                                        <CheckCircle2 className="mr-1 h-3 w-3" /> Pricing
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+
+                                    <Card className="shadow-sm border-gray-100">
+                                        <CardHeader className="pb-3 border-b border-gray-50 bg-gray-50/50">
+                                            <CardTitle className="text-sm font-semibold flex items-center text-gray-700">
+                                                <Info className="mr-2 h-4 w-4 text-gray-500" />
+                                                Administrative Data
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="pt-4 space-y-4">
+                                            <dl className="space-y-3">
+                                                <div className="flex justify-between">
+                                                    <dt className="text-sm text-gray-500">Created on</dt>
+                                                    <dd className="text-sm font-medium">
+                                                        {viewingCategoryDetails.createdAt ? new Date(viewingCategoryDetails.createdAt).toLocaleString() : '—'}
+                                                    </dd>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <dt className="text-sm text-gray-500">Created by</dt>
+                                                    <dd className="text-sm font-medium">{viewingCategoryDetails.createdBy ?? '—'}</dd>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <dt className="text-sm text-gray-500">Last changed on</dt>
+                                                    <dd className="text-sm font-medium">
+                                                        {viewingCategoryDetails.updatedAt ? new Date(viewingCategoryDetails.updatedAt).toLocaleString() : '—'}
+                                                    </dd>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <dt className="text-sm text-gray-500">Last changed by</dt>
+                                                    <dd className="text-sm font-medium">{viewingCategoryDetails.updatedBy ?? '—'}</dd>
+                                                </div>
+                                                <div className="flex justify-between pt-2 border-t border-gray-100">
+                                                    <dt className="text-sm text-gray-500">Tenant</dt>
+                                                    <dd className="text-sm font-mono bg-gray-100 px-2 py-0.5 rounded">
+                                                        {viewingCategoryDetails.tenantId || '001'}
+                                                    </dd>
+                                                </div>
+                                                {viewingCategoryDetails.deletedAt && (
+                                                    <div className="flex justify-between pt-2 border-t border-red-100">
+                                                        <dt className="text-sm text-red-500 flex items-center">
+                                                            <AlertCircle className="mr-1 h-3.5 w-3.5" />
+                                                            Deletion Flag
+                                                        </dt>
+                                                        <dd className="text-sm text-red-600 font-medium">
+                                                            Yes (Soft Deleted on {new Date(viewingCategoryDetails.deletedAt).toLocaleDateString()})
+                                                        </dd>
+                                                    </div>
+                                                )}
+                                            </dl>
+                                        </CardContent>
+                                    </Card>
                                 </div>
                             </div>
-                        </div>
+                        </>
                     )}
                 </DialogContent>
             </Dialog>

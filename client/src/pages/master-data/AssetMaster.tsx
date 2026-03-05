@@ -1,30 +1,30 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { 
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardHeader, 
-  CardTitle 
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
 } from "@/components/ui/card";
-import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogDescription, 
-  DialogFooter, 
-  DialogHeader, 
-  DialogTitle 
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
 } from "@/components/ui/dialog";
 import {
   Form,
@@ -52,7 +52,7 @@ import { Badge } from "@/components/ui/badge";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Plus, Search, Edit, Trash2, Download, ArrowLeft, RefreshCw, MoreHorizontal } from "lucide-react";
+import { Plus, Search, Edit, Trash2, Download, ArrowLeft, RefreshCw, MoreHorizontal, Eye, Info, ChevronRight, ChevronDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { useAgentPermissions } from "@/hooks/useAgentPermissions";
@@ -82,6 +82,12 @@ type Asset = {
   cost_center_code?: string | null;
   cost_center_description?: string | null;
   active?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: number | null;
+  updated_by?: number | null;
+  tenant_id?: string | null;
+  deleted_at?: string | null;
 };
 
 // Asset Class type
@@ -151,6 +157,9 @@ export default function AssetMaster() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showDialog, setShowDialog] = useState(false);
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
+  const [viewingAsset, setViewingAsset] = useState<Asset | null>(null);
+  const [showViewDialog, setShowViewDialog] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const permissions = useAgentPermissions();
@@ -160,7 +169,7 @@ export default function AssetMaster() {
   const [filteredAssets, setFilteredAssets] = useState<Asset[]>([]);
   const [assetsLoading, setAssetsLoading] = useState(true);
   const [assetsError, setAssetsError] = useState<Error | null>(null);
-  
+
   // Fetch company codes and cost centers
   const [companyCodes, setCompanyCodes] = useState<CompanyCode[]>([]);
   const [companyCodesLoading, setCompanyCodesLoading] = useState(true);
@@ -212,11 +221,11 @@ export default function AssetMaster() {
           'Accept': 'application/json'
         }
       });
-      
+
       if (!response.ok) {
         throw new Error(`API Error: ${response.status} ${response.statusText}`);
       }
-      
+
       const data = await response.json();
       setAssets(Array.isArray(data) ? data : []);
       setFilteredAssets(Array.isArray(data) ? data : []);
@@ -237,11 +246,11 @@ export default function AssetMaster() {
           'Accept': 'application/json'
         }
       });
-      
+
       if (!response.ok) {
         throw new Error(`Failed to fetch company codes: ${response.status}`);
       }
-      
+
       const data = await response.json();
       setCompanyCodes(Array.isArray(data) ? data.filter((cc: CompanyCode) => cc.active !== false) : []);
       setCompanyCodesLoading(false);
@@ -260,11 +269,11 @@ export default function AssetMaster() {
           'Accept': 'application/json'
         }
       });
-      
+
       if (!response.ok) {
         throw new Error(`Failed to fetch cost centers: ${response.status}`);
       }
-      
+
       const data = await response.json();
       setCostCenters(Array.isArray(data) ? data.filter((cc: CostCenter) => cc.active !== false) : []);
       setCostCentersLoading(false);
@@ -554,7 +563,7 @@ export default function AssetMaster() {
     const headers = Object.keys(exportData[0]);
     const csvContent = [
       headers.join(','),
-      ...exportData.map(row => 
+      ...exportData.map(row =>
         headers.map(header => `"${row[header]}"`).join(',')
       )
     ].join('\n');
@@ -751,11 +760,10 @@ export default function AssetMaster() {
                         <TableCell className="hidden lg:table-cell">{formatCurrency(asset.acquisition_value)}</TableCell>
                         <TableCell className="text-center">
                           <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                              asset.status === 'active' || asset.active
+                            className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${asset.status === 'active' || asset.active
                                 ? "bg-green-100 text-green-800"
                                 : "bg-gray-100 text-gray-800"
-                            }`}
+                              }`}
                           >
                             {asset.status === 'active' || asset.active ? "Active" : asset.status || "Inactive"}
                           </span>
@@ -769,11 +777,19 @@ export default function AssetMaster() {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => {
+                                  setViewingAsset(asset);
+                                  setShowViewDialog(true);
+                                  setAdminDataOpen(false);
+                                }}>
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  View Details
+                                </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => handleEdit(asset)}>
                                   <Edit className="mr-2 h-4 w-4" />
                                   Edit
                                 </DropdownMenuItem>
-                                <DropdownMenuItem 
+                                <DropdownMenuItem
                                   onClick={() => handleDelete(asset.id)}
                                   className="text-red-600"
                                 >
@@ -823,9 +839,9 @@ export default function AssetMaster() {
                       <FormItem>
                         <FormLabel>Asset Code</FormLabel>
                         <FormControl>
-                          <Input 
-                            placeholder="E.g., AST-001" 
-                            {...field} 
+                          <Input
+                            placeholder="E.g., AST-001"
+                            {...field}
                             disabled={!!editingAsset}
                           />
                         </FormControl>
@@ -844,9 +860,9 @@ export default function AssetMaster() {
                       <FormItem>
                         <FormLabel>Name*</FormLabel>
                         <FormControl>
-                          <Input 
-                            placeholder="E.g., Office Building" 
-                            {...field} 
+                          <Input
+                            placeholder="E.g., Office Building"
+                            {...field}
                           />
                         </FormControl>
                         <FormDescription>
@@ -865,9 +881,9 @@ export default function AssetMaster() {
                     <FormItem>
                       <FormLabel>Description</FormLabel>
                       <FormControl>
-                        <Input 
-                          placeholder="Brief description of this asset" 
-                          {...field} 
+                        <Input
+                          placeholder="Brief description of this asset"
+                          {...field}
                           value={field.value || ""}
                         />
                       </FormControl>
@@ -932,9 +948,9 @@ export default function AssetMaster() {
                       <FormItem>
                         <FormLabel>Location</FormLabel>
                         <FormControl>
-                          <Input 
-                            placeholder="E.g., Main Office, Warehouse A" 
-                            {...field} 
+                          <Input
+                            placeholder="E.g., Main Office, Warehouse A"
+                            {...field}
                             value={field.value || ""}
                           />
                         </FormControl>
@@ -1022,9 +1038,9 @@ export default function AssetMaster() {
                       <FormItem>
                         <FormLabel>Acquisition Date</FormLabel>
                         <FormControl>
-                          <Input 
+                          <Input
                             type="date"
-                            {...field} 
+                            {...field}
                             value={field.value || ""}
                           />
                         </FormControl>
@@ -1047,11 +1063,11 @@ export default function AssetMaster() {
                           <FormControl>
                             <SelectTrigger>
                               <SelectValue placeholder={
-                                depreciationMethodsLoading 
-                                  ? "Loading methods..." 
+                                depreciationMethodsLoading
+                                  ? "Loading methods..."
                                   : depreciationMethods.length === 0
-                                  ? "No methods available"
-                                  : "Select depreciation method"
+                                    ? "No methods available"
+                                    : "Select depreciation method"
                               } />
                             </SelectTrigger>
                           </FormControl>
@@ -1072,7 +1088,7 @@ export default function AssetMaster() {
                           </SelectContent>
                         </Select>
                         <FormDescription>
-                          {depreciationMethods.length > 0 
+                          {depreciationMethods.length > 0
                             ? `Select from ${depreciationMethods.filter(m => m.is_active).length} available methods`
                             : "No active depreciation methods found. Create methods in Depreciation Methods master data."}
                         </FormDescription>
@@ -1090,10 +1106,10 @@ export default function AssetMaster() {
                       <FormItem>
                         <FormLabel>Useful Life (Years)</FormLabel>
                         <FormControl>
-                          <Input 
+                          <Input
                             type="number"
-                            placeholder="E.g., 10" 
-                            {...field} 
+                            placeholder="E.g., 10"
+                            {...field}
                             value={field.value || ""}
                           />
                         </FormControl>
@@ -1114,11 +1130,11 @@ export default function AssetMaster() {
                       <FormItem>
                         <FormLabel>Acquisition Value</FormLabel>
                         <FormControl>
-                          <Input 
+                          <Input
                             type="number"
                             step="0.01"
-                            placeholder="0.00" 
-                            {...field} 
+                            placeholder="0.00"
+                            {...field}
                             value={field.value || ""}
                           />
                         </FormControl>
@@ -1134,11 +1150,11 @@ export default function AssetMaster() {
                       <FormItem>
                         <FormLabel>Current Value</FormLabel>
                         <FormControl>
-                          <Input 
+                          <Input
                             type="number"
                             step="0.01"
-                            placeholder="0.00" 
-                            {...field} 
+                            placeholder="0.00"
+                            {...field}
                             value={field.value || ""}
                           />
                         </FormControl>
@@ -1193,12 +1209,158 @@ export default function AssetMaster() {
                     {createAssetMutation.isPending || updateAssetMutation.isPending
                       ? "Saving..."
                       : editingAsset
-                      ? "Update Asset"
-                      : "Create Asset"}
+                        ? "Update Asset"
+                        : "Create Asset"}
                   </Button>
                 </DialogFooter>
               </form>
             </Form>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-hidden flex flex-col p-0">
+          <DialogHeader className="p-6 pb-2">
+            <DialogTitle>Asset Details</DialogTitle>
+          </DialogHeader>
+
+          {viewingAsset && (
+            <div className="flex-1 overflow-y-auto space-y-6 p-6 pt-2">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Basic Information</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <dl className="grid grid-cols-2 gap-4">
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Asset Code</dt>
+                      <dd className="text-sm font-bold text-gray-900 mt-1">{viewingAsset.asset_code || "-"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Asset Name</dt>
+                      <dd className="text-sm font-bold text-gray-900 mt-1">{viewingAsset.name}</dd>
+                    </div>
+                    <div className="col-span-2">
+                      <dt className="text-sm font-medium text-gray-500">Description</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{viewingAsset.description || "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Asset Class</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{viewingAsset.asset_class_name || viewingAsset.asset_class_code || viewingAsset.asset_class || viewingAsset.category || "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Company Code</dt>
+                      <dd className="text-sm text-gray-900 mt-1">
+                        {viewingAsset.company_code ? `${viewingAsset.company_code} - ${viewingAsset.company_name || ''}` : "—"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Cost Center</dt>
+                      <dd className="text-sm text-gray-900 mt-1">
+                        {viewingAsset.cost_center_code ? `${viewingAsset.cost_center_code} - ${viewingAsset.cost_center_description || ''}` : "—"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Acquisition Date</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{formatDate(viewingAsset.acquisition_date)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Acquisition Value</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{formatCurrency(viewingAsset.acquisition_value)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Current Value</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{formatCurrency(viewingAsset.current_value)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Depreciation Method</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{formatDepreciationMethod(viewingAsset.depreciation_method)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Useful Life (Years)</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{viewingAsset.useful_life_years || "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Status</dt>
+                      <dd className="text-sm mt-1">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewingAsset.status === 'active' || viewingAsset.active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"}`}>
+                          {viewingAsset.status === 'active' || viewingAsset.active ? "Active" : viewingAsset.status || "Inactive"}
+                        </span>
+                      </dd>
+                    </div>
+                  </dl>
+                </CardContent>
+              </Card>
+
+              {/* ── Administrative Data (SAP ECC style) ────────────────── */}
+              <div className="border rounded-md overflow-hidden bg-white">
+                <button
+                  type="button"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                >
+                  <span className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <Info className="h-3.5 w-3.5" />
+                    Administrative Data
+                  </span>
+                  {adminDataOpen
+                    ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                    : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                </button>
+
+                {adminDataOpen && (
+                  <dl className="px-4 py-3 space-y-2 bg-white">
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingAsset.created_at
+                          ? new Date(viewingAsset.created_at).toLocaleString()
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingAsset.created_by ?? '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingAsset.updated_at
+                          ? new Date(viewingAsset.updated_at).toLocaleString()
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingAsset.updated_by ?? '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Tenant ID</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingAsset.tenant_id ?? '—'}
+                      </dd>
+                    </div>
+                    {viewingAsset.deleted_at && (
+                      <div className="flex justify-between items-center">
+                        <dt className="text-xs text-red-500 font-medium">Deleted on</dt>
+                        <dd className="text-xs text-red-500 font-medium">
+                          {new Date(viewingAsset.deleted_at).toLocaleString()}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="p-4 border-t bg-gray-50 flex justify-end">
+            <Button variant="outline" onClick={() => setShowViewDialog(false)}>Close</Button>
           </div>
         </DialogContent>
       </Dialog>

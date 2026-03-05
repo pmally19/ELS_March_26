@@ -125,6 +125,7 @@ interface Vendor {
   updatedAt: string;
   createdBy?: number;
   updatedBy?: number;
+  tenantId?: string;
   version?: number;
 }
 
@@ -402,9 +403,9 @@ export default function Vendor() {
       const response = await fetch('/api/master-data/reconciliation-accounts');
       if (!response.ok) throw new Error('Failed to fetch reconciliation accounts');
       const data = await response.json();
-      // Filter for AP (Accounts Payable) type accounts and active ones
+      // Filter for AP (Accounts Payable) type accounts only (case-insensitive)
       return Array.isArray(data) ? data.filter((acc: any) =>
-        acc.accountType === 'AP' && acc.isActive !== false
+        acc.accountType?.toUpperCase() === 'AP' && acc.isActive !== false
       ) : [];
     },
     retry: 1,
@@ -2479,6 +2480,21 @@ export default function Vendor() {
                           <dd className="text-sm text-gray-900 capitalize">{viewingVendorDetails.paymentMethod?.replace("_", " ") || "—"}</dd>
                         </div>
                         <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Reconciliation Account:</dt>
+                          <dd className="text-sm text-gray-900">
+                            {viewingVendorDetails.reconciliationAccountId ? (
+                              (() => {
+                                const recon = reconciliationAccounts.find(
+                                  (ra: any) => ra.id === viewingVendorDetails.reconciliationAccountId
+                                );
+                                return recon
+                                  ? `${recon.code} - ${recon.name}`
+                                  : `ID: ${viewingVendorDetails.reconciliationAccountId}`;
+                              })()
+                            ) : "—"}
+                          </dd>
+                        </div>
+                        <div className="flex justify-between">
                           <dt className="text-sm font-medium text-gray-500">Min. Order Value:</dt>
                           <dd className="text-sm text-gray-900">
                             {viewingVendorDetails.minimumOrderValue ?
@@ -2535,6 +2551,65 @@ export default function Vendor() {
                               </>
                             ) : "—"}
                           </dd>
+                        </div>
+                      </dl>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-2 cursor-pointer" onClick={(e) => {
+                      const content = e.currentTarget.nextElementSibling;
+                      if (content) {
+                        content.classList.toggle('hidden');
+                        const icon = e.currentTarget.querySelector('.chevron-icon');
+                        if (icon) {
+                          icon.classList.toggle('rotate-180');
+                        }
+                      }
+                    }}>
+                      <div className="flex justify-between items-center">
+                        <CardTitle className="text-lg">Administrative Data</CardTitle>
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="24"
+                          height="24"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="chevron-icon transition-transform duration-200"
+                        >
+                          <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="hidden">
+                      <dl className="grid grid-cols-2 gap-4">
+                        <div>
+                          <dt className="text-sm font-medium text-gray-500">Created By:</dt>
+                          <dd className="text-sm text-gray-900">{viewingVendorDetails.createdBy || "System"}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-sm font-medium text-gray-500">Updated By:</dt>
+                          <dd className="text-sm text-gray-900">{viewingVendorDetails.updatedBy || viewingVendorDetails.createdBy || "System"}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-sm font-medium text-gray-500">Created At:</dt>
+                          <dd className="text-sm text-gray-900">
+                            {viewingVendorDetails.createdAt ? new Date(viewingVendorDetails.createdAt).toLocaleString() : "—"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-sm font-medium text-gray-500">Updated At:</dt>
+                          <dd className="text-sm text-gray-900">
+                            {viewingVendorDetails.updatedAt ? new Date(viewingVendorDetails.updatedAt).toLocaleString() : "—"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-sm font-medium text-gray-500">Tenant ID:</dt>
+                          <dd className="text-sm text-gray-900">{viewingVendorDetails.tenantId || "—"}</dd>
                         </div>
                       </dl>
                     </CardContent>

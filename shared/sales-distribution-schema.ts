@@ -76,6 +76,10 @@ export const salesOffices = pgTable("sd_sales_offices", {
   is_active: boolean("is_active").default(true),
   created_at: timestamp("created_at").defaultNow(),
   updated_at: timestamp("updated_at").defaultNow(),
+  _tenantId: text("_tenantId").default("001"),
+  _deletedAt: timestamp("_deletedAt", { withTimezone: true }),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
 });
 
 // Shipping Point
@@ -135,6 +139,8 @@ export const transportationGroups = pgTable("transportation_groups", {
   updatedAt: timestamp("updated_at").defaultNow(),
   createdBy: integer("created_by"),
   updatedBy: integer("updated_by"),
+  tenantId: varchar("tenant_id", { length: 10 }).default("001"),
+  deletedAt: timestamp("deleted_at"),
 });
 
 // Shipping Point Determination (SAP OVL2)
@@ -270,6 +276,10 @@ export const itemCategories = pgTable("sd_item_categories", {
   deliveryRelevant: boolean("delivery_relevant").default(true),
   billingRelevant: boolean("billing_relevant").default(true),
   pricingRelevant: boolean("pricing_relevant").default(true),
+  tenantId: varchar("_tenantId", { length: 3 }).default("001"),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+  deletedAt: timestamp("_deletedAt", { withTimezone: true }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -460,35 +470,35 @@ export const copyControlItems = pgTable("sd_copy_control_items", {
 });
 
 // Insert and Select Schemas for type safety (omitting auto-generated ID fields)
-export const insertSalesOrganizationSchema = createInsertSchema(salesOrganizations).omit({ id: true });
+export const insertSalesOrganizationSchema = createInsertSchema(salesOrganizations);
 export const selectSalesOrganizationSchema = createSelectSchema(salesOrganizations);
-export const insertDistributionChannelSchema = createInsertSchema(distributionChannels).omit({ id: true });
+export const insertDistributionChannelSchema = createInsertSchema(distributionChannels);
 export const selectDistributionChannelSchema = createSelectSchema(distributionChannels);
-export const insertDivisionSchema = createInsertSchema(divisions).omit({ id: true });
+export const insertDivisionSchema = createInsertSchema(divisions);
 export const selectDivisionSchema = createSelectSchema(divisions);
-export const insertSalesAreaSchema = createInsertSchema(salesAreas).omit({ id: true });
+export const insertSalesAreaSchema = createInsertSchema(salesAreas);
 export const selectSalesAreaSchema = createSelectSchema(salesAreas);
-export const insertDocumentTypeSchema = createInsertSchema(documentTypes).omit({ id: true });
+export const insertDocumentTypeSchema = createInsertSchema(documentTypes);
 export const selectDocumentTypeSchema = createSelectSchema(documentTypes);
-export const insertConditionTypeSchema = createInsertSchema(conditionTypes).omit({ id: true });
+export const insertConditionTypeSchema = createInsertSchema(conditionTypes);
 export const selectConditionTypeSchema = createSelectSchema(conditionTypes);
-export const insertPricingProcedureSchema = createInsertSchema(pricingProcedures).omit({ id: true });
+export const insertPricingProcedureSchema = createInsertSchema(pricingProcedures);
 export const selectPricingProcedureSchema = createSelectSchema(pricingProcedures);
-export const insertShippingConditionSchema = createInsertSchema(shippingConditions).omit({ id: true });
+export const insertShippingConditionSchema = createInsertSchema(shippingConditions);
 export const selectShippingConditionSchema = createSelectSchema(shippingConditions);
-export const insertIncotermsSchema = createInsertSchema(incoterms).omit({ id: true });
+export const insertIncotermsSchema = createInsertSchema(incoterms);
 export const selectIncotermsSchema = createSelectSchema(incoterms);
-export const insertCustomerIncotermsDefaultsSchema = createInsertSchema(customerIncotermsDefaults).omit({ id: true });
+export const insertCustomerIncotermsDefaultsSchema = createInsertSchema(customerIncotermsDefaults);
 export const selectCustomerIncotermsDefaultsSchema = createSelectSchema(customerIncotermsDefaults);
-export const insertSalesOrderIncotermsSchema = createInsertSchema(salesOrderIncoterms).omit({ id: true });
+export const insertSalesOrderIncotermsSchema = createInsertSchema(salesOrderIncoterms);
 export const selectSalesOrderIncotermsSchema = createSelectSchema(salesOrderIncoterms);
-export const insertLoadingGroupSchema = createInsertSchema(loadingGroups).omit({ id: true });
+export const insertLoadingGroupSchema = createInsertSchema(loadingGroups);
 export const selectLoadingGroupSchema = createSelectSchema(loadingGroups);
-export const insertShippingConditionKeySchema = createInsertSchema(shippingConditionKeys).omit({ id: true });
+export const insertShippingConditionKeySchema = createInsertSchema(shippingConditionKeys);
 export const selectShippingConditionKeySchema = createSelectSchema(shippingConditionKeys);
-export const insertWeightGroupSchema = createInsertSchema(weightGroups).omit({ id: true });
+export const insertWeightGroupSchema = createInsertSchema(weightGroups);
 export const selectWeightGroupSchema = createSelectSchema(weightGroups);
-export const insertTransportationGroupSchema = createInsertSchema(transportationGroups).omit({ id: true });
+export const insertTransportationGroupSchema = createInsertSchema(transportationGroups);
 export const selectTransportationGroupSchema = createSelectSchema(transportationGroups);
 
 
@@ -525,7 +535,7 @@ export type InsertWeightGroup = typeof weightGroups.$inferInsert;
 export type TransportationGroup = typeof transportationGroups.$inferSelect;
 export type InsertTransportationGroup = typeof transportationGroups.$inferInsert;
 
-export const insertShippingPointDeterminationSchema = createInsertSchema(shippingPointDetermination).omit({ id: true });
+export const insertShippingPointDeterminationSchema = createInsertSchema(shippingPointDetermination);
 export const selectShippingPointDeterminationSchema = createSelectSchema(shippingPointDetermination);
 export type ShippingPointDetermination = typeof shippingPointDetermination.$inferSelect;
 export type InsertShippingPointDetermination = typeof shippingPointDetermination.$inferInsert;

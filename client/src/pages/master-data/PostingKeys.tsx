@@ -1,389 +1,292 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle
+    Card, CardContent, CardDescription, CardHeader, CardTitle
 } from "@/components/ui/card";
 import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow
+    Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle
+    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
 } from "@/components/ui/dialog";
 import {
-    Form,
-    FormControl,
-    FormDescription,
-    FormField,
-    FormItem,
-    FormLabel,
-    FormMessage,
+    Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage
 } from "@/components/ui/form";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
+    Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Plus, Search, Edit, Trash2, ArrowLeft, RefreshCw, Download, FileUp } from "lucide-react";
+import {
+    Plus, Search, Edit, Trash2, ArrowLeft, RefreshCw, Download, Eye, Key
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { useAgentPermissions } from "@/hooks/useAgentPermissions";
 
-// Define the Posting Key type
-type PostingKey = {
+// ─── Types ────────────────────────────────────────────────────────────────────
+type AccountType = {
     id: number;
     code: string;
     name: string;
     description: string | null;
-    businessContext: string | null;
-    isActive: boolean;
-    createdAt: string;
-    updatedAt: string;
+    category: string | null;
+    is_active: boolean;
 };
 
-// Posting Key Form Schema  
+type PostingKey = {
+    id: number;
+    posting_key: string;
+    description: string | null;
+    debit_credit: "D" | "C";
+    account_type: string;
+    special_gl_indicator: string | null;
+    active: boolean;
+};
+
+// ─── Category badge colors ────────────────────────────────────────────────────
+const CATEGORY_COLORS: Record<string, string> = {
+    asset: "bg-blue-100 text-blue-800",
+    liability: "bg-orange-100 text-orange-800",
+    equity: "bg-purple-100 text-purple-800",
+    revenue: "bg-green-100 text-green-800",
+    expense: "bg-red-100 text-red-800",
+    general: "bg-gray-100 text-gray-800",
+};
+
+// ─── Schema (account_type is a free string from DB, validated at submit) ──────
 const postingKeySchema = z.object({
-    code: z.string()
-        .min(1, "Code is required")
-        .max(3, "Code must be exactly 3 characters")
-        .regex(/^[A-Z0-9]{1,3}$/, "Code must contain only uppercase letters and numbers"),
-    name: z.string().min(1, "Name is required").max(100),
-    description: z.string().optional(),
-    businessContext: z.string().max(100).optional(),
-    isActive: z.boolean().default(true),
+    posting_key: z
+        .string()
+        .min(1, "Posting key is required")
+        .max(2, "Max 2 digits")
+        .regex(/^\d{1,2}$/, "Must be numeric (e.g. 01, 40)"),
+    description: z.string().max(200).optional(),
+    debit_credit: z.enum(["D", "C"], { required_error: "Select Debit or Credit" }),
+    account_type: z.string().min(1, "Account type is required"),
+    special_gl_indicator: z.string().max(10).optional(),
+    active: z.boolean().default(true),
 });
 
-// Posting Keys Management Page
+type FormValues = z.infer<typeof postingKeySchema>;
+
+// ─── Component ────────────────────────────────────────────────────────────────
 export default function PostingKeysPage() {
-    const [searchQuery, setSearchQuery] = useState("");
-    const [filterStatus, setFilterStatus] = useState<string>("all");
-    const [showDialog, setShowDialog] = useState(false);
-    const [editingPostingKey, setEditingPostingKey] = useState<PostingKey | null>(null);
     const { toast } = useToast();
-    const queryClient = useQueryClient();
     const permissions = useAgentPermissions();
 
-    // Fetch posting keys
+    // ── State ──────────────────────────────────────────────────────────────────
     const [postingKeys, setPostingKeys] = useState<PostingKey[]>([]);
-    const [filteredPostingKeys, setFilteredPostingKeys] = useState<PostingKey[]>([]);
-    const [postingKeysLoading, setPostingKeysLoading] = useState(true);
-    const [postingKeysError, setPostingKeysError] = useState<Error | null>(null);
+    const [filtered, setFiltered] = useState<PostingKey[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
-    // Fetch data function
-    const fetchData = async () => {
+    // Real-time account types from DB
+    const [accountTypes, setAccountTypes] = useState<AccountType[]>([]);
+    const [accountTypesLoading, setAccountTypesLoading] = useState(true);
+
+    const [searchQuery, setSearchQuery] = useState("");
+    const [filterDC, setFilterDC] = useState<string>("all");
+    const [filterAccountType, setFilterAccountType] = useState<string>("all");
+
+    const [showDialog, setShowDialog] = useState(false);
+    const [showViewDialog, setShowViewDialog] = useState(false);
+    const [editingKey, setEditingKey] = useState<PostingKey | null>(null);
+    const [viewingKey, setViewingKey] = useState<PostingKey | null>(null);
+
+    // ── Fetch account types from DB ────────────────────────────────────────────
+    const fetchAccountTypes = async () => {
         try {
-            setPostingKeysLoading(true);
-            const response = await fetch("/api/master-data/transaction-keys", {
-                headers: {
-                    'Accept': 'application/json'
-                }
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`API Error: ${response.status} ${response.statusText}`);
-            }
-
-            const result = await response.json();
-            const data = result.data || result;
-            setPostingKeys(Array.isArray(data) ? data : []);
-            setFilteredPostingKeys(Array.isArray(data) ? data : []);
-            setPostingKeysLoading(false);
-        } catch (error) {
-            console.error("Error fetching posting keys:", error);
-            setPostingKeysError(error instanceof Error ? error : new Error('Failed to fetch posting keys'));
-            setPostingKeysLoading(false);
+            setAccountTypesLoading(true);
+            const res = await fetch("/api/master-data/account-types");
+            if (!res.ok) throw new Error("Failed to load account types");
+            const data: AccountType[] = await res.json();
+            setAccountTypes(data.filter(at => at.is_active));
+        } catch (err: any) {
+            console.error("Error fetching account types:", err);
+            // Don't block the main page from loading
+            setAccountTypes([]);
+        } finally {
+            setAccountTypesLoading(false);
         }
     };
 
-    // Refresh function
-    const handleRefresh = async () => {
-        toast({
-            title: "Refreshing Data",
-            description: "Loading latest posting keys...",
-        });
-        await fetchData();
-        toast({
-            title: "Data Refreshed",
-            description: "Posting keys have been updated successfully.",
-        });
+    // ── Helper: find account type info ────────────────────────────────────────
+    const getAccountTypeInfo = (code: string): AccountType | undefined =>
+        accountTypes.find(at => at.code === code);
+
+    // ── Fetch posting keys ─────────────────────────────────────────────────────
+    const fetchData = async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const res = await fetch("/api/master-data/posting-keys");
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const result = await res.json();
+            const data: PostingKey[] = result.data || [];
+            setPostingKeys(data);
+            setFiltered(data);
+        } catch (err: any) {
+            setError(err.message || "Failed to load posting keys");
+        } finally {
+            setLoading(false);
+        }
     };
 
-    // Fetch data on component mount
     useEffect(() => {
+        fetchAccountTypes();
         fetchData();
     }, []);
 
-    // Filter posting keys based on search query and status
+    // ── Filter logic ───────────────────────────────────────────────────────────
     useEffect(() => {
-        let filtered = postingKeys;
-
-        // Filter by status
-        if (filterStatus === "active") {
-            filtered = filtered.filter(key => key.isActive);
-        } else if (filterStatus === "inactive") {
-            filtered = filtered.filter(key => !key.isActive);
-        }
-
-        // Filter by search query
-        if (searchQuery.trim() !== "") {
-            filtered = filtered.filter(
-                (key) =>
-                    key.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    key.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    (key.description && key.description.toLowerCase().includes(searchQuery.toLowerCase())) ||
-                    (key.businessContext && key.businessContext.toLowerCase().includes(searchQuery.toLowerCase()))
+        let data = postingKeys;
+        if (filterDC !== "all") data = data.filter(k => k.debit_credit === filterDC);
+        if (filterAccountType !== "all") data = data.filter(k => k.account_type === filterAccountType);
+        if (searchQuery.trim()) {
+            const q = searchQuery.toLowerCase();
+            data = data.filter(k =>
+                k.posting_key.toLowerCase().includes(q) ||
+                (k.description && k.description.toLowerCase().includes(q)) ||
+                k.account_type.toLowerCase().includes(q)
             );
         }
+        setFiltered(data);
+    }, [searchQuery, filterDC, filterAccountType, postingKeys]);
 
-        setFilteredPostingKeys(filtered);
-    }, [searchQuery, filterStatus, postingKeys]);
-
-    // Posting key form setup
-    const form = useForm<z.infer<typeof postingKeySchema>>({
+    // ── Form ───────────────────────────────────────────────────────────────────
+    const form = useForm<FormValues>({
         resolver: zodResolver(postingKeySchema),
         defaultValues: {
-            code: "",
-            name: "",
+            posting_key: "",
             description: "",
-            businessContext: "",
-            isActive: true,
+            debit_credit: "D",
+            account_type: "",
+            special_gl_indicator: "",
+            active: true,
         },
     });
 
-    // Set form values when editing
     useEffect(() => {
-        if (editingPostingKey) {
+        if (editingKey) {
             form.reset({
-                code: editingPostingKey.code,
-                name: editingPostingKey.name,
-                description: editingPostingKey.description || "",
-                businessContext: editingPostingKey.businessContext || "",
-                isActive: editingPostingKey.isActive,
+                posting_key: editingKey.posting_key,
+                description: editingKey.description || "",
+                debit_credit: editingKey.debit_credit,
+                account_type: editingKey.account_type,
+                special_gl_indicator: editingKey.special_gl_indicator || "",
+                active: editingKey.active,
             });
         } else {
             form.reset({
-                code: "",
-                name: "",
-                description: "",
-                businessContext: "",
-                isActive: true,
+                posting_key: "", description: "", debit_credit: "D",
+                account_type: "", special_gl_indicator: "", active: true,
             });
         }
-    }, [editingPostingKey, form]);
+    }, [editingKey, form]);
 
-    // Create posting key mutation
-    const createPostingKeyMutation = useMutation({
-        mutationFn: (postingKey: z.infer<typeof postingKeySchema>) => {
-            return apiRequest(`/api/master-data/transaction-keys`, {
+    // ── Mutations ──────────────────────────────────────────────────────────────
+    const createMutation = useMutation({
+        mutationFn: (values: FormValues) =>
+            apiRequest("/api/master-data/posting-keys", {
                 method: "POST",
-                body: JSON.stringify(postingKey)
-            }).then(res => {
-                if (!res.ok) {
-                    return res.json().then(err => {
-                        throw new Error(err.details || err.error || "Failed to create posting key");
-                    });
-                }
-                return res.json();
-            });
-        },
+                body: JSON.stringify(values),
+            }).then(r => r.json()),
         onSuccess: () => {
-            toast({
-                title: "Success",
-                description: "Posting key created successfully",
-            });
-            fetchData();
-            setShowDialog(false);
-            form.reset();
+            toast({ title: "Success", description: "Posting key created successfully" });
+            fetchData(); setShowDialog(false); form.reset();
         },
-        onError: (error: any) => {
-            toast({
-                title: "Error",
-                description: error.message || "Failed to create posting key",
-                variant: "destructive",
-            });
-        },
+        onError: (err: any) =>
+            toast({ title: "Error", description: err.message || "Failed to create posting key", variant: "destructive" }),
     });
 
-    // Update posting key mutation
-    const updatePostingKeyMutation = useMutation({
-        mutationFn: (data: { id: number; postingKey: z.infer<typeof postingKeySchema> }) => {
-            return apiRequest(`/api/master-data/transaction-keys/${data.id}`, {
+    const updateMutation = useMutation({
+        mutationFn: ({ id, values }: { id: number; values: FormValues }) =>
+            apiRequest(`/api/master-data/posting-keys/${id}`, {
                 method: "PUT",
-                body: JSON.stringify(data.postingKey),
-            }).then(res => {
-                if (!res.ok) {
-                    return res.json().then(err => {
-                        throw new Error(err.details || err.error || "Failed to update posting key");
-                    });
-                }
-                return res.json();
-            });
-        },
+                body: JSON.stringify(values),
+            }).then(r => r.json()),
         onSuccess: () => {
-            toast({
-                title: "Success",
-                description: "Posting key updated successfully",
-            });
-            fetchData();
-            setShowDialog(false);
-            setEditingPostingKey(null);
+            toast({ title: "Success", description: "Posting key updated successfully" });
+            fetchData(); setShowDialog(false); setEditingKey(null);
         },
-        onError: (error: any) => {
-            toast({
-                title: "Error",
-                description: error.message || "Failed to update posting key",
-                variant: "destructive",
-            });
-        },
+        onError: (err: any) =>
+            toast({ title: "Error", description: err.message || "Failed to update posting key", variant: "destructive" }),
     });
 
-    // Delete posting key mutation
-    const deletePostingKeyMutation = useMutation({
-        mutationFn: (id: number) => {
-            return apiRequest(`/api/master-data/transaction-keys/${id}`, {
-                method: "DELETE",
-            }).then(res => res.json());
-        },
+    const deleteMutation = useMutation({
+        mutationFn: (id: number) =>
+            apiRequest(`/api/master-data/posting-keys/${id}`, { method: "DELETE" }).then(r => r.json()),
         onSuccess: () => {
-            toast({
-                title: "Success",
-                description: "Posting key deleted successfully",
-            });
+            toast({ title: "Success", description: "Posting key deleted" });
             fetchData();
         },
-        onError: (error: any) => {
-            toast({
-                title: "Error",
-                description: error.message || "Failed to delete posting key",
-                variant: "destructive",
-            });
-        },
+        onError: (err: any) =>
+            toast({ title: "Error", description: err.message || "Failed to delete posting key", variant: "destructive" }),
     });
 
-    // Form submission
-    const onSubmit = (values: z.infer<typeof postingKeySchema>) => {
-        const updatedValues = {
-            ...values,
-            code: values.code.toUpperCase(),
-        };
-
-        if (editingPostingKey) {
-            updatePostingKeyMutation.mutate({ id: editingPostingKey.id, postingKey: updatedValues });
+    const onSubmit = (values: FormValues) => {
+        if (editingKey) {
+            updateMutation.mutate({ id: editingKey.id, values });
         } else {
-            createPostingKeyMutation.mutate(updatedValues);
+            createMutation.mutate(values);
         }
     };
 
-    // Function to close the dialog
-    const closeDialog = () => {
-        setShowDialog(false);
-        setEditingPostingKey(null);
-        form.reset();
+    const handleEdit = (key: PostingKey) => { setEditingKey(key); setShowDialog(true); };
+    const handleView = (key: PostingKey) => { setViewingKey(key); setShowViewDialog(true); };
+    const handleDelete = (key: PostingKey) => {
+        if (window.confirm(`Delete posting key "${key.posting_key}"?`)) deleteMutation.mutate(key.id);
     };
+    const closeDialog = () => { setShowDialog(false); setEditingKey(null); form.reset(); };
 
-    // Function to handle editing
-    const handleEdit = (postingKey: PostingKey) => {
-        setEditingPostingKey(postingKey);
-        setShowDialog(true);
-    };
-
-    // Function to handle export
+    // ── Export ─────────────────────────────────────────────────────────────────
     const handleExport = () => {
-        if (filteredPostingKeys.length === 0) {
-            toast({
-                title: "No Data to Export",
-                description: "There are no posting keys to export.",
-                variant: "destructive",
-            });
-            return;
-        }
-
-        const exportData = filteredPostingKeys.map(key => ({
-            'Code': key.code,
-            'Name': key.name,
-            'Description': key.description || '',
-            'Business Context': key.businessContext || '',
-            'Status': key.isActive ? 'Active' : 'Inactive'
-        }));
-
-        const headers = Object.keys(exportData[0]);
-        const csvContent = [
-            headers.join(','),
-            ...exportData.map(row =>
-                headers.map(header => `"${row[header]}"`).join(',')
-            )
-        ].join('\n');
-
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
-        link.setAttribute('download', `posting-keys-${new Date().toISOString().split('T')[0]}.csv`);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-
-        toast({
-            title: "Export Successful",
-            description: `Exported ${filteredPostingKeys.length} posting keys to CSV file.`,
+        const headers = ["Posting Key", "Description", "D/C Indicator", "Account Type", "Special GL", "Status"];
+        const rows = filtered.map(k => {
+            const at = getAccountTypeInfo(k.account_type);
+            return [
+                k.posting_key,
+                k.description || "",
+                k.debit_credit === "D" ? "Debit" : "Credit",
+                at ? at.name : k.account_type,
+                k.special_gl_indicator || "",
+                k.active ? "Active" : "Inactive",
+            ];
         });
+        const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(",")).join("\n");
+        const blob = new Blob([csv], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `posting-keys-${new Date().toISOString().split("T")[0]}.csv`;
+        a.click();
+        toast({ title: "Exported", description: `${filtered.length} posting keys exported` });
     };
 
-    // Function to handle delete
-    const handleDelete = (id: number, code: string) => {
-        if (window.confirm(`Are you sure you want to delete posting key "${code}"?`)) {
-            deletePostingKeyMutation.mutate(id);
-        }
-    };
-
-    // Check for errors
-    if (postingKeysError) {
-        return (
-            <div className="p-4">
-                <div className="bg-red-50 border border-red-200 text-red-800 p-4 rounded-md">
-                    <h3 className="text-lg font-medium">Error</h3>
-                    <p>{postingKeysError.message || "An error occurred"}</p>
-                </div>
-            </div>
-        );
-    }
-
+    // ── Render ─────────────────────────────────────────────────────────────────
     return (
         <div className="space-y-6">
-            {/* Page Header */}
+            {/* Header */}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center">
                     <Link href="/master-data" className="mr-4 p-2 rounded-md hover:bg-gray-100">
                         <ArrowLeft className="h-5 w-5" />
                     </Link>
                     <div>
-                        <h1 className="text-2xl font-bold">Posting Keys</h1>
+                        <h1 className="text-2xl font-bold flex items-center gap-2">
+                            <Key className="h-6 w-6 text-blue-600" />
+                            Posting Keys
+                        </h1>
                         <p className="text-sm text-muted-foreground">
-                            Universal posting keys for automatic account determination
+                            Define posting keys for automatic account determination and debit/credit rules
                         </p>
                     </div>
                 </div>
@@ -391,12 +294,10 @@ export default function PostingKeysPage() {
                     {permissions.hasDataModificationRights ? (
                         <>
                             <Button variant="outline" onClick={handleExport}>
-                                <Download className="mr-2 h-4 w-4" />
-                                Export to Excel
+                                <Download className="mr-2 h-4 w-4" /> Export CSV
                             </Button>
-                            <Button onClick={() => setShowDialog(true)}>
-                                <Plus className="mr-2 h-4 w-4" />
-                                New Posting Key
+                            <Button onClick={() => { setEditingKey(null); setShowDialog(true); }}>
+                                <Plus className="mr-2 h-4 w-4" /> New Posting Key
                             </Button>
                         </>
                     ) : (
@@ -407,251 +308,415 @@ export default function PostingKeysPage() {
                 </div>
             </div>
 
-            {/* Filters and Search Bar */}
-            <div className="flex gap-2">
-                <Select value={filterStatus} onValueChange={setFilterStatus}>
-                    <SelectTrigger className="w-[180px]">
-                        <SelectValue placeholder="Filter by status" />
+            {/* Summary Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <Card>
+                    <CardContent className="pt-4 pb-3">
+                        <div className="text-2xl font-bold text-blue-600">{postingKeys.length}</div>
+                        <div className="text-xs text-gray-500">Total Keys</div>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardContent className="pt-4 pb-3">
+                        <div className="text-2xl font-bold text-red-600">{postingKeys.filter(k => k.debit_credit === "D").length}</div>
+                        <div className="text-xs text-gray-500">Debit Keys</div>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardContent className="pt-4 pb-3">
+                        <div className="text-2xl font-bold text-green-600">{postingKeys.filter(k => k.debit_credit === "C").length}</div>
+                        <div className="text-xs text-gray-500">Credit Keys</div>
+                    </CardContent>
+                </Card>
+                <Card>
+                    <CardContent className="pt-4 pb-3">
+                        <div className="text-2xl font-bold text-gray-600">{accountTypes.length}</div>
+                        <div className="text-xs text-gray-500">Account Types Available</div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-wrap gap-2">
+                <Select value={filterDC} onValueChange={setFilterDC}>
+                    <SelectTrigger className="w-[160px]">
+                        <SelectValue placeholder="D/C Indicator" />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="all">All Status</SelectItem>
-                        <SelectItem value="active">Active Only</SelectItem>
-                        <SelectItem value="inactive">Inactive Only</SelectItem>
+                        <SelectItem value="all">All D/C</SelectItem>
+                        <SelectItem value="D">Debit (D)</SelectItem>
+                        <SelectItem value="C">Credit (C)</SelectItem>
                     </SelectContent>
                 </Select>
 
-                <div className="relative flex-1">
+                <Select value={filterAccountType} onValueChange={setFilterAccountType}>
+                    <SelectTrigger className="w-[200px]">
+                        <SelectValue placeholder="Filter by Account Type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">All Account Types</SelectItem>
+                        {accountTypes.map(at => (
+                            <SelectItem key={at.id} value={at.code}>{at.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+
+                <div className="relative flex-1 min-w-[200px]">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
                         placeholder="Search posting keys..."
                         className="pl-8"
                         value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onChange={e => setSearchQuery(e.target.value)}
                     />
                 </div>
 
-                <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={handleRefresh}
-                    disabled={postingKeysLoading}
-                    title="Refresh posting keys data"
-                >
-                    <RefreshCw className={`h-4 w-4 ${postingKeysLoading ? 'animate-spin' : ''}`} />
+                <Button variant="outline" size="icon" onClick={() => { fetchAccountTypes(); fetchData(); }} disabled={loading}>
+                    <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
                 </Button>
             </div>
 
-            {/* Posting Keys Table */}
+            {/* Table */}
             <Card>
                 <CardHeader>
                     <CardTitle>Posting Keys</CardTitle>
                     <CardDescription>
-                        All registered posting keys for account determination
+                        posting key configuration — account types loaded from master data
+                        {accountTypesLoading && <span className="ml-2 text-xs text-gray-400">(loading account types...)</span>}
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <div className="rounded-md border">
-                        <div className="max-h-[500px] overflow-y-auto">
-                            <Table>
-                                <TableHeader className="sticky top-0 bg-white z-10">
-                                    <TableRow>
-                                        <TableHead className="w-[100px]">Code</TableHead>
-                                        <TableHead>Name</TableHead>
-                                        <TableHead className="hidden md:table-cell">Business Context</TableHead>
-                                        <TableHead className="w-[100px] text-center">Status</TableHead>
-                                        <TableHead className="w-[100px] text-right">Actions</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {postingKeysLoading ? (
+                    {error ? (
+                        <div className="text-center py-8 text-red-500">{error}</div>
+                    ) : (
+                        <div className="rounded-md border">
+                            <div className="max-h-[550px] overflow-y-auto">
+                                <Table>
+                                    <TableHeader className="sticky top-0 bg-white z-10">
                                         <TableRow>
-                                            <TableCell colSpan={5} className="text-center h-24">
-                                                Loading...
-                                            </TableCell>
+                                            <TableHead className="w-[110px]">Posting Key</TableHead>
+                                            <TableHead>Description</TableHead>
+                                            <TableHead className="w-[130px]">D/C Indicator</TableHead>
+                                            <TableHead className="w-[200px]">Account Type</TableHead>
+                                            <TableHead className="w-[100px]">Special GL</TableHead>
+                                            <TableHead className="w-[90px] text-center">Status</TableHead>
+                                            <TableHead className="w-[120px] text-right">Actions</TableHead>
                                         </TableRow>
-                                    ) : filteredPostingKeys.length === 0 ? (
-                                        <TableRow>
-                                            <TableCell colSpan={5} className="text-center h-24">
-                                                No posting keys found. {searchQuery ? "Try a different search." : "Create your first posting key."}
-                                            </TableCell>
-                                        </TableRow>
-                                    ) : (
-                                        filteredPostingKeys.map((key) => (
-                                            <TableRow key={key.id} className="hover:bg-gray-50">
-                                                <TableCell className="font-medium">{key.code}</TableCell>
-                                                <TableCell>
-                                                    <div>
-                                                        <div className="font-medium">{key.name}</div>
-                                                        {key.description && (
-                                                            <div className="text-sm text-gray-500 mt-1">{key.description}</div>
-                                                        )}
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell className="hidden md:table-cell">
-                                                    {key.businessContext || '-'}
-                                                </TableCell>
-                                                <TableCell className="text-center">
-                                                    <span
-                                                        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${key.isActive
-                                                            ? "bg-green-100 text-green-800"
-                                                            : "bg-gray-100 text-gray-800"
-                                                            }`}
-                                                    >
-                                                        {key.isActive ? "Active" : "Inactive"}
-                                                    </span>
-                                                </TableCell>
-                                                <TableCell className="text-right">
-                                                    <div className="flex justify-end gap-2">
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleEdit(key);
-                                                            }}
-                                                        >
-                                                            <Edit className="h-4 w-4" />
-                                                        </Button>
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleDelete(key.id, key.code);
-                                                            }}
-                                                        >
-                                                            <Trash2 className="h-4 w-4 text-red-600" />
-                                                        </Button>
-                                                    </div>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {loading ? (
+                                            <TableRow>
+                                                <TableCell colSpan={7} className="text-center h-24">
+                                                    <RefreshCw className="h-5 w-5 animate-spin mx-auto text-gray-400" />
                                                 </TableCell>
                                             </TableRow>
-                                        ))
-                                    )}
-                                </TableBody>
-                            </Table>
+                                        ) : filtered.length === 0 ? (
+                                            <TableRow>
+                                                <TableCell colSpan={7} className="text-center h-24 text-gray-500">
+                                                    No posting keys found.{" "}
+                                                    {searchQuery ? "Try a different search." : "Create your first posting key."}
+                                                </TableCell>
+                                            </TableRow>
+                                        ) : (
+                                            filtered.map(key => {
+                                                const at = getAccountTypeInfo(key.account_type);
+                                                const catColor = CATEGORY_COLORS[at?.category || ""] || "bg-gray-100 text-gray-700";
+                                                return (
+                                                    <TableRow key={key.id} className="hover:bg-gray-50">
+                                                        <TableCell>
+                                                            <span className="font-mono font-bold text-blue-700 text-lg">{key.posting_key}</span>
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <span className="text-sm">{key.description || "—"}</span>
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Badge
+                                                                className={key.debit_credit === "D"
+                                                                    ? "bg-red-100 text-red-800 border-red-200"
+                                                                    : "bg-green-100 text-green-800 border-green-200"}
+                                                                variant="outline"
+                                                            >
+                                                                {key.debit_credit === "D" ? "🔴 Debit" : "🟢 Credit"}
+                                                            </Badge>
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <div className="flex flex-col gap-1">
+                                                                <span className="font-medium text-sm">
+                                                                    {at ? at.name : key.account_type}
+                                                                </span>
+                                                                {at?.category && (
+                                                                    <span className={`inline-flex w-fit px-1.5 py-0.5 rounded text-xs font-medium ${catColor}`}>
+                                                                        {at.category}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </TableCell>
+                                                        <TableCell className="text-sm text-gray-500">
+                                                            {key.special_gl_indicator || "—"}
+                                                        </TableCell>
+                                                        <TableCell className="text-center">
+                                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${key.active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"
+                                                                }`}>
+                                                                {key.active ? "Active" : "Inactive"}
+                                                            </span>
+                                                        </TableCell>
+                                                        <TableCell className="text-right">
+                                                            <div className="flex justify-end gap-1">
+                                                                <Button variant="ghost" size="sm" onClick={() => handleView(key)}>
+                                                                    <Eye className="h-4 w-4" />
+                                                                </Button>
+                                                                {permissions.hasDataModificationRights && (
+                                                                    <>
+                                                                        <Button variant="ghost" size="sm" onClick={() => handleEdit(key)}>
+                                                                            <Edit className="h-4 w-4" />
+                                                                        </Button>
+                                                                        <Button variant="ghost" size="sm" onClick={() => handleDelete(key)}>
+                                                                            <Trash2 className="h-4 w-4 text-red-600" />
+                                                                        </Button>
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            })
+                                        )}
+                                    </TableBody>
+                                </Table>
+                            </div>
                         </div>
-                    </div>
+                    )}
                 </CardContent>
             </Card>
 
-            {/* Create/Edit Dialog */}
+            {/* ── Create / Edit Dialog ───────────────────────────────────────────── */}
             <Dialog open={showDialog} onOpenChange={setShowDialog}>
                 <DialogContent className="max-w-2xl">
                     <DialogHeader>
-                        <DialogTitle>
-                            {editingPostingKey ? 'Edit Posting Key' : 'Create Posting Key'}
-                        </DialogTitle>
+                        <DialogTitle>{editingKey ? "Edit Posting Key" : "Create Posting Key"}</DialogTitle>
                         <DialogDescription>
-                            {editingPostingKey
-                                ? 'Update the posting key details below.'
-                                : 'Enter the details for the new posting key.'}
+                            {editingKey
+                                ? "Update the posting key configuration."
+                                : "Define a new posting key for account determination."}
                         </DialogDescription>
                     </DialogHeader>
 
                     <Form {...form}>
                         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                            <div className="grid grid-cols-1 gap-4">
-                                <FormField
-                                    control={form.control}
-                                    name="code"
-                                    render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>Code *</FormLabel>
-                                            <FormControl>
-                                                <Input
-                                                    {...field}
-                                                    maxLength={3}
-                                                    placeholder="e.g., BSX, GBB, WRX"
-                                                    disabled={!!editingPostingKey}
-                                                    onChange={(e) => field.onChange(e.target.value.toUpperCase())}
-                                                />
-                                            </FormControl>
-                                            <FormDescription>3-character uppercase code</FormDescription>
-                                            <FormMessage />
-                                        </FormItem>
-                                    )}
-                                />
+                            <div className="grid grid-cols-2 gap-4">
+                                {/* Posting Key Code */}
+                                <FormField control={form.control} name="posting_key" render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>Posting Key Code *</FormLabel>
+                                        <FormControl>
+                                            <Input
+                                                {...field}
+                                                maxLength={2}
+                                                placeholder="e.g. 01, 40, 50"
+                                                disabled={!!editingKey}
+                                                className="font-mono text-lg"
+                                            />
+                                        </FormControl>
+                                        <FormDescription>2-digit numeric key</FormDescription>
+                                        <FormMessage />
+                                    </FormItem>
+                                )} />
 
-                                <FormField
-                                    control={form.control}
-                                    name="name"
-                                    render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>Name *</FormLabel>
+                                {/* Account Type — from DB */}
+                                <FormField control={form.control} name="account_type" render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>Account Type *</FormLabel>
+                                        <Select onValueChange={field.onChange} value={field.value}>
                                             <FormControl>
-                                                <Input {...field} placeholder="e.g., Inventory Account" />
+                                                <SelectTrigger>
+                                                    <SelectValue placeholder={accountTypesLoading ? "Loading..." : "Select account type"} />
+                                                </SelectTrigger>
                                             </FormControl>
-                                            <FormMessage />
-                                        </FormItem>
-                                    )}
-                                />
+                                            <SelectContent className="max-h-60">
+                                                {accountTypes.map(at => (
+                                                    <SelectItem key={at.id} value={at.code}>
+                                                        <div className="flex flex-col">
+                                                            <span className="font-medium">{at.name}</span>
+                                                            {at.category && (
+                                                                <span className="text-xs text-gray-500 capitalize">{at.category}</span>
+                                                            )}
+                                                        </div>
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        <FormDescription>
+                                            {accountTypes.length} types loaded from master data
+                                        </FormDescription>
+                                        <FormMessage />
+                                    </FormItem>
+                                )} />
+                            </div>
 
-                                <FormField
-                                    control={form.control}
-                                    name="description"
-                                    render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>Description</FormLabel>
-                                            <FormControl>
-                                                <textarea
-                                                    {...field}
-                                                    rows={3}
-                                                    placeholder="Detailed explanation of this posting key..."
-                                                    className="w-full px-3 py-2 border rounded-md"
-                                                />
-                                            </FormControl>
-                                            <FormMessage />
-                                        </FormItem>
-                                    )}
-                                />
+                            {/* Description */}
+                            <FormField control={form.control} name="description" render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>Description</FormLabel>
+                                    <FormControl>
+                                        <Input {...field} placeholder="e.g. Customer Invoice, GL Debit Entry" />
+                                    </FormControl>
+                                    <FormMessage />
+                                </FormItem>
+                            )} />
 
-                                <FormField
-                                    control={form.control}
-                                    name="businessContext"
-                                    render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>Business Context</FormLabel>
-                                            <FormControl>
-                                                <Input {...field} placeholder="e.g., Procurement, Sales, Production" />
-                                            </FormControl>
-                                            <FormDescription>Business area or process</FormDescription>
-                                            <FormMessage />
-                                        </FormItem>
-                                    )}
-                                />
-
-                                <FormField
-                                    control={form.control}
-                                    name="isActive"
-                                    render={({ field }) => (
-                                        <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                                            <FormControl>
-                                                <Checkbox
-                                                    checked={field.value}
-                                                    onCheckedChange={field.onChange}
-                                                />
-                                            </FormControl>
-                                            <div className="space-y-1 leading-none">
-                                                <FormLabel>Active</FormLabel>
-                                                <FormDescription>
-                                                    Mark this posting key as active
-                                                </FormDescription>
+                            {/* Debit / Credit Indicator */}
+                            <FormField control={form.control} name="debit_credit" render={({ field }) => (
+                                <FormItem>
+                                    <FormLabel>Debit/Credit Indicator *</FormLabel>
+                                    <FormControl>
+                                        <RadioGroup
+                                            onValueChange={field.onChange}
+                                            value={field.value}
+                                            className="flex gap-6 pt-1"
+                                        >
+                                            <div className="flex items-center space-x-2">
+                                                <RadioGroupItem value="D" id="dc-debit" />
+                                                <Label htmlFor="dc-debit" className="flex items-center gap-2 cursor-pointer">
+                                                    <span className="text-red-600 font-semibold">D – Debit</span>
+                                                    <span className="text-xs text-gray-400">(increases balance)</span>
+                                                </Label>
                                             </div>
-                                        </FormItem>
-                                    )}
-                                />
+                                            <div className="flex items-center space-x-2">
+                                                <RadioGroupItem value="C" id="dc-credit" />
+                                                <Label htmlFor="dc-credit" className="flex items-center gap-2 cursor-pointer">
+                                                    <span className="text-green-600 font-semibold">C – Credit</span>
+                                                    <span className="text-xs text-gray-400">(decreases balance)</span>
+                                                </Label>
+                                            </div>
+                                        </RadioGroup>
+                                    </FormControl>
+                                    <FormMessage />
+                                </FormItem>
+                            )} />
+
+                            <div className="grid grid-cols-2 gap-4">
+                                {/* Special GL Indicator */}
+                                <FormField control={form.control} name="special_gl_indicator" render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel>Special GL Indicator</FormLabel>
+                                        <FormControl>
+                                            <Input {...field} maxLength={10} placeholder="e.g. A (Down Payment)" />
+                                        </FormControl>
+                                        <FormDescription>Optional — for noted items, down payments</FormDescription>
+                                        <FormMessage />
+                                    </FormItem>
+                                )} />
+
+                                {/* Active Toggle */}
+                                <FormField control={form.control} name="active" render={({ field }) => (
+                                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3 mt-1">
+                                        <div className="space-y-0.5">
+                                            <FormLabel className="text-base">Active</FormLabel>
+                                            <FormDescription>Enable this posting key for use</FormDescription>
+                                        </div>
+                                        <FormControl>
+                                            <Switch checked={field.value} onCheckedChange={field.onChange} />
+                                        </FormControl>
+                                    </FormItem>
+                                )} />
                             </div>
 
                             <DialogFooter>
-                                <Button type="button" variant="outline" onClick={closeDialog}>
-                                    Cancel
-                                </Button>
-                                <Button type="submit">
-                                    {editingPostingKey ? 'Update' : 'Create'} Posting Key
+                                <Button type="button" variant="outline" onClick={closeDialog}>Cancel</Button>
+                                <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
+                                    {editingKey ? "Update" : "Create"} Posting Key
                                 </Button>
                             </DialogFooter>
                         </form>
                     </Form>
+                </DialogContent>
+            </Dialog>
+
+            {/* ── View Dialog ───────────────────────────────────────────────────── */}
+            <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Posting Key Details</DialogTitle>
+                    </DialogHeader>
+                    {viewingKey && (() => {
+                        const at = getAccountTypeInfo(viewingKey.account_type);
+                        const catColor = CATEGORY_COLORS[at?.category || ""] || "bg-gray-100 text-gray-700";
+                        return (
+                            <div className="space-y-4">
+                                <div className="flex items-center gap-3 flex-wrap">
+                                    <span className="font-mono text-4xl font-bold text-blue-700">{viewingKey.posting_key}</span>
+                                    <Badge
+                                        className={viewingKey.debit_credit === "D"
+                                            ? "bg-red-100 text-red-800 border-red-200"
+                                            : "bg-green-100 text-green-800 border-green-200"}
+                                        variant="outline"
+                                    >
+                                        {viewingKey.debit_credit === "D" ? "Debit (D)" : "Credit (C)"}
+                                    </Badge>
+                                    {at && (
+                                        <Badge className={catColor} variant="outline">
+                                            {at.name}
+                                        </Badge>
+                                    )}
+                                </div>
+
+                                <dl className="grid grid-cols-2 gap-3 text-sm">
+                                    <div>
+                                        <dt className="text-gray-500">Description</dt>
+                                        <dd className="font-medium">{viewingKey.description || "—"}</dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-gray-500">Account Type</dt>
+                                        <dd className="font-medium">
+                                            {at ? (
+                                                <div className="flex flex-col">
+                                                    <span>{at.name}</span>
+                                                    <span className={`inline-flex w-fit mt-1 px-1.5 py-0.5 rounded text-xs ${catColor}`}>
+                                                        {at.category}
+                                                    </span>
+                                                    {at.description && (
+                                                        <span className="text-xs text-gray-400 mt-0.5">{at.description}</span>
+                                                    )}
+                                                </div>
+                                            ) : viewingKey.account_type}
+                                        </dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-gray-500">Special GL Indicator</dt>
+                                        <dd className="font-medium">{viewingKey.special_gl_indicator || "—"}</dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-gray-500">Status</dt>
+                                        <dd>
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewingKey.active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"
+                                                }`}>
+                                                {viewingKey.active ? "Active" : "Inactive"}
+                                            </span>
+                                        </dd>
+                                    </div>
+                                </dl>
+
+                                {/* How it works */}
+                                <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-sm">
+                                    <p className="font-semibold text-blue-700 mb-1">How this key works in a journal entry:</p>
+                                    <p className="text-blue-600">
+                                        Posting key <strong>{viewingKey.posting_key}</strong> posts a{" "}
+                                        <strong>{viewingKey.debit_credit === "D" ? "DEBIT" : "CREDIT"}</strong> to a{" "}
+                                        <strong>{at ? at.name : viewingKey.account_type}</strong>{" "}
+                                        {at?.category && <span>({at.category})</span>} account.
+                                    </p>
+                                </div>
+                            </div>
+                        );
+                    })()}
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowViewDialog(false)}>Close</Button>
+                        {permissions.hasDataModificationRights && viewingKey && (
+                            <Button onClick={() => { setShowViewDialog(false); handleEdit(viewingKey); }}>
+                                <Edit className="h-4 w-4 mr-2" /> Edit
+                            </Button>
+                        )}
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </div>

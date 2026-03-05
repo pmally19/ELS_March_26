@@ -10,6 +10,8 @@ import { Plus, Edit2, Trash2, ArrowLeft, RefreshCw, Package, Upload, Download, M
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Link } from "wouter";
 import MaterialMasterExcelImport from "@/components/master-data/MaterialMasterExcelImport";
 
@@ -60,6 +62,10 @@ interface Material {
   max_stock?: number;
   lead_time?: number;
   tax_classification_code?: string;
+  _tenantId?: string;
+  _deletedAt?: string | null;
+  createdBy?: number | null;
+  updatedBy?: number | null;
 }
 
 interface ValuationClass {
@@ -124,6 +130,7 @@ export default function MaterialMaster() {
   const [activeMaterialView, setActiveMaterialView] = useState('basic');
   const [viewingMaterialDetails, setViewingMaterialDetails] = useState<Material | null>(null);
   const [isMaterialDetailsOpen, setIsMaterialDetailsOpen] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -2729,20 +2736,58 @@ export default function MaterialMaster() {
                   </div>
                 </div>
 
-                {/* Timestamps */}
-                <div className="space-y-3">
-                  <h3 className="text-lg font-semibold border-b pb-2">Record Information</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Created At</p>
-                      <p className="font-medium">{new Date(viewingMaterialDetails.created_at).toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Updated At</p>
-                      <p className="font-medium">{new Date(viewingMaterialDetails.updated_at).toLocaleString()}</p>
-                    </div>
+                {/* Administrative Data */}
+                <Collapsible
+                  open={adminDataOpen}
+                  onOpenChange={setAdminDataOpen}
+                  className="border rounded-md p-4 space-y-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold">Administrative Data</h3>
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" size="sm" className="w-9 p-0">
+                        {adminDataOpen ? (
+                          <ChevronDown className="h-4 w-4" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4" />
+                        )}
+                        <span className="sr-only">Toggle Administrative Data</span>
+                      </Button>
+                    </CollapsibleTrigger>
                   </div>
-                </div>
+                  <CollapsibleContent className="space-y-4 pt-2">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Created At</p>
+                        <p className="font-medium">
+                          {viewingMaterialDetails?.created_at
+                            ? new Date(viewingMaterialDetails.created_at).toLocaleString()
+                            : "N/A"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Updated At</p>
+                        <p className="font-medium">
+                          {viewingMaterialDetails?.updated_at
+                            ? new Date(viewingMaterialDetails.updated_at).toLocaleString()
+                            : "N/A"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Tenant ID</p>
+                        <p className="font-medium">{viewingMaterialDetails?._tenantId || "N/A"}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Created By ID</p>
+                        <p className="font-medium">{viewingMaterialDetails?.createdBy || "N/A"}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Updated By ID</p>
+                        <p className="font-medium">{viewingMaterialDetails?.updatedBy || "N/A"}</p>
+                      </div>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
 
               {/* Action Buttons */}

@@ -51,7 +51,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Edit, Plus, Search, Trash2, ArrowLeft } from "lucide-react";
+import { Edit, Plus, Search, Trash2, ArrowLeft, Eye } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 
 import { useAgentPermissions } from "@/hooks/useAgentPermissions";
 // Define the currency schema
@@ -66,7 +67,7 @@ const currencySchema = z.object({
 });
 
 // Currency display table component
-function CurrencyTable({ currencies, isLoading, onEdit, onDelete }) {
+function CurrencyTable({ currencies, isLoading, onEdit, onDelete, onView }) {
   return (
     <Card>
       <CardContent className="p-0">
@@ -108,28 +109,34 @@ function CurrencyTable({ currencies, isLoading, onEdit, onDelete }) {
                       <TableCell>{currency.decimalPlaces}</TableCell>
                       <TableCell>
                         <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                            currency.isBaseCurrency
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${currency.isBaseCurrency
                               ? "bg-blue-100 text-blue-800"
                               : "bg-gray-100 text-gray-800"
-                          }`}
+                            }`}
                         >
                           {currency.isBaseCurrency ? "Yes" : "No"}
                         </span>
                       </TableCell>
                       <TableCell>
                         <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                            currency.isActive
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${currency.isActive
                               ? "bg-green-100 text-green-800"
                               : "bg-gray-100 text-gray-800"
-                          }`}
+                            }`}
                         >
                           {currency.isActive ? "Active" : "Inactive"}
                         </span>
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="View Details"
+                            onClick={() => onView(currency)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
                           <Button
                             variant="ghost"
                             size="icon"
@@ -166,8 +173,10 @@ export default function Currencies() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [editingCurrency, setEditingCurrency] = useState(null);
   const [deletingCurrencyId, setDeletingCurrencyId] = useState(null);
+  const [viewingCurrency, setViewingCurrency] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const { toast } = useToast();
   const permissions = useAgentPermissions();
@@ -185,28 +194,38 @@ export default function Currencies() {
   // Normalize both response shapes
   const currenciesData = Array.isArray(serverData)
     ? (serverData as any[]).map((c: any) => ({
-        id: c.id,
-        code: c.code,
-        name: c.name,
-        symbol: c.symbol,
-        exchangeRate: Number(c.conversionRate ?? c.exchangeRate ?? 1),
-        decimalPlaces: Number(c.decimalPlaces ?? 2),
-        isBaseCurrency: Boolean(c.baseCurrency ?? c.isBaseCurrency ?? false),
-        isActive: Boolean(c.isActive ?? true),
-      }))
+      id: c.id,
+      code: c.code,
+      name: c.name,
+      symbol: c.symbol,
+      exchangeRate: Number(c.conversionRate ?? c.exchangeRate ?? 1),
+      decimalPlaces: Number(c.decimalPlaces ?? 2),
+      isBaseCurrency: Boolean(c.baseCurrency ?? c.isBaseCurrency ?? false),
+      isActive: Boolean(c.isActive ?? true),
+      createdBy: c.createdBy,
+      updatedBy: c.updatedBy,
+      tenantId: c.tenantId,
+      created_at: c.created_at,
+      updated_at: c.updated_at,
+    }))
     : ((serverData?.currencies as any[]) || []).map((c: any) => ({
-        id: c.id,
-        code: c.currencyCode ?? c.code,
-        name: c.currencyName ?? c.name,
-        symbol: c.symbol,
-        exchangeRate: Number(c.conversionRate ?? c.exchangeRate ?? 1),
-        decimalPlaces: Number(c.decimalPlaces ?? 2),
-        isBaseCurrency: Boolean(c.isBaseCurrency ?? c.baseCurrency ?? false),
-        isActive: Boolean(c.isActive ?? true),
-      }));
+      id: c.id,
+      code: c.currencyCode ?? c.code,
+      name: c.currencyName ?? c.name,
+      symbol: c.symbol,
+      exchangeRate: Number(c.conversionRate ?? c.exchangeRate ?? 1),
+      decimalPlaces: Number(c.decimalPlaces ?? 2),
+      isBaseCurrency: Boolean(c.isBaseCurrency ?? c.baseCurrency ?? false),
+      isActive: Boolean(c.isActive ?? true),
+      createdBy: c.createdBy,
+      updatedBy: c.updatedBy,
+      tenantId: c.tenantId,
+      created_at: c.created_at,
+      updated_at: c.updated_at,
+    }));
 
   // Filter currencies based on search query
-  const filteredCurrencies = currenciesData.filter(currency => 
+  const filteredCurrencies = currenciesData.filter(currency =>
     currency.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
     currency.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -356,6 +375,11 @@ export default function Currencies() {
     setIsDeleteDialogOpen(true);
   };
 
+  const openViewDialog = (currency: any) => {
+    setViewingCurrency(currency);
+    setIsViewDialogOpen(true);
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -364,16 +388,16 @@ export default function Currencies() {
           <Link href="/master-data" className="mr-4 p-2 rounded-md hover:bg-gray-100">
             <ArrowLeft className="h-5 w-5" />
           </Link>
-          
-            <div>
-          <h1 className="text-2xl font-bold">Currencies</h1>
-          <p className="text-sm text-muted-foreground">
-            Manage global currencies and exchange rates
-          </p>
-        </div>
+
+          <div>
+            <h1 className="text-2xl font-bold">Currencies</h1>
+            <p className="text-sm text-muted-foreground">
+              Manage global currencies and exchange rates
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button 
+          <Button
             variant="outline"
             onClick={() => {
               const csvContent = filteredCurrencies?.map((currency: any) => ({
@@ -385,12 +409,12 @@ export default function Currencies() {
                 IsBase: currency.isBaseCurrency ? 'Yes' : 'No',
                 Status: currency.isActive ? 'Active' : 'Inactive'
               })) || [];
-              
+
               const csvString = [
                 Object.keys(csvContent[0] || {}).join(','),
                 ...csvContent.map((row: any) => Object.values(row).join(','))
               ].join('\n');
-              
+
               const blob = new Blob([csvString], { type: 'text/csv' });
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
@@ -427,6 +451,7 @@ export default function Currencies() {
         isLoading={isLoading}
         onEdit={openEditDialog}
         onDelete={openDeleteDialog}
+        onView={openViewDialog}
       />
 
       {/* Add Currency Dialog */}
@@ -438,7 +463,7 @@ export default function Currencies() {
               Add a new currency and set its exchange rate relative to the base currency.
             </DialogDescription>
           </DialogHeader>
-          
+
           <div className="overflow-y-auto max-h-[calc(90vh-180px)] pr-2 my-2">
             <Form {...addForm}>
               <form onSubmit={addForm.handleSubmit(handleAddSubmit)} className="space-y-6">
@@ -592,7 +617,7 @@ export default function Currencies() {
               Update currency details and exchange rate.
             </DialogDescription>
           </DialogHeader>
-          
+
           <div className="overflow-y-auto max-h-[calc(90vh-180px)] pr-2 my-2">
             {editingCurrency && (
               <Form {...editForm}>
@@ -757,6 +782,50 @@ export default function Currencies() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* View Currency Details Dialog */}
+      <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Currency Details — {viewingCurrency?.code}</DialogTitle>
+            <DialogDescription>Full details for {viewingCurrency?.name}</DialogDescription>
+          </DialogHeader>
+          {viewingCurrency && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div><p className="text-sm font-medium text-gray-500">Code</p><p className="text-sm font-semibold">{viewingCurrency.code}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">Name</p><p className="text-sm">{viewingCurrency.name}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">Symbol</p><p className="text-sm">{viewingCurrency.symbol}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">Decimal Places</p><p className="text-sm">{viewingCurrency.decimalPlaces}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">Exchange Rate</p><p className="text-sm">{viewingCurrency.exchangeRate}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">Base Currency</p><p className="text-sm">{viewingCurrency.isBaseCurrency ? 'Yes' : 'No'}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">Status</p><p className="text-sm">{viewingCurrency.isActive ? 'Active' : 'Inactive'}</p></div>
+              </div>
+
+              <Separator />
+
+              {/* Administrative Data — collapsible */}
+              <div
+                className="cursor-pointer flex justify-between items-center select-none"
+                onClick={(e) => {
+                  const next = (e.currentTarget as HTMLElement).nextElementSibling as HTMLElement;
+                  if (next) next.style.display = next.style.display === 'none' ? 'grid' : 'none';
+                }}
+              >
+                <p className="font-semibold text-sm text-gray-700">Administrative Data</p>
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              </div>
+              <dl className="grid grid-cols-2 gap-3" style={{ display: 'none' }}>
+                <div><dt className="text-sm font-medium text-gray-500">Created By</dt><dd className="text-sm text-gray-900">{viewingCurrency.createdBy ?? '—'}</dd></div>
+                <div><dt className="text-sm font-medium text-gray-500">Updated By</dt><dd className="text-sm text-gray-900">{viewingCurrency.updatedBy ?? viewingCurrency.createdBy ?? '—'}</dd></div>
+                <div><dt className="text-sm font-medium text-gray-500">Created At</dt><dd className="text-sm text-gray-900">{viewingCurrency.created_at ? new Date(viewingCurrency.created_at).toLocaleString() : '—'}</dd></div>
+                <div><dt className="text-sm font-medium text-gray-500">Updated At</dt><dd className="text-sm text-gray-900">{viewingCurrency.updated_at ? new Date(viewingCurrency.updated_at).toLocaleString() : '—'}</dd></div>
+                <div><dt className="text-sm font-medium text-gray-500">Tenant ID</dt><dd className="text-sm text-gray-900">{viewingCurrency.tenantId ?? '—'}</dd></div>
+              </dl>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import fs from 'fs';
 import { pool } from '../db.js';
 import { GoodsReceiptService } from '../services/goodsReceiptService.ts';
 import { APInvoiceService } from '../services/apInvoiceService.js';
+import { DocumentNumberingService } from '../services/documentNumberingService.js';
 
 const router = express.Router();
 const goodsReceiptService = new GoodsReceiptService(pool);
@@ -50,7 +51,7 @@ router.post('/copy-po-to-goods-receipt', async (req, res) => {
     await client.query('BEGIN');
     console.log('[GoodsReceipt] Transaction started for PO to Goods Receipt');
 
-    const { purchase_order_id, received_by, delivery_note, bill_of_lading, movement_type } = req.body;
+    const { purchase_order_id, received_by, delivery_note, bill_of_lading, movement_type, document_type_id } = req.body;
 
     if (!purchase_order_id) {
       await client.query('ROLLBACK');
@@ -165,13 +166,15 @@ router.post('/copy-po-to-goods-receipt', async (req, res) => {
     console.log(`📦 Creating ONE goods receipt with ${itemsToReceive.length} item(s) using movement type: ${movement_type || '101 (default)'}`);
 
     // Create ONE goods receipt with ALL items
+    // Document numbering is handled inside the service where the company code is known
     const result = await goodsReceiptService.createGoodsReceiptFromPO(
       purchase_order_id,
       {
-        items: itemsToReceive,  // Pass ALL items at once
+        items: itemsToReceive,
         deliveryNote: delivery_note || null,
         billOfLading: bill_of_lading || null,
-        movementType: movement_type || '101'  // Pass movement type, defaulting to 101
+        movementType: movement_type || '101',
+        documentTypeId: document_type_id ? parseInt(document_type_id) : undefined
       },
       finalReceivedBy,
       client

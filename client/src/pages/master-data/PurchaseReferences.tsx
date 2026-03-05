@@ -49,17 +49,23 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
-import { PlusCircle, Edit, Trash2, RefreshCw, Search, LayoutList, Tag, ArrowLeft } from "lucide-react";
+import { PlusCircle, Edit, Trash2, RefreshCw, Search, LayoutList, Tag, ArrowLeft, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { SearchRefreshBar } from "@/components/ui/search-refresh-bar";
 
 import { useAgentPermissions } from "@/hooks/useAgentPermissions";
-// Types
 interface PurchaseGroup {
   id: number;
   code: string;
   name: string;
   description?: string;
   isActive: boolean;
+  // Audit trail fields
+  _tenantId?: string | null;
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  _deletedAt?: string | null;
 }
 
 interface SupplyType {
@@ -68,6 +74,13 @@ interface SupplyType {
   name: string;
   description?: string;
   isActive: boolean;
+  // Audit trail fields
+  _tenantId?: string | null;
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  _deletedAt?: string | null;
 }
 
 // Form schemas
@@ -107,6 +120,11 @@ export default function PurchaseReferences() {
   const [isDeleteSupplyTypeDialogOpen, setIsDeleteSupplyTypeDialogOpen] = useState(false);
   const [editingSupplyType, setEditingSupplyType] = useState<SupplyType | null>(null);
   const [deletingSupplyType, setDeletingSupplyType] = useState<SupplyType | null>(null);
+
+  // Detail dialogs
+  const [viewDetailsPurchaseGroup, setViewDetailsPurchaseGroup] = useState<PurchaseGroup | null>(null);
+  const [viewDetailsSupplyType, setViewDetailsSupplyType] = useState<SupplyType | null>(null);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
 
   // Forms
   const purchaseGroupForm = useForm<z.infer<typeof purchaseGroupSchema>>({
@@ -506,6 +524,13 @@ export default function PurchaseReferences() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
+                                  onClick={() => { setViewDetailsPurchaseGroup(group); setAdminDataOpen(false); }}
+                                >
+                                  <Search className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
                                   onClick={() => openEditPurchaseGroupDialog(group)}
                                 >
                                   <Edit className="h-4 w-4" />
@@ -580,8 +605,8 @@ export default function PurchaseReferences() {
                             <TableCell className="text-center">
                               <span
                                 className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${type.isActive
-                                    ? "bg-green-100 text-green-800"
-                                    : "bg-gray-100 text-gray-800"
+                                  ? "bg-green-100 text-green-800"
+                                  : "bg-gray-100 text-gray-800"
                                   }`}
                               >
                                 {type.isActive ? "Active" : "Inactive"}
@@ -589,6 +614,13 @@ export default function PurchaseReferences() {
                             </TableCell>
                             <TableCell className="text-right">
                               <div className="flex justify-end gap-2">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => { setViewDetailsSupplyType(type); setAdminDataOpen(false); }}
+                                >
+                                  <Search className="h-4 w-4" />
+                                </Button>
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -1035,6 +1067,158 @@ export default function PurchaseReferences() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* View Details Purchase Group Dialog */}
+      <Dialog open={!!viewDetailsPurchaseGroup} onOpenChange={(open) => !open && setViewDetailsPurchaseGroup(null)}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Purchase Group Details</DialogTitle>
+          </DialogHeader>
+          {viewDetailsPurchaseGroup && (
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Group Code</h4>
+                  <p>{viewDetailsPurchaseGroup.code}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Status</h4>
+                  <p>
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewDetailsPurchaseGroup.isActive
+                          ? "bg-green-100 text-green-800"
+                          : "bg-gray-100 text-gray-800"
+                        }`}
+                    >
+                      {viewDetailsPurchaseGroup.isActive ? "Active" : "Inactive"}
+                    </span>
+                  </p>
+                </div>
+              </div>
+              <div>
+                <h4 className="font-medium text-sm text-gray-500">Group Name</h4>
+                <p>{viewDetailsPurchaseGroup.name}</p>
+              </div>
+              <div>
+                <h4 className="font-medium text-sm text-gray-500">Description</h4>
+                <p>{viewDetailsPurchaseGroup.description || "—"}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Created At</h4>
+                  <p>{viewDetailsPurchaseGroup.createdAt ? new Date(viewDetailsPurchaseGroup.createdAt).toLocaleString() : "—"}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Updated At</h4>
+                  <p>{viewDetailsPurchaseGroup.updatedAt ? new Date(viewDetailsPurchaseGroup.updatedAt).toLocaleString() : "—"}</p>
+                </div>
+              </div>
+
+              {/* Collapsible Administrative Data */}
+              <div className="border-t pt-3">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                >
+                  {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  <Info className="h-3 w-3" />
+                  Administrative Data
+                </button>
+                {adminDataOpen && (
+                  <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                    <div><dt className="font-medium inline">Created By (ID): </dt><dd className="inline">{viewDetailsPurchaseGroup.createdBy ?? "—"}</dd></div>
+                    <div><dt className="font-medium inline">Updated By (ID): </dt><dd className="inline">{viewDetailsPurchaseGroup.updatedBy ?? "—"}</dd></div>
+                    <div><dt className="font-medium inline">Tenant ID: </dt><dd className="inline">{viewDetailsPurchaseGroup._tenantId ?? "—"}</dd></div>
+                  </dl>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewDetailsPurchaseGroup(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Details Supply Type Dialog */}
+      <Dialog open={!!viewDetailsSupplyType} onOpenChange={(open) => !open && setViewDetailsSupplyType(null)}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Supply Type Details</DialogTitle>
+          </DialogHeader>
+          {viewDetailsSupplyType && (
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Group Code</h4>
+                  <p>{viewDetailsSupplyType.code}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Status</h4>
+                  <p>
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewDetailsSupplyType.isActive
+                          ? "bg-green-100 text-green-800"
+                          : "bg-gray-100 text-gray-800"
+                        }`}
+                    >
+                      {viewDetailsSupplyType.isActive ? "Active" : "Inactive"}
+                    </span>
+                  </p>
+                </div>
+              </div>
+              <div>
+                <h4 className="font-medium text-sm text-gray-500">Group Name</h4>
+                <p>{viewDetailsSupplyType.name}</p>
+              </div>
+              <div>
+                <h4 className="font-medium text-sm text-gray-500">Description</h4>
+                <p>{viewDetailsSupplyType.description || "—"}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Created At</h4>
+                  <p>{viewDetailsSupplyType.createdAt ? new Date(viewDetailsSupplyType.createdAt).toLocaleString() : "—"}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Updated At</h4>
+                  <p>{viewDetailsSupplyType.updatedAt ? new Date(viewDetailsSupplyType.updatedAt).toLocaleString() : "—"}</p>
+                </div>
+              </div>
+
+              {/* Collapsible Administrative Data */}
+              <div className="border-t pt-3">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                >
+                  {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  <Info className="h-3 w-3" />
+                  Administrative Data
+                </button>
+                {adminDataOpen && (
+                  <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                    <div><dt className="font-medium inline">Created By (ID): </dt><dd className="inline">{viewDetailsSupplyType.createdBy ?? "—"}</dd></div>
+                    <div><dt className="font-medium inline">Updated By (ID): </dt><dd className="inline">{viewDetailsSupplyType.updatedBy ?? "—"}</dd></div>
+                    <div><dt className="font-medium inline">Tenant ID: </dt><dd className="inline">{viewDetailsSupplyType._tenantId ?? "—"}</dd></div>
+                  </dl>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewDetailsSupplyType(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

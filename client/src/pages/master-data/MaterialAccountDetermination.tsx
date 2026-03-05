@@ -72,6 +72,9 @@ type MaterialAccountDetermination = {
     gl_account_id: number;
     account_number: string;
     account_name: string;
+    account_modifier_id?: number | null;
+    account_modifier_code?: string | null;
+    account_modifier_name?: string | null;
     description?: string;
     is_active: boolean;
 };
@@ -82,6 +85,7 @@ type DropdownData = {
     valuationClasses: Array<{ id: number; class_code: string; class_name: string }>;
     transactionKeys: Array<{ id: number; code: string; description: string; business_context: string }>;
     glAccounts: Array<{ id: number; account_number: string; account_name: string; chart_of_accounts_id?: number }>;
+    accountModifiers: Array<{ id: number; code: string; name: string; description?: string }>;
 };
 
 // Form schema
@@ -89,8 +93,9 @@ const formSchema = z.object({
     chart_of_accounts_id: z.number({ required_error: "Chart of Accounts is required" }),
     valuation_grouping_code_id: z.number({ required_error: "Valuation Grouping Code is required" }),
     valuation_class_id: z.number({ required_error: "Valuation Class is required" }),
-    transaction_key_id: z.number({ required_error: "Posting Key is required" }),
+    transaction_key_id: z.number({ required_error: "Transaction Key is required" }),
     gl_account_id: z.number({ required_error: "GL Account is required" }),
+    account_modifier_id: z.number().nullable().optional(),
     description: z.string().optional(),
 });
 
@@ -110,6 +115,7 @@ export default function MaterialAccountDetermination() {
         resolver: zodResolver(formSchema),
         defaultValues: {
             description: "",
+            account_modifier_id: null,
         },
     });
 
@@ -218,6 +224,7 @@ export default function MaterialAccountDetermination() {
                 valuation_class_id: editingItem.valuation_class_id,
                 transaction_key_id: editingItem.transaction_key_id,
                 gl_account_id: editingItem.gl_account_id,
+                account_modifier_id: editingItem.account_modifier_id ?? null,
                 description: editingItem.description || "",
             });
         }
@@ -263,7 +270,8 @@ export default function MaterialAccountDetermination() {
             det.valuation_grouping_code?.toLowerCase().includes(search) ||
             det.valuation_class_code?.toLowerCase().includes(search) ||
             det.transaction_key_code?.toLowerCase().includes(search) ||
-            det.account_number?.toLowerCase().includes(search)
+            det.account_number?.toLowerCase().includes(search) ||
+            det.account_modifier_code?.toLowerCase().includes(search)
         );
     });
 
@@ -304,7 +312,7 @@ export default function MaterialAccountDetermination() {
                         <div className="relative flex-1">
                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                             <Input
-                                placeholder="Search by CoA, Grouping Code, Class, Posting Key..."
+                                placeholder="Search by CoA, Grouping Code, Class, Transaction Key, Modifier..."
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                                 className="pl-8"
@@ -316,10 +324,11 @@ export default function MaterialAccountDetermination() {
                         <Table>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead className="w-[100px]">CoA</TableHead>
+                                    <TableHead className="w-[90px]">CoA</TableHead>
                                     <TableHead>Val. Grouping</TableHead>
                                     <TableHead>Val. Class</TableHead>
-                                    <TableHead>Posting Key</TableHead>
+                                    <TableHead>Transaction Key</TableHead>
+                                    <TableHead>Acct. Modifier</TableHead>
                                     <TableHead>GL Account</TableHead>
                                     <TableHead className="w-[100px] text-center">Status</TableHead>
                                     <TableHead className="w-[100px] text-right">Actions</TableHead>
@@ -344,7 +353,20 @@ export default function MaterialAccountDetermination() {
                                             <TableCell className="font-medium">{det.chart_of_accounts_code}</TableCell>
                                             <TableCell>{det.valuation_grouping_code}</TableCell>
                                             <TableCell>{det.valuation_class_code}</TableCell>
-                                            <TableCell>{det.transaction_key_code}</TableCell>
+                                            <TableCell>
+                                                <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
+                                                    {det.transaction_key_code}
+                                                </span>
+                                            </TableCell>
+                                            <TableCell>
+                                                {det.account_modifier_code ? (
+                                                    <span className="font-mono text-xs bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 px-1.5 py-0.5 rounded">
+                                                        {det.account_modifier_code}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-muted-foreground text-xs">—</span>
+                                                )}
+                                            </TableCell>
                                             <TableCell>
                                                 {det.account_number} - {det.account_name}
                                             </TableCell>
@@ -502,20 +524,50 @@ export default function MaterialAccountDetermination() {
                                     name="transaction_key_id"
                                     render={({ field }) => (
                                         <FormItem>
-                                            <FormLabel>Posting Key *</FormLabel>
+                                            <FormLabel>Transaction Key *</FormLabel>
                                             <Select
                                                 value={field.value?.toString()}
                                                 onValueChange={(value) => field.onChange(parseInt(value))}
                                             >
                                                 <FormControl>
                                                     <SelectTrigger>
-                                                        <SelectValue placeholder="Select Posting Key" />
+                                                        <SelectValue placeholder="Select Transaction Key" />
                                                     </SelectTrigger>
                                                 </FormControl>
                                                 <SelectContent>
                                                     {dropdownData?.transactionKeys?.map((tk) => (
                                                         <SelectItem key={tk.id} value={tk.id.toString()}>
                                                             {tk.code} - {tk.description}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                            <FormMessage />
+                                        </FormItem>
+                                    )}
+                                />
+
+                                {/* Account Modifier */}
+                                <FormField
+                                    control={form.control}
+                                    name="account_modifier_id"
+                                    render={({ field }) => (
+                                        <FormItem>
+                                            <FormLabel>Account Modifier <span className="text-muted-foreground text-xs font-normal">(GBB only)</span></FormLabel>
+                                            <Select
+                                                value={field.value?.toString() ?? "none"}
+                                                onValueChange={(value) => field.onChange(value === "none" ? null : parseInt(value))}
+                                            >
+                                                <FormControl>
+                                                    <SelectTrigger>
+                                                        <SelectValue placeholder="None (BSX/WRX)" />
+                                                    </SelectTrigger>
+                                                </FormControl>
+                                                <SelectContent>
+                                                    <SelectItem value="none">None</SelectItem>
+                                                    {dropdownData?.accountModifiers?.map((am) => (
+                                                        <SelectItem key={am.id} value={am.id.toString()}>
+                                                            {am.code} - {am.name}
                                                         </SelectItem>
                                                     ))}
                                                 </SelectContent>
@@ -614,8 +666,28 @@ export default function MaterialAccountDetermination() {
                                             <p className="font-medium">{viewingItem.valuation_class_code} - {viewingItem.valuation_class_name}</p>
                                         </div>
                                         <div>
-                                            <p className="text-muted-foreground">Posting Key</p>
-                                            <p className="font-medium">{viewingItem.transaction_key_code} - {viewingItem.transaction_key_description}</p>
+                                            <p className="text-muted-foreground">Transaction Key (Transaction Key)</p>
+                                            <p className="font-medium">
+                                                <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-xs mr-2">
+                                                    {viewingItem.transaction_key_code}
+                                                </span>
+                                                {viewingItem.transaction_key_description}
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <p className="text-muted-foreground">Account Modifier</p>
+                                            <p className="font-medium">
+                                                {viewingItem.account_modifier_code ? (
+                                                    <>
+                                                        <span className="font-mono bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 px-1.5 py-0.5 rounded text-xs mr-2">
+                                                            {viewingItem.account_modifier_code}
+                                                        </span>
+                                                        {viewingItem.account_modifier_name}
+                                                    </>
+                                                ) : (
+                                                    <span className="text-muted-foreground">None</span>
+                                                )}
+                                            </p>
                                         </div>
                                     </CardContent>
                                 </Card>

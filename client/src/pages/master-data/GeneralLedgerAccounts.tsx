@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -27,7 +28,7 @@ const glAccountSchema = z.object({
   account_name: z.string().min(1, "Account name is required").max(100, "Account name must be 100 characters or less"),
   long_text: z.string().optional(),
   chart_of_accounts_id: z.number().min(1, "Chart of accounts is required"),
-  account_type: z.enum(["assets", "liabilities", "equity", "revenue", "expenses"]),
+  account_type: z.string().min(1, "Account type is required"),
   gl_account_group_id: z.number().int().positive("GL Account Group is required").optional(),
   account_group: z.string().optional(), // Legacy field, kept for backward compatibility
   // Section 2: Account Characteristics
@@ -63,7 +64,14 @@ const glAccountSchema = z.object({
   item_category_id: z.number().int().positive().optional(),
 });
 
-type GLAccount = z.infer<typeof glAccountSchema> & { id: number };
+type GLAccount = z.infer<typeof glAccountSchema> & {
+  id: number;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: number;
+  updated_by?: number;
+  tenant_id?: string;
+};
 
 interface CompanyCode {
   id: number;
@@ -98,6 +106,7 @@ export default function GeneralLedgerAccounts() {
   const [open, setOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<GLAccount | null>(null);
   const [viewingAccount, setViewingAccount] = useState<GLAccount | null>(null);
+  const [showAdminData, setShowAdminData] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -132,6 +141,18 @@ export default function GeneralLedgerAccounts() {
   const { data: companyCodes = [] } = useQuery<CompanyCode[]>({
     queryKey: ["/api/master-data/company-code"],
     queryFn: () => apiGet<CompanyCode[]>("/api/master-data/company-code"),
+  });
+
+  // Fetch Field Status Groups (real-time from DB)
+  const { data: fieldStatusGroups = [] } = useQuery<any[]>({
+    queryKey: ["/api/master-data/field-status-groups"],
+    queryFn: async () => {
+      try {
+        const res = await fetch("/api/master-data/field-status-groups");
+        const d = await res.json();
+        return d.data || [];
+      } catch { return []; }
+    },
   });
 
   // Fetch GL Account Groups (dynamic, no hardcoded data)
@@ -185,14 +206,21 @@ export default function GeneralLedgerAccounts() {
     }
   });
 
-  // Fetch Account Types (if available from API, otherwise use default)
-  const accountTypes = [
-    { value: "assets", label: "Assets" },
-    { value: "liabilities", label: "Liabilities" },
-    { value: "equity", label: "Equity" },
-    { value: "revenue", label: "Revenue" },
-    { value: "expenses", label: "Expenses" }
-  ];
+  // Fetch Account Types from DB (real-time)
+  const { data: accountTypes = [], isLoading: accountTypesLoading } = useQuery<any[]>({
+    queryKey: ["/api/master-data/account-types"],
+    queryFn: async () => {
+      try {
+        const res = await fetch("/api/master-data/account-types");
+        if (!res.ok) throw new Error("Failed to fetch account types");
+        const data = await res.json();
+        return (data as any[]).filter((at: any) => at.is_active);
+      } catch (err) {
+        console.error("Error fetching account types:", err);
+        return [];
+      }
+    },
+  });
 
   const form = useForm<z.infer<typeof glAccountSchema>>({
     resolver: zodResolver(glAccountSchema),
@@ -202,7 +230,7 @@ export default function GeneralLedgerAccounts() {
       account_name: "",
       long_text: "",
       chart_of_accounts_id: undefined,
-      account_type: "assets",
+      account_type: "",
       gl_account_group_id: undefined,
       account_group: "",
       balance_sheet_account: false,
@@ -442,7 +470,7 @@ export default function GeneralLedgerAccounts() {
       account_name: account.account_name || "",
       long_text: account.long_text || "",
       chart_of_accounts_id: account.chart_of_accounts_id,
-      account_type: account.account_type?.toLowerCase() || "assets",
+      account_type: account.account_type || "",
       gl_account_group_id: account.gl_account_group_id || account.glAccountGroupId,
       account_group: account.account_group || "",
       balance_sheet_account: account.balance_sheet_account || false,
@@ -514,7 +542,10 @@ export default function GeneralLedgerAccounts() {
         'Account Name': account.account_name || '',
         'Description': account.long_text || '',
         'Chart of Accounts': account.chart_of_accounts_code || '',
-        'Account Type': account.account_type || '',
+        'Account Type': (() => {
+          const at = accountTypes.find((a: any) => a.code === account.account_type);
+          return at ? at.name : (account.account_type || '');
+        })(),
         // GL Account Group drives auto-numbering on import
         'GL Account Group': account.gl_account_group_code || '',
         'Company Code': account.company_code || '',
@@ -597,13 +628,20 @@ export default function GeneralLedgerAccounts() {
             row['Account Number'] || row['Account Number (System Generated)'] || row['account_number']
           );
 
+          // Match account_type: by code first, then by name (case-insensitive)
+          const rawAccountType = toString(row['Account Type'] || row['account_type']);
+          const matchedAccountType = rawAccountType
+            ? (accountTypes.find((a: any) =>
+              a.code.toLowerCase() === rawAccountType.toLowerCase() ||
+              a.name.toLowerCase() === rawAccountType.toLowerCase()
+            )?.code || rawAccountType.toLowerCase())
+            : '';
           return {
-            // If provided manually (e.g. external numbering), use it; otherwise will be auto-generated
             account_number: manualAccountNumber || null,
             account_name: toString(row['Account Name'] || row['account_name']),
             long_text: toString(row['Description'] || row['long_text']),
             chart_of_accounts_id: chart?.id,
-            account_type: (row['Account Type'] || row['account_type'] || 'assets').toLowerCase(),
+            account_type: matchedAccountType,
             gl_account_group_id: glGroup?.id,
             gl_account_group_has_range: !!glGroup?.numberRangeId,
             company_code_id: company?.id,
@@ -941,20 +979,28 @@ export default function GeneralLedgerAccounts() {
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>Account Type *</FormLabel>
-                              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                              <Select onValueChange={field.onChange} value={field.value || ""}>
                                 <FormControl>
                                   <SelectTrigger>
-                                    <SelectValue placeholder="Select account type" />
+                                    <SelectValue placeholder={accountTypesLoading ? "Loading..." : "Select account type"} />
                                   </SelectTrigger>
                                 </FormControl>
-                                <SelectContent>
-                                  {accountTypes.map((type) => (
-                                    <SelectItem key={type.value} value={type.value}>
-                                      {type.label}
+                                <SelectContent className="max-h-60">
+                                  {accountTypes.map((at: any) => (
+                                    <SelectItem key={at.id} value={at.code}>
+                                      <div className="flex flex-col">
+                                        <span className="font-medium">{at.name}</span>
+                                        {at.category && (
+                                          <span className="text-xs text-gray-500 capitalize">{at.category}</span>
+                                        )}
+                                      </div>
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
+                              {accountTypesLoading && (
+                                <p className="text-xs text-gray-400">Loading {accountTypes.length} account types...</p>
+                              )}
                               <FormMessage />
                             </FormItem>
                           )}
@@ -1293,9 +1339,25 @@ export default function GeneralLedgerAccounts() {
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>Field Status Group</FormLabel>
-                              <FormControl>
-                                <Input placeholder="0001" {...field} maxLength={4} />
-                              </FormControl>
+                              <Select
+                                onValueChange={(v) => field.onChange(v === "_none" ? "" : v)}
+                                value={field.value || "_none"}
+                              >
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select field status group" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="_none">None</SelectItem>
+                                  {fieldStatusGroups.filter((g: any) => g.active !== false).map((g: any) => (
+                                    <SelectItem key={g.id} value={g.code}>
+                                      <span className="font-mono font-semibold">{g.code}</span>
+                                      {g.description ? ` — ${g.description}` : ""}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                               <FormDescription>Controls field status in document entry</FormDescription>
                               <FormMessage />
                             </FormItem>
@@ -1616,122 +1678,162 @@ export default function GeneralLedgerAccounts() {
               </DialogHeader>
 
               {viewingAccount && (
-                <Tabs defaultValue="basic" className="w-full">
-                  <TabsList className="grid w-full grid-cols-4">
-                    <TabsTrigger value="basic">Basic Data</TabsTrigger>
-                    <TabsTrigger value="control">Control Data</TabsTrigger>
-                    <TabsTrigger value="flags">Account Flags</TabsTrigger>
-                    <TabsTrigger value="tax">Tax Settings</TabsTrigger>
-                  </TabsList>
+                <>
+                  <Tabs defaultValue="basic" className="w-full">
+                    <TabsList className="grid w-full grid-cols-4">
+                      <TabsTrigger value="basic">Basic Data</TabsTrigger>
+                      <TabsTrigger value="control">Control Data</TabsTrigger>
+                      <TabsTrigger value="flags">Account Flags</TabsTrigger>
+                      <TabsTrigger value="tax">Tax Settings</TabsTrigger>
+                    </TabsList>
 
-                  {/* Section 1: Basic Data */}
-                  <TabsContent value="basic" className="space-y-4 pt-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Account Number</label>
-                        <p className="text-sm mt-1">{viewingAccount.account_number}</p>
+                    {/* Section 1: Basic Data */}
+                    <TabsContent value="basic" className="space-y-4 pt-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Account Number</label>
+                          <p className="text-sm mt-1">{viewingAccount.account_number}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Account Name</label>
+                          <p className="text-sm mt-1">{viewingAccount.account_name}</p>
+                        </div>
+                        <div className="col-span-2">
+                          <label className="text-sm font-medium text-muted-foreground">Long Text / Description</label>
+                          <p className="text-sm mt-1">{viewingAccount.long_text || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Chart of Accounts</label>
+                          <p className="text-sm mt-1">{chartOfAccounts.find(c => c.id === viewingAccount.chart_of_accounts_id)?.chart_id || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Account Type</label>
+                          <p className="text-sm mt-1 capitalize">{viewingAccount.account_type}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">GL Account Group</label>
+                          <p className="text-sm mt-1">{glAccountGroups.find(g => g.id === viewingAccount.gl_account_group_id)?.code || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Company Code</label>
+                          <p className="text-sm mt-1">{companyCodes.find(cc => cc.id === viewingAccount.company_code_id)?.code || 'N/A'}</p>
+                        </div>
                       </div>
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Account Name</label>
-                        <p className="text-sm mt-1">{viewingAccount.account_name}</p>
-                      </div>
-                      <div className="col-span-2">
-                        <label className="text-sm font-medium text-muted-foreground">Long Text / Description</label>
-                        <p className="text-sm mt-1">{viewingAccount.long_text || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Chart of Accounts</label>
-                        <p className="text-sm mt-1">{chartOfAccounts.find(c => c.id === viewingAccount.chart_of_accounts_id)?.chart_id || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Account Type</label>
-                        <p className="text-sm mt-1 capitalize">{viewingAccount.account_type}</p>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">GL Account Group</label>
-                        <p className="text-sm mt-1">{glAccountGroups.find(g => g.id === viewingAccount.gl_account_group_id)?.code || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Company Code</label>
-                        <p className="text-sm mt-1">{companyCodes.find(cc => cc.id === viewingAccount.company_code_id)?.code || 'N/A'}</p>
-                      </div>
-                    </div>
-                  </TabsContent>
+                    </TabsContent>
 
-                  {/* Section 2: Control Data */}
-                  <TabsContent value="control" className="space-y-4 pt-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Currency</label>
-                        <p className="text-sm mt-1">{viewingAccount.account_currency || 'N/A'}</p>
+                    {/* Section 2: Control Data */}
+                    <TabsContent value="control" className="space-y-4 pt-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Currency</label>
+                          <p className="text-sm mt-1">{viewingAccount.account_currency || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Document Split Item Category</label>
+                          <p className="text-sm mt-1">{itemCategories.find(ic => ic.id === viewingAccount.item_category_id)?.code || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Balance Type</label>
+                          <p className="text-sm mt-1">{viewingAccount.balance_type || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Status</label>
+                          <p className="text-sm mt-1">{viewingAccount.is_active ? 'Active' : 'Inactive'}</p>
+                        </div>
                       </div>
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Document Split Item Category</label>
-                        <p className="text-sm mt-1">{itemCategories.find(ic => ic.id === viewingAccount.item_category_id)?.code || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Balance Type</label>
-                        <p className="text-sm mt-1">{viewingAccount.balance_type || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-muted-foreground">Status</label>
-                        <p className="text-sm mt-1">{viewingAccount.is_active ? 'Active' : 'Inactive'}</p>
-                      </div>
-                    </div>
-                  </TabsContent>
+                    </TabsContent>
 
-                  {/* Section 3: Account Flags */}
-                  <TabsContent value="flags" className="space-y-4 pt-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="flex items-center space-x-2">
-                        <Checkbox checked={viewingAccount.balance_sheet_account} disabled />
-                        <label className="text-sm font-medium">Balance Sheet Account</label>
+                    {/* Section 3: Account Flags */}
+                    <TabsContent value="flags" className="space-y-4 pt-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="flex items-center space-x-2">
+                          <Checkbox checked={viewingAccount.balance_sheet_account} disabled />
+                          <label className="text-sm font-medium">Balance Sheet Account</label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox checked={viewingAccount.pl_account} disabled />
+                          <label className="text-sm font-medium">P&L Account</label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox checked={viewingAccount.reconciliation_account} disabled />
+                          <label className="text-sm font-medium">Reconciliation Account</label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox checked={viewingAccount.cash_account_indicator} disabled />
+                          <label className="text-sm font-medium">Cash Account</label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox checked={viewingAccount.block_posting} disabled />
+                          <label className="text-sm font-medium">Block Posting</label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox checked={viewingAccount.open_item_management} disabled />
+                          <label className="text-sm font-medium">Open Item Management</label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox checked={viewingAccount.line_item_display} disabled />
+                          <label className="text-sm font-medium">Line Item Display</label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox checked={viewingAccount.posting_allowed} disabled />
+                          <label className="text-sm font-medium">Posting Allowed</label>
+                        </div>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox checked={viewingAccount.pl_account} disabled />
-                        <label className="text-sm font-medium">P&L Account</label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox checked={viewingAccount.reconciliation_account} disabled />
-                        <label className="text-sm font-medium">Reconciliation Account</label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox checked={viewingAccount.cash_account_indicator} disabled />
-                        <label className="text-sm font-medium">Cash Account</label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox checked={viewingAccount.block_posting} disabled />
-                        <label className="text-sm font-medium">Block Posting</label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox checked={viewingAccount.open_item_management} disabled />
-                        <label className="text-sm font-medium">Open Item Management</label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox checked={viewingAccount.line_item_display} disabled />
-                        <label className="text-sm font-medium">Line Item Display</label>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox checked={viewingAccount.posting_allowed} disabled />
-                        <label className="text-sm font-medium">Posting Allowed</label>
-                      </div>
-                    </div>
-                  </TabsContent>
+                    </TabsContent>
 
-                  {/* Section 4: Tax Settings */}
-                  <TabsContent value="tax" className="space-y-4 pt-4">
-                    <div className="grid grid-cols-2 gap-4">
+                    {/* Section 4: Tax Settings */}
+                    <TabsContent value="tax" className="space-y-4 pt-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm font-medium text-muted-foreground">Tax Category</label>
+                          <p className="text-sm mt-1">{viewingAccount.tax_category || 'N/A'}</p>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox checked={viewingAccount.posting_without_tax_allowed} disabled />
+                          <label className="text-sm font-medium">Posting Without Tax Allowed</label>
+                        </div>
+                      </div>
+                    </TabsContent>
+                  </Tabs>
+                  <Separator className="my-3" />
+                  {/* Administrative Data - collapsible */}
+                  <div
+                    className="cursor-pointer flex justify-between items-center select-none py-1 px-1"
+                    onClick={() => setShowAdminData(!showAdminData)}
+                  >
+                    <p className="font-semibold text-sm text-gray-700">Administrative Data</p>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                      viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                      style={{ transform: showAdminData ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </div>
+                  {showAdminData && (
+                    <dl className="grid grid-cols-2 gap-3 px-1 pb-2">
                       <div>
-                        <label className="text-sm font-medium text-muted-foreground">Tax Category</label>
-                        <p className="text-sm mt-1">{viewingAccount.tax_category || 'N/A'}</p>
+                        <dt className="text-sm font-medium text-gray-500">Created By</dt>
+                        <dd className="text-sm text-gray-900">{(viewingAccount as any)?.created_by ?? '—'}</dd>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox checked={viewingAccount.posting_without_tax_allowed} disabled />
-                        <label className="text-sm font-medium">Posting Without Tax Allowed</label>
+                      <div>
+                        <dt className="text-sm font-medium text-gray-500">Updated By</dt>
+                        <dd className="text-sm text-gray-900">{(viewingAccount as any)?.updated_by ?? '—'}</dd>
                       </div>
-                    </div>
-                  </TabsContent>
-                </Tabs>
+                      <div>
+                        <dt className="text-sm font-medium text-gray-500">Created At</dt>
+                        <dd className="text-sm text-gray-900">{(viewingAccount as any)?.created_at ? new Date((viewingAccount as any).created_at).toLocaleString() : '—'}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-sm font-medium text-gray-500">Updated At</dt>
+                        <dd className="text-sm text-gray-900">{(viewingAccount as any)?.updated_at ? new Date((viewingAccount as any).updated_at).toLocaleString() : '—'}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-sm font-medium text-gray-500">Tenant ID</dt>
+                        <dd className="text-sm text-gray-900">{(viewingAccount as any)?.tenant_id ?? '—'}</dd>
+                      </div>
+                    </dl>
+                  )}
+                </>
               )}
             </DialogContent>
           </Dialog>

@@ -98,7 +98,7 @@ export class InventoryTrackingService {
               finalUnit = materialUnitResult.rows[0].base_uom;
             }
           }
-          
+
           if (!finalUnit) {
             const defaultUnitResult = await client.query(
               'SELECT config_value FROM system_configuration WHERE config_key = $1 AND active = true LIMIT 1',
@@ -232,7 +232,7 @@ export class InventoryTrackingService {
               finalUnit = materialUnitResult.rows[0].base_uom;
             }
           }
-          
+
           if (!finalUnit || finalUnit === 'EA') {
             const defaultUnitResult = await client.query(
               'SELECT config_value FROM system_configuration WHERE config_key = $1 AND active = true LIMIT 1',
@@ -289,11 +289,11 @@ export class InventoryTrackingService {
           ),
           last_updated = CURRENT_TIMESTAMP
       `, [
-        String(finalMaterialCode), 
-        String(finalPlantCode), 
-        String(finalStorageLocation), 
-        quantity, 
-        String(finalUnit), 
+        String(finalMaterialCode),
+        String(finalPlantCode),
+        String(finalStorageLocation),
+        quantity,
+        String(finalUnit),
         unitPrice,
         'AVAILABLE'
       ]);
@@ -399,15 +399,14 @@ export class InventoryTrackingService {
           material_code, plant_code, storage_location, stock_type,
           quantity, committed_quantity, reserved_quantity, available_quantity, unit, last_updated
         )
-        VALUES ($1::VARCHAR, $2::VARCHAR, $3::VARCHAR, $6::VARCHAR, 0, $4::NUMERIC, $4::NUMERIC, 0, $5::VARCHAR, CURRENT_TIMESTAMP)
+        VALUES ($1::VARCHAR, $2::VARCHAR, $3::VARCHAR, $6::VARCHAR, 0, $4::NUMERIC, 0, 0, $5::VARCHAR, CURRENT_TIMESTAMP)
         ON CONFLICT (material_code, plant_code, storage_location, stock_type)
         DO UPDATE SET
           committed_quantity = stock_balances.committed_quantity + $4::NUMERIC,
-          reserved_quantity = COALESCE(stock_balances.reserved_quantity, 0) + $4::NUMERIC,
           available_quantity = GREATEST(0,
             COALESCE(stock_balances.quantity, 0)
             - (stock_balances.committed_quantity + $4::NUMERIC)
-            - (COALESCE(stock_balances.reserved_quantity, 0) + $4::NUMERIC)
+            - COALESCE(stock_balances.reserved_quantity, 0)
             + COALESCE(stock_balances.ordered_quantity, 0)
           ),
           last_updated = CURRENT_TIMESTAMP
@@ -507,7 +506,7 @@ export class InventoryTrackingService {
               finalUnit = materialUnitResult.rows[0].base_uom;
             }
           }
-          
+
           if (!finalUnit) {
             const defaultUnitResult = await client.query(
               'SELECT config_value FROM system_configuration WHERE config_key = $1 AND active = true LIMIT 1',
@@ -552,16 +551,15 @@ export class InventoryTrackingService {
         WHERE material_code = $1::VARCHAR
           AND plant_code = $2::VARCHAR
           AND storage_location = $3::VARCHAR
-          AND (stock_type = $6::VARCHAR OR stock_type IS NULL)
+          AND (stock_type = $5::VARCHAR OR stock_type IS NULL)
       `, [
-        String(finalMaterialCode), 
-        String(finalPlantCode), 
-        String(finalStorageLocation), 
-        quantity, 
-        String(finalUnit),
+        String(finalMaterialCode),
+        String(finalPlantCode),
+        String(finalStorageLocation),
+        quantity,
         'AVAILABLE'
       ]);
-      
+
       // Check if any rows were updated - if not, the stock balance doesn't exist
       const updateResult = await client.query(`
         SELECT COUNT(*) as updated_count
@@ -571,7 +569,7 @@ export class InventoryTrackingService {
           AND storage_location = $3::VARCHAR
           AND (stock_type = $4::VARCHAR OR stock_type IS NULL)
       `, [String(finalMaterialCode), String(finalPlantCode), String(finalStorageLocation), 'AVAILABLE']);
-      
+
       if (parseInt(updateResult.rows[0]?.updated_count || 0) === 0) {
         console.warn(`⚠️ Cannot decrease stock: stock_balances row does not exist for material ${finalMaterialCode} at plant ${finalPlantCode}, storage ${finalStorageLocation}`);
         throw new Error(`Stock balance record not found. Cannot decrease inventory for material ${finalMaterialCode} at plant ${finalPlantCode}, storage ${finalStorageLocation}.`);
@@ -636,7 +634,7 @@ export class InventoryTrackingService {
         : [materialCode, plantCode];
 
       const result = await this.pool.query(query, params);
-      
+
       if (result.rows.length === 0) {
         return { inStock: 0, ordered: 0, committed: 0, available: 0 };
       }

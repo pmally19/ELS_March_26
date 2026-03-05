@@ -159,24 +159,37 @@ export class DeliveryService {
      * Get delivery by ID with items
      */
     async getDeliveryById(id: number) {
-        // Get header
-        const headerResult = await pool.query(
-            'SELECT * FROM delivery_documents WHERE id = $1',
-            [id]
-        );
+        // Get header — JOIN erp_customers to populate customer_name
+        const headerResult = await pool.query(`
+            SELECT dd.*,
+                   c.name AS customer_name,
+                   c.customer_code,
+                   so.order_number AS sales_order_number
+            FROM delivery_documents dd
+            LEFT JOIN erp_customers c ON dd.customer_id = c.id
+            LEFT JOIN sales_orders so ON dd.sales_order_id = so.id
+            WHERE dd.id = $1
+        `, [id]);
 
         if (headerResult.rows.length === 0) {
             return null;
         }
 
-        // Get items
+        // Get items — alias material columns to match what the frontend reads:
+        //   material_description  (was product_name)
+        //   material_code         (was product_code)
         const itemsResult = await pool.query(`
-      SELECT di.*, m.description as product_name, m.code as product_code
-      FROM delivery_items di
-      LEFT JOIN materials m ON di.material_id = m.id
-      WHERE di.delivery_id = $1
-      ORDER BY di.line_item
-    `, [id]);
+            SELECT di.*,
+                   m.description AS material_description,
+                   m.code        AS material_code,
+                   -- keep legacy aliases for backward compat
+                   m.description AS product_name,
+                   m.code        AS product_code
+            FROM delivery_items di
+            LEFT JOIN materials m ON di.material_id = m.id
+            WHERE di.delivery_id = $1
+            ORDER BY di.line_item
+        `, [id]);
 
         return {
             ...headerResult.rows[0],

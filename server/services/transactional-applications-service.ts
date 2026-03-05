@@ -800,15 +800,17 @@ export class TransactionalApplicationsService {
           const range = numberRangeResult.rows[0];
 
           // Parse range values with proper type casting
-          const rangeFromStr = String(range.range_from || '3000000000');
-          const rangeToStr = String(range.range_to || '3999999999');
-          const rangeFrom = parseInt(rangeFromStr);
-          const rangeTo = parseInt(rangeToStr);
+          // Parse range values with proper type casting
+          const rangeFromStr = String(range.range_from || '3000000000').replace(/\D/g, '');
+          const rangeToStr = String(range.range_to || '3999999999').replace(/\D/g, '');
+          const rangeFrom = parseInt(rangeFromStr || '3000000000');
+          const rangeTo = parseInt(rangeToStr || '3999999999');
 
           // Get current number or start from range_from
           let currentNum: number;
           if (range.current_number) {
-            currentNum = parseInt(String(range.current_number));
+            const currentNumStr = String(range.current_number).replace(/\D/g, '');
+            currentNum = parseInt(currentNumStr || '0');
             // If current_number is less than range_from, start from range_from
             if (currentNum < rangeFrom) {
               currentNum = rangeFrom;
@@ -869,19 +871,20 @@ export class TransactionalApplicationsService {
       }
 
       // Fallback: Generate based on existing documents count
-      const docCountResult = await db.execute(sql`
-        SELECT COUNT(*)::integer as count 
-        FROM accounting_documents
-        WHERE company_code = ${companyCode}
-          AND document_type = ${documentType}
-          AND fiscal_year = ${currentYear}
-      `);
-      const docCount = parseInt(docCountResult.rows[0]?.count || '0') + 1;
-
       const companyCodeDigits = String(companyCode).replace(/[^0-9]/g, '').slice(-4).padStart(4, '0');
       const fiscalYearShort = fiscalYear.slice(-2);
+      const prefix = `${companyCodeDigits}${fiscalYearShort}`;
 
-      return `${companyCodeDigits}${fiscalYearShort}${docCount.toString().padStart(8, '0')}`;
+      const docMaxResult = await db.execute(sql`
+        SELECT MAX(CAST(NULLIF(regexp_replace(RIGHT(document_number, 8), '\\D', '', 'g'), '') AS INTEGER)) as max_seq
+        FROM accounting_documents
+        WHERE document_number LIKE ${prefix + '%'}
+      `);
+
+      const maxSeq = parseInt(String(docMaxResult.rows[0]?.max_seq || '0'));
+      const nextSeq = maxSeq + 1;
+
+      return `${prefix}${nextSeq.toString().padStart(8, '0')}`;
 
     } catch (error) {
       console.error('Error generating early accounting document number:', error);

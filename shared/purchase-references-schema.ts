@@ -13,6 +13,8 @@ const commonFields = {
   version: integer("version").default(1).notNull(),
   validFrom: timestamp("valid_from").defaultNow().notNull(),
   validTo: timestamp("valid_to"),
+  _tenantId: text("_tenantId").default('001').notNull(),
+  _deletedAt: timestamp("_deletedAt", { withTimezone: true }),
 };
 
 // Purchase Group - For categorizing procurement activities
@@ -54,16 +56,20 @@ export const insertPurchaseGroupSchema = createInsertSchema(purchaseGroups, {
   updatedBy: z.string().optional(),
   version: z.number().optional(),
   validFrom: z.date().optional(),
-  validTo: z.date().optional()
-}).omit({ 
-  id: true, 
-  createdAt: true, 
+  validTo: z.date().optional(),
+  _tenantId: z.string().optional(),
+  _deletedAt: z.date().optional()
+}).omit({
+  id: true,
+  createdAt: true,
   updatedAt: true,
   createdBy: true,
   updatedBy: true,
   version: true,
   validFrom: true,
-  validTo: true
+  validTo: true,
+  _tenantId: true,
+  _deletedAt: true
 });
 
 export const insertSupplyTypeSchema = createInsertSchema(supplyTypes, {
@@ -74,16 +80,20 @@ export const insertSupplyTypeSchema = createInsertSchema(supplyTypes, {
   updatedBy: z.string().optional(),
   version: z.number().optional(),
   validFrom: z.date().optional(),
-  validTo: z.date().optional()
-}).omit({ 
-  id: true, 
-  createdAt: true, 
+  validTo: z.date().optional(),
+  _tenantId: z.string().optional(),
+  _deletedAt: z.date().optional()
+}).omit({
+  id: true,
+  createdAt: true,
   updatedAt: true,
   createdBy: true,
   updatedBy: true,
   version: true,
   validFrom: true,
-  validTo: true
+  validTo: true,
+  _tenantId: true,
+  _deletedAt: true
 });
 
 export const insertApprovalLevelSchema = createInsertSchema(approvalLevels, {
@@ -94,16 +104,20 @@ export const insertApprovalLevelSchema = createInsertSchema(approvalLevels, {
   updatedBy: z.string().optional(),
   version: z.number().optional(),
   validFrom: z.date().optional(),
-  validTo: z.date().optional()
-}).omit({ 
-  id: true, 
-  createdAt: true, 
+  validTo: z.date().optional(),
+  _tenantId: z.string().optional(),
+  _deletedAt: z.date().optional()
+}).omit({
+  id: true,
+  createdAt: true,
   updatedAt: true,
   createdBy: true,
   updatedBy: true,
   version: true,
   validFrom: true,
-  validTo: true
+  validTo: true,
+  _tenantId: true,
+  _deletedAt: true
 });
 
 // Create types

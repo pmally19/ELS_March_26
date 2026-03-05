@@ -16,6 +16,7 @@ router.get('/', async (req, res) => {
             condition_type,
             material_id,
             customer_id,
+            distribution_channel,
             is_active = 'true'
         } = req.query;
 
@@ -47,6 +48,12 @@ router.get('/', async (req, res) => {
         if (customer_id) {
             query += ` AND cr.customer_id = $${paramCount}`;
             params.push(customer_id);
+            paramCount++;
+        }
+
+        if (distribution_channel) {
+            query += ` AND cr.distribution_channel = $${paramCount}`;
+            params.push(distribution_channel);
             paramCount++;
         }
 
@@ -153,6 +160,8 @@ router.post('/', async (req, res) => {
             condition_value,
             currency = 'USD',
             unit,
+            per = 1,
+            distribution_channel,
             valid_from,
             valid_to = '2099-12-31',
             is_active = true,
@@ -170,16 +179,16 @@ router.post('/', async (req, res) => {
 
         const result = await pool.query(`
       INSERT INTO condition_records (
-        condition_type, material_id, customer_id, sales_organization,
-        amount, currency, unit,
+        condition_type, material_id, customer_id, sales_organization, distribution_channel,
+        amount, currency, unit, per,
         valid_from, valid_to, is_active
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
       )
       RETURNING *
     `, [
-            actualConditionType, material_id || null, customer_id || null, sales_organization || null,
-            actualAmount, currency, unit || null,
+            actualConditionType, material_id || null, customer_id || null, sales_organization || null, distribution_channel || null,
+            actualAmount, currency, unit || null, per || 1,
             valid_from, valid_to, is_active
         ]);
 
@@ -199,6 +208,8 @@ router.put('/:id', async (req, res) => {
             condition_value,
             currency,
             unit,
+            per,
+            distribution_channel,
             valid_from,
             valid_to,
             is_active
@@ -212,13 +223,15 @@ router.put('/:id', async (req, res) => {
         amount = COALESCE($1, amount),
         currency = COALESCE($2, currency),
         unit = COALESCE($3, unit),
-        valid_from = COALESCE($4, valid_from),
-        valid_to = COALESCE($5, valid_to),
-        is_active = COALESCE($6, is_active)
-      WHERE id = $7
+        per = COALESCE($4, per),
+        distribution_channel = COALESCE($5, distribution_channel),
+        valid_from = COALESCE($6, valid_from),
+        valid_to = COALESCE($7, valid_to),
+        is_active = COALESCE($8, is_active)
+      WHERE id = $9
       RETURNING *
     `, [
-            actualAmount, currency, unit,
+            actualAmount, currency, unit, per, distribution_channel,
             valid_from, valid_to, is_active, id
         ]);
 

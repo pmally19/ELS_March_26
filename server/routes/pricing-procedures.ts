@@ -26,6 +26,7 @@ router.get('/', async (req, res) => {
       LEFT JOIN condition_types ct ON pps.condition_type_code = ct.condition_code 
       -- Note: removed ct.company_code_id join as condition types might also be global or we pick one.
       -- Ideally condition_types should also be global or we accept duplicates in join for now.
+      WHERE pp."_deletedAt" IS NULL
       GROUP BY pp.id
       ORDER BY pp.procedure_code
     `);
@@ -81,7 +82,7 @@ router.post('/', async (req, res) => {
     // Check if procedure code already exists
     const existingResult = await pool.query(`
       SELECT id FROM pricing_procedures 
-      WHERE procedure_code = $1
+      WHERE procedure_code = $1 AND "_deletedAt" IS NULL
     `, [procedure_code]);
 
     if (existingResult.rows.length > 0) {
@@ -91,10 +92,19 @@ router.post('/', async (req, res) => {
     // Create the procedure
     const result = await pool.query(`
       INSERT INTO pricing_procedures (
-        procedure_code, procedure_name, description, is_active
-      ) VALUES ($1, $2, $3, $4)
+        procedure_code, procedure_name, description, is_active,
+        created_by, updated_by, "_tenantId"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
-    `, [procedure_code, procedure_name, description, is_active]);
+    `, [
+      procedure_code,
+      procedure_name,
+      description,
+      is_active,
+      (req as any).user?.id || 1,
+      (req as any).user?.id || 1,
+      (req as any).user?.tenantId || '001'
+    ]);
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -111,10 +121,10 @@ router.put('/:id', async (req, res) => {
 
     const result = await pool.query(`
       UPDATE pricing_procedures 
-      SET procedure_name = $1, description = $2, is_active = $3, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4
+      SET procedure_name = $1, description = $2, is_active = $3, updated_at = CURRENT_TIMESTAMP, updated_by = $4
+      WHERE id = $5 AND "_deletedAt" IS NULL
       RETURNING *
-    `, [procedure_name, description, is_active, id]);
+    `, [procedure_name, description, is_active, (req as any).user?.id || 1, id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Pricing procedure not found' });
@@ -370,20 +380,163 @@ router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Delete steps first
-    await pool.query(`DELETE FROM pricing_procedure_steps WHERE procedure_id = $1`, [id]);
+    const existingResult = await pool.query('SELECT id FROM pricing_procedures WHERE id = $1 AND "_deletedAt" IS NULL', [id]);
 
-    // Delete procedure
-    const result = await pool.query(`DELETE FROM pricing_procedures WHERE id = $1 RETURNING *`, [id]);
-
-    if (result.rows.length === 0) {
+    if (existingResult.rows.length === 0) {
       return res.status(404).json({ error: 'Pricing procedure not found' });
     }
+
+    // Since it's a soft delete, we do NOT drop steps anymore.
+    // Instead we just mutate the master record to visually drop references without cascading deletes.
+    const result = await pool.query(`
+      UPDATE pricing_procedures 
+      SET is_active = false, "_deletedAt" = CURRENT_TIMESTAMP, updated_by = $2 
+      WHERE id = $1 
+      RETURNING *
+    `, [id, (req as any).user?.id || 1]);
+
+    // 
+    // Delete procedure -- REMOVED BY SOFT DELETE OVERRIDE 
+    // const result = await pool.query(`DELETE FROM pricing_procedures WHERE id = $1 RETURNING *`, [id]);
+
+    // if (result.rows.length === 0) {
+    //   return res.status(404).json({ error: 'Pricing procedure not found' });
+    // }
 
     res.json({ message: 'Pricing procedure deleted successfully' });
   } catch (error) {
     console.error('Error deleting pricing procedure:', error);
     res.status(500).json({ error: 'Failed to delete pricing procedure' });
+  }
+});
+
+/**
+ * GET /api/pricing-procedures/price-lookup
+ * Fetches the condition record price for a specific material + customer combination.
+ * Used to auto-fill unit_price from PR00 condition record when a material is selected.
+ * Query params: conditionType, materialId, customerId, salesOrgId, distributionChannelId, divisionId
+ */
+router.get('/price-lookup', async (req, res) => {
+  try {
+    const {
+      conditionType = 'PR00',
+      materialId,
+      customerId,
+      salesOrgId,
+    } = req.query as Record<string, string>;
+
+    // Resolve material_group for the material
+    let materialGroup: string | null = null;
+    if (materialId) {
+      try {
+        const mgRes = await pool.query(
+          `SELECT material_group FROM materials WHERE id = $1 LIMIT 1`,
+          [parseInt(materialId)]
+        );
+        materialGroup = mgRes.rows[0]?.material_group || null;
+      } catch { /* ignore */ }
+    }
+
+    // Check if material_group column exists in condition_records
+    const colCheck = await pool.query(`
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'condition_records' AND column_name = 'material_group' LIMIT 1
+    `);
+    const hasMG = colCheck.rows.length > 0;
+
+    let result;
+    if (hasMG) {
+      result = await pool.query(`
+        SELECT
+          amount,
+          currency,
+          CASE
+            WHEN customer_id IS NOT NULL AND material_id IS NOT NULL THEN 'Customer + Material'
+            WHEN customer_id IS NOT NULL AND material_group IS NOT NULL THEN 'Customer + Material Group'
+            WHEN customer_id IS NOT NULL THEN 'Customer'
+            WHEN material_id IS NOT NULL THEN 'Material'
+            WHEN material_group IS NOT NULL THEN 'Material Group'
+            ELSE 'General'
+          END as access_level
+        FROM condition_records
+        WHERE condition_type = $1
+          AND is_active = true
+          AND valid_from <= CURRENT_DATE
+          AND valid_to   >= CURRENT_DATE
+          AND (
+            (customer_id = $2 AND material_id = $3) OR
+            (customer_id = $2 AND material_group = $4 AND material_id IS NULL) OR
+            (customer_id = $2 AND material_id IS NULL AND material_group IS NULL) OR
+            (customer_id IS NULL AND material_id = $3) OR
+            (customer_id IS NULL AND material_group = $4 AND material_id IS NULL) OR
+            (customer_id IS NULL AND material_id IS NULL AND material_group IS NULL)
+          )
+        ORDER BY
+          CASE
+            WHEN customer_id IS NOT NULL AND material_id IS NOT NULL THEN 1
+            WHEN customer_id IS NOT NULL AND material_group IS NOT NULL THEN 2
+            WHEN customer_id IS NOT NULL THEN 3
+            WHEN material_id IS NOT NULL THEN 4
+            WHEN material_group IS NOT NULL THEN 5
+            ELSE 6
+          END
+        LIMIT 1
+      `, [
+        conditionType,
+        customerId ? parseInt(customerId) : null,
+        materialId ? parseInt(materialId) : null,
+        materialGroup,
+      ]);
+    } else {
+      result = await pool.query(`
+        SELECT amount, currency,
+          CASE
+            WHEN customer_id IS NOT NULL AND material_id IS NOT NULL THEN 'Customer + Material'
+            WHEN customer_id IS NOT NULL THEN 'Customer'
+            WHEN material_id IS NOT NULL THEN 'Material'
+            ELSE 'General'
+          END as access_level
+        FROM condition_records
+        WHERE condition_type = $1
+          AND is_active = true
+          AND valid_from <= CURRENT_DATE
+          AND valid_to   >= CURRENT_DATE
+          AND (
+            (customer_id = $2 AND material_id = $3) OR
+            (customer_id = $2 AND material_id IS NULL) OR
+            (customer_id IS NULL AND material_id = $3) OR
+            (customer_id IS NULL AND material_id IS NULL)
+          )
+        ORDER BY
+          CASE
+            WHEN customer_id IS NOT NULL AND material_id IS NOT NULL THEN 1
+            WHEN customer_id IS NOT NULL THEN 2
+            WHEN material_id IS NOT NULL THEN 3
+            ELSE 4
+          END
+        LIMIT 1
+      `, [
+        conditionType,
+        customerId ? parseInt(customerId) : null,
+        materialId ? parseInt(materialId) : null,
+      ]);
+    }
+
+    if (result.rows.length === 0) {
+      return res.json({ found: false, price: null, currency: null, accessLevel: null });
+    }
+
+    const row = result.rows[0];
+    return res.json({
+      found: true,
+      price: parseFloat(row.amount) || 0,
+      currency: row.currency || 'INR',
+      accessLevel: row.access_level,
+      conditionType,
+    });
+  } catch (error: any) {
+    console.error('[Price Lookup] Error:', error);
+    res.status(500).json({ error: 'Failed to lookup price', message: error.message });
   }
 });
 
@@ -395,9 +548,7 @@ router.delete('/:id', async (req, res) => {
 router.post('/:procedureCode/preview', async (req, res) => {
   try {
     const { procedureCode } = req.params;
-    const { items = [], salesOrgId, distributionChannelId, divisionId, customerId } = req.body;
-
-
+    const { items = [], salesOrgId, distributionChannelId, divisionId, customerId, manualOverrides = {} } = req.body;
 
     // Calculate for the first item (or aggregated) — gives the per-step breakdown
     const firstItem = items[0];
@@ -405,25 +556,48 @@ router.post('/:procedureCode/preview', async (req, res) => {
       return res.json({ conditions: [], subtotal: 0, taxTotal: 0, grandTotal: 0 });
     }
 
+    // ── Helper: resolve material_group for a given material_id ──────────────
+    const getMaterialGroup = async (materialId: number | undefined): Promise<string | undefined> => {
+      if (!materialId) return undefined;
+      try {
+        const r = await pool.query(
+          `SELECT material_group FROM materials WHERE id = $1 LIMIT 1`,
+          [materialId]
+        );
+        return r.rows[0]?.material_group || undefined;
+      } catch { return undefined; }
+    };
+
+    const firstMaterialGroup = await getMaterialGroup(
+      firstItem.material_id ? parseInt(firstItem.material_id) : undefined
+    );
+
     const baseValue = parseFloat(firstItem.unit_price || 0) * parseFloat(firstItem.quantity || 1);
+
+    const context = {
+      materialId: firstItem.material_id ? parseInt(firstItem.material_id) : undefined,
+      materialGroup: firstMaterialGroup,
+      customerId: customerId ? parseInt(customerId) : undefined,
+      salesOrgId: salesOrgId ? parseInt(salesOrgId) : undefined,
+      distributionChannelId: distributionChannelId ? parseInt(distributionChannelId) : undefined,
+      divisionId: divisionId ? parseInt(divisionId) : undefined,
+      quantity: parseFloat(firstItem.quantity || 1),
+      manualOverrides: manualOverrides as Record<string, string>,
+    };
 
     const result = await pricingCalculationService.calculatePricing(
       procedureCode,
       baseValue,
-      {
-        materialId: firstItem.material_id ? parseInt(firstItem.material_id) : undefined,
-        customerId: customerId ? parseInt(customerId) : undefined,
-        salesOrgId: salesOrgId ? parseInt(salesOrgId) : undefined,
-        distributionChannelId: distributionChannelId ? parseInt(distributionChannelId) : undefined,
-        divisionId: divisionId ? parseInt(divisionId) : undefined,
-        quantity: parseFloat(firstItem.quantity || 1),
-      }
+      context
     );
+
 
     // Aggregate for all items if more than one
     let aggregatedConditions = result.conditions;
     let totalSubtotal = result.subtotal;
+    let totalDiscount = result.discountTotal;
     let totalTax = result.taxTotal;
+    let totalNet = result.netTotal;
     let totalGrand = result.grandTotal;
 
     if (items.length > 1) {
@@ -433,21 +607,29 @@ router.post('/:procedureCode/preview', async (req, res) => {
         const itemBase = parseFloat(item.unit_price || 0) * parseFloat(item.quantity || 1);
         if (itemBase <= 0) continue;
 
+        const itemMaterialGroup = await getMaterialGroup(
+          item.material_id ? parseInt(item.material_id) : undefined
+        );
+
         const itemResult = await pricingCalculationService.calculatePricing(
           procedureCode,
           itemBase,
           {
             materialId: item.material_id ? parseInt(item.material_id) : undefined,
+            materialGroup: itemMaterialGroup,
             customerId: customerId ? parseInt(customerId) : undefined,
             salesOrgId: salesOrgId ? parseInt(salesOrgId) : undefined,
             distributionChannelId: distributionChannelId ? parseInt(distributionChannelId) : undefined,
             divisionId: divisionId ? parseInt(divisionId) : undefined,
             quantity: parseFloat(item.quantity || 1),
+            manualOverrides: manualOverrides as Record<string, string>,
           }
         );
 
         totalSubtotal += itemResult.subtotal;
+        totalDiscount += itemResult.discountTotal;
         totalTax += itemResult.taxTotal;
+        totalNet += itemResult.netTotal;
         totalGrand += itemResult.grandTotal;
 
         // Merge condition values by step
@@ -464,7 +646,9 @@ router.post('/:procedureCode/preview', async (req, res) => {
     res.json({
       conditions: aggregatedConditions,
       subtotal: totalSubtotal,
+      discountTotal: totalDiscount,
       taxTotal: totalTax,
+      netTotal: totalNet,
       grandTotal: totalGrand,
       procedureCode,
       itemCount: items.length,

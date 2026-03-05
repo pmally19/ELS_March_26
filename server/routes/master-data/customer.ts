@@ -54,7 +54,7 @@ router.get("/", async (req: Request, res: Response) => {
             query += ` AND (is_active = true OR is_active IS NULL)`;
         }
 
-        query += ` ORDER BY name ASC LIMIT 1000`;
+        query += ` AND "_deletedAt" IS NULL ORDER BY name ASC LIMIT 1000`;
 
         const result = await pool.query(query);
 
@@ -67,7 +67,11 @@ router.get("/", async (req: Request, res: Response) => {
             // Map 'code' to 'customer_number' if frontend expects it, or keep both
             customer_number: row.customer_code,
             customer_name: row.name,
-            isActive: row.is_active
+            isActive: row.is_active,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            _tenantId: row._tenantId,
+            _deletedAt: row._deletedAt
         }));
 
         return res.json(customers);
@@ -225,7 +229,11 @@ router.get("/:id", async (req: Request, res: Response) => {
             customer_pricing_procedure: row.customer_pricing_procedure || null,
             customer_number: row.customer_code,
             customer_name: row.name,
-            isActive: row.is_active
+            isActive: row.is_active,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            _tenantId: row._tenantId,
+            _deletedAt: row._deletedAt
         };
 
         return res.json(customer);
@@ -245,6 +253,8 @@ router.post("/", async (req: Request, res: Response) => {
             code: req.body.code || req.body.customer_number,
             name: req.body.name || req.body.customer_name,
         };
+        const userId = (req as any).user?.id || 1;
+        const tenantId = (req as any).user?.tenantId || '001';
 
         // Sanitize
         if (!data.code) data.code = `CUST-${Date.now()}`;
@@ -256,7 +266,7 @@ router.post("/", async (req: Request, res: Response) => {
             'sales_organization_id', 'credit_control_area_id', 'is_b2b', 'is_vip',
             'status', 'is_active', 'customer_pricing_procedure',
             'sales_office_code', 'sales_group_code', 'customer_group', 'customer_assignment_group_id',
-            'shipping_condition_key'
+            'shipping_condition_key', 'created_by', 'updated_by', '"_tenantId"'
         ];
 
         const values = [
@@ -266,7 +276,7 @@ router.post("/", async (req: Request, res: Response) => {
             data.sales_organization_id, data.credit_control_area_id, data.is_b2b || false, data.is_vip || false,
             data.status || 'active', true, data.customer_pricing_procedure || null,
             data.sales_office_code, data.sales_group_code, data.customer_group, data.customer_assignment_group_id,
-            data.shipping_condition_key || null
+            data.shipping_condition_key || null, userId, userId, tenantId
         ];
 
         const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
@@ -331,6 +341,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
             code: req.body.code ?? req.body.customer_number,
             name: req.body.name ?? req.body.customer_name,
         };
+        const userId = (req as any).user?.id || 1;
 
         // List of allowed update fields - EXPANDED to match frontend schema
         const fieldMap: Record<string, any> = {
@@ -421,7 +432,8 @@ router.patch("/:id", async (req: Request, res: Response) => {
             language_code: data.language_code,
             customer_group: data.customer_group,
             customer_type_id: data.customer_type_id,
-            customer_assignment_group_id: data.customer_assignment_group_id
+            customer_assignment_group_id: data.customer_assignment_group_id,
+            updated_by: userId
         };
 
         // Debug logging to track update issues
@@ -487,14 +499,15 @@ router.patch("/:id", async (req: Request, res: Response) => {
 router.delete("/:id", async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
+        const userId = (req as any).user?.id || 1;
 
         // Soft delete
         const result = await pool.query(`
       UPDATE erp_customers 
-      SET is_active = false, updated_at = NOW() 
+      SET is_active = false, "_deletedAt" = NOW(), updated_by = $2, updated_at = NOW() 
       WHERE id = $1 
       RETURNING id
-    `, [id]);
+    `, [id, userId]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ message: "Customer not found" });

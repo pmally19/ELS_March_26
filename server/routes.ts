@@ -73,6 +73,8 @@ import salesDistributionRoutes from "./routes/sales-distribution-routes";
 import sdCustomizationRoutes from "./routes/sd-customization-routes";
 import cashManagementRoutes from "./routes/transactions/cash-management";
 import orderToCashRoutes from "./routes/order-to-cash-routes";
+import shippingPointDeterminationRouter from "./routes/master-data/shipping-point-determination";
+
 import currencyRoutes from "./routes/currency-routes";
 import financeCurrencyRoutes from "./routes/finance-currency-routes";
 import errorLogRoutes from "./routes/errorLogRoutes";
@@ -595,15 +597,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/condition-types", (await import('./routes/condition-types')).default);
   app.use("/api/pricing-procedures", (await import('./routes/pricing-procedures')).default);
 
+  // Register Condition Records Management routes (VK11 Equivalent)
+  app.use("/api/condition-records", (await import('./routes/condition-records')).default);
+
   // Register Pricing Determination routes for SAP-standard pricing procedure lookup
   app.use("/api/pricing", (await import('./routes/pricing')).default);
-  console.log('✅ Pricing determination routes mounted at /api/pricing');
+  app.use("/api/pricing", (await import('./routes/pricing-calculation')).default);
+  console.log('✅ Pricing determination and condition records routes mounted');
 
   // Register AWS Data Sync routes
   app.use("/api/aws", (await import('./routes/aws-data-sync')).default);
 
   // Order-to-Cash Integration Routes
   app.use("/api/order-to-cash", orderToCashRoutes);
+  // Alias: frontend calls /api/order-to-cash/shipping-point-determination but the router is under master-data
+  app.use("/api/order-to-cash/shipping-point-determination", shippingPointDeterminationRouter);
+
 
   // Delivery Management Routes
   app.use("/api/delivery", deliveryRoutes);
@@ -5137,6 +5146,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching financial reports:", error);
       res.status(500).json({ error: "Failed to fetch financial reports data" });
+    }
+  });
+
+  // ── Alias: /api/financial-reports (called by GL.tsx) ─────────────────────────
+  // Returns real GL balance summary grouped by account type and date range
+  app.get("/api/financial-reports", async (req: Request, res: Response) => {
+    try {
+      const { fiscal_year, start_date, end_date } = req.query;
+
+      // Build date filter
+      const dateFilter: string[] = [];
+      const params: any[] = [];
+      let p = 1;
+
+      if (start_date) {
+        dateFilter.push(`ge.posting_date >= $${p++}`);
+        params.push(start_date);
+      }
+      if (end_date) {
+        dateFilter.push(`ge.posting_date <= $${p++}`);
+        params.push(end_date);
+      }
+      if (fiscal_year && !start_date && !end_date) {
+        dateFilter.push(`EXTRACT(YEAR FROM ge.posting_date) = $${p++}`);
+        params.push(parseInt(fiscal_year as string));
+      }
+
+      const whereClause = dateFilter.length > 0
+        ? 'AND ' + dateFilter.join(' AND ')
+        : '';
+
+      // Summarize by account_type from gl_entries
+      const result = await pool.query(`
+        SELECT
+          ga.account_type,
+          ga.account_number,
+          ga.account_name,
+          SUM(CASE WHEN ge.debit_credit_indicator = 'D' THEN ge.amount ELSE -ge.amount END) AS balance,
+          COUNT(*) AS transaction_count
+        FROM gl_entries ge
+        JOIN gl_accounts ga ON ge.gl_account_id = ga.id
+        WHERE ge.posting_status = 'posted'
+          ${whereClause}
+        GROUP BY ga.account_type, ga.account_number, ga.account_name
+        HAVING ABS(SUM(CASE WHEN ge.debit_credit_indicator = 'D' THEN ge.amount ELSE -ge.amount END)) > 0.01
+        ORDER BY ga.account_type, ga.account_number
+      `, params).catch(() => ({ rows: [] }));
+
+      // Also fetch summary totals
+      const totalsResult = await pool.query(`
+        SELECT
+          ga.account_type,
+          SUM(CASE WHEN ge.debit_credit_indicator = 'D' THEN ge.amount ELSE -ge.amount END) AS total_balance
+        FROM gl_entries ge
+        JOIN gl_accounts ga ON ge.gl_account_id = ga.id
+        WHERE ge.posting_status = 'posted'
+          ${whereClause}
+        GROUP BY ga.account_type
+        ORDER BY ga.account_type
+      `, params).catch(() => ({ rows: [] }));
+
+      const totals: Record<string, number> = {};
+      totalsResult.rows.forEach((r: any) => {
+        totals[r.account_type?.toLowerCase() || 'other'] = parseFloat(r.total_balance || 0);
+      });
+
+      res.json({
+        accounts: result.rows.map((r: any) => ({
+          accountType: r.account_type,
+          accountNumber: r.account_number,
+          accountName: r.account_name,
+          balance: parseFloat(r.balance || 0),
+          transactionCount: parseInt(r.transaction_count || 0)
+        })),
+        totals,
+        filters: { fiscal_year, start_date, end_date }
+      });
+    } catch (error: any) {
+      console.error("Error fetching financial reports:", error);
+      res.status(500).json({ error: "Failed to fetch financial reports", details: error.message });
     }
   });
 

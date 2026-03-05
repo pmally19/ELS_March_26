@@ -98,9 +98,9 @@ router.get('/products', async (req, res) => {
         m.description,
         COALESCE(m.base_unit_price, 0) as price,
         COALESCE(m.base_unit_price, 0) as cost,
-        -- Calculate total stock from stock_balances
+        -- Calculate available stock from stock_balances to reflect true updates
         COALESCE((
-          SELECT SUM(quantity) 
+          SELECT SUM(available_quantity) 
           FROM stock_balances sb 
           WHERE sb.material_code = m.code AND sb.stock_type = 'AVAILABLE'
         ), 0) as current_stock,
@@ -1907,7 +1907,7 @@ router.get('/products-for-sales', async (req, res) => {
         COALESCE(m.base_unit_price, 0) as price,
         -- Calculate total available stock
         COALESCE((
-          SELECT SUM(quantity) 
+          SELECT SUM(available_quantity) 
           FROM stock_balances sb 
           WHERE sb.material_code = m.code AND sb.stock_type = 'AVAILABLE'
         ), 0) as stock,
@@ -1917,6 +1917,8 @@ router.get('/products-for-sales', async (req, res) => {
         m.active,
         m.created_at,
         m.updated_at,
+        -- Item Category Group for determination
+        m.item_category_group,
         -- Plant info from materials table
         m.plant_code as product_plant_code,
         p.code as plant_code,

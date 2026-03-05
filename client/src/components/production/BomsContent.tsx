@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, Filter, Download, Plus, Loader2, ChevronDown, ChevronRight, Trash2, Edit, ArrowLeft } from "lucide-react";
+import { Search, Filter, Download, Plus, Loader2, ChevronDown, ChevronRight, Trash2, Edit, ArrowLeft, Eye, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Link, useLocation } from "wouter";
 import {
@@ -34,6 +34,12 @@ interface BOM {
   status?: string;
   bom_status?: string;
   components: number | null;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: number | null;
+  updated_by?: number | null;
+  _tenantId?: string | null;
+  _deletedAt?: string | null;
 }
 
 interface BOMItem {
@@ -55,6 +61,9 @@ export default function BomsContent() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [showNewBomForm, setShowNewBomForm] = useState(false);
   const [editingBom, setEditingBom] = useState<BOM | null>(null);
+  const [viewingBom, setViewingBom] = useState<BOM | null>(null);
+  const [showViewBomDialog, setShowViewBomDialog] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
   const [expandedBoms, setExpandedBoms] = useState<Set<number>>(new Set());
   const [selectedBomForItems, setSelectedBomForItems] = useState<number | null>(null);
   const [showNewBomItemForm, setShowNewBomItemForm] = useState(false);
@@ -245,18 +254,24 @@ export default function BomsContent() {
     valid_from: bom.valid_from || bom.effective_date || "",
     status: bom.status || bom.bom_status || "Inactive",
     bom_status: bom.bom_status || bom.status || "Inactive",
-    components: bom.components || 0
+    components: bom.components || 0,
+    created_at: bom.created_at,
+    updated_at: bom.updated_at,
+    created_by: bom.created_by,
+    updated_by: bom.updated_by,
+    _tenantId: bom._tenantId,
+    _deletedAt: bom._deletedAt
   }));
 
   const filteredBoms = boms.filter(bom => {
-    const matchesSearch = 
-      (bom.bom_number?.toLowerCase().includes(searchTerm.toLowerCase()) || false) || 
+    const matchesSearch =
+      (bom.bom_number?.toLowerCase().includes(searchTerm.toLowerCase()) || false) ||
       (bom.product_name?.toLowerCase().includes(searchTerm.toLowerCase()) || false) ||
       (bom.description?.toLowerCase().includes(searchTerm.toLowerCase()) || false) ||
       (bom.status?.toLowerCase().includes(searchTerm.toLowerCase()) || false);
-    
+
     const matchesStatus = statusFilter === "all" || bom.status?.toLowerCase() === statusFilter.toLowerCase();
-    
+
     return matchesSearch && matchesStatus;
   });
 
@@ -307,15 +322,15 @@ export default function BomsContent() {
       <div className="flex flex-col gap-4 md:flex-row md:items-center mb-6">
         <div className="relative flex-1">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input 
-            placeholder="Search bill of materials..." 
+          <Input
+            placeholder="Search bill of materials..."
             className="pl-8 rounded-md border border-input bg-white"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
         <div className="flex items-center gap-2">
-          <Button 
+          <Button
             variant={showFilters ? "default" : "outline"}
             size="sm"
             onClick={() => setShowFilters(!showFilters)}
@@ -323,8 +338,8 @@ export default function BomsContent() {
             <Filter className="mr-2 h-4 w-4" />
             Filter
           </Button>
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             size="sm"
             onClick={() => {
               if (filteredBoms.length === 0) {
@@ -335,7 +350,7 @@ export default function BomsContent() {
                 });
                 return;
               }
-              
+
               const csvContent = filteredBoms.map(bom => ({
                 BOMNumber: bom.bom_number || "",
                 Product: bom.product_name || "",
@@ -345,12 +360,12 @@ export default function BomsContent() {
                 Components: bom.components || 0,
                 EffectiveDate: formatDate(bom.effective_date)
               }));
-              
+
               const csvString = [
                 Object.keys(csvContent[0]).join(','),
                 ...csvContent.map(row => Object.values(row).join(','))
               ].join('\n');
-              
+
               const blob = new Blob([csvString], { type: 'text/csv' });
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
@@ -381,7 +396,7 @@ export default function BomsContent() {
                   <Input
                     id="bom_code"
                     value={newBom.bom_code}
-                    onChange={(e) => setNewBom({...newBom, bom_code: e.target.value})}
+                    onChange={(e) => setNewBom({ ...newBom, bom_code: e.target.value })}
                     placeholder={editingBom ? "BOM code" : "Auto-generated when material is selected"}
                     disabled={!editingBom}
                     readOnly={!editingBom}
@@ -403,15 +418,15 @@ export default function BomsContent() {
                       );
                       if (selectedMaterial) {
                         // Auto-fill base unit from material - check multiple possible field names
-                        const baseUnit = selectedMaterial.base_unit || 
-                                        selectedMaterial.base_uom || 
-                                        selectedMaterial.uom ||
-                                        (selectedMaterial as any).baseUnit ||
-                                        "";
+                        const baseUnit = selectedMaterial.base_unit ||
+                          selectedMaterial.base_uom ||
+                          selectedMaterial.uom ||
+                          (selectedMaterial as any).baseUnit ||
+                          "";
                         console.log("Selected material:", selectedMaterial);
                         console.log("Base unit value:", baseUnit);
                         console.log("All material fields:", Object.keys(selectedMaterial));
-                        
+
                         // Auto-generate BOM code if not editing
                         let autoGeneratedBomCode = "";
                         if (!editingBom) {
@@ -419,7 +434,7 @@ export default function BomsContent() {
                           const timestamp = Date.now().toString().slice(-6); // Last 6 digits of timestamp
                           autoGeneratedBomCode = `BOM-${value}-${timestamp}`;
                         }
-                        
+
                         // Force update with base unit and auto-generated BOM code
                         setNewBom(prev => ({
                           ...prev,
@@ -430,8 +445,8 @@ export default function BomsContent() {
                         }));
                       } else {
                         console.warn("Material not found for code:", value);
-                        setNewBom(prev => ({ 
-                          ...prev, 
+                        setNewBom(prev => ({
+                          ...prev,
                           material_code: value,
                           bom_code: editingBom ? prev.bom_code : "",
                         }));
@@ -483,7 +498,7 @@ export default function BomsContent() {
                   <Input
                     id="version"
                     value={newBom.version}
-                    onChange={(e) => setNewBom({...newBom, version: e.target.value})}
+                    onChange={(e) => setNewBom({ ...newBom, version: e.target.value })}
                     placeholder="Enter BOM version (optional)"
                   />
                 </div>
@@ -492,7 +507,7 @@ export default function BomsContent() {
                   <Input
                     id="description"
                     value={newBom.description}
-                    onChange={(e) => setNewBom({...newBom, description: e.target.value})}
+                    onChange={(e) => setNewBom({ ...newBom, description: e.target.value })}
                     placeholder="Enter BOM description (optional)"
                   />
                 </div>
@@ -502,7 +517,7 @@ export default function BomsContent() {
                     id="base_quantity"
                     type="number"
                     value={newBom.base_quantity}
-                    onChange={(e) => setNewBom({...newBom, base_quantity: e.target.value})}
+                    onChange={(e) => setNewBom({ ...newBom, base_quantity: e.target.value })}
                     placeholder="Enter base quantity (optional)"
                   />
                 </div>
@@ -514,7 +529,7 @@ export default function BomsContent() {
                     onChange={(e) => {
                       if (!newBom.material_code) {
                         // Only allow manual edit if no material is selected
-                        setNewBom({...newBom, base_unit: e.target.value, uom: e.target.value});
+                        setNewBom({ ...newBom, base_unit: e.target.value, uom: e.target.value });
                       }
                     }}
                     placeholder={newBom.material_code ? "Auto-filled from material" : "Enter unit of measure"}
@@ -575,7 +590,7 @@ export default function BomsContent() {
                           method: "PATCH",
                           body: JSON.stringify(bomData),
                         });
-                        
+
                         if (response.ok) {
                           toast({
                             title: "Success",
@@ -593,7 +608,7 @@ export default function BomsContent() {
                           method: "POST",
                           body: JSON.stringify(bomData),
                         });
-                        
+
                         if (response.ok) {
                           toast({
                             title: "Success",
@@ -620,9 +635,100 @@ export default function BomsContent() {
               </div>
             </DialogContent>
           </Dialog>
+
+          {/* View Details Dialog */}
+          <Dialog open={showViewBomDialog} onOpenChange={setShowViewBomDialog}>
+            <DialogContent className="sm:max-w-[600px]">
+              {viewingBom && (
+                <>
+                  <DialogHeader>
+                    <div className="flex items-center justify-between">
+                      <DialogTitle>Bill of Materials Details</DialogTitle>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setShowViewBomDialog(false);
+                          handleEditBom(viewingBom);
+                        }}
+                      >
+                        <Edit className="h-3 w-3 mr-1" />
+                        Edit
+                      </Button>
+                    </div>
+                  </DialogHeader>
+
+                  <div className="space-y-6">
+                    <div className="bg-muted/50 p-4 rounded-lg flex items-start justify-between">
+                      <div>
+                        <h3 className="font-semibold text-lg">{viewingBom.product_name || viewingBom.material_code || "N/A"}</h3>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border bg-white">{viewingBom.bom_number || viewingBom.bom_code}</span>
+                          {getStatusBadge(viewingBom.status || viewingBom.bom_status || "")}
+                        </div>
+                      </div>
+                    </div>
+
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium text-muted-foreground">General Information</CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-2">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <span className="text-sm text-muted-foreground">Version</span>
+                            <p className="font-medium mt-1">{viewingBom.version || viewingBom.bom_version || "—"}</p>
+                          </div>
+                          <div>
+                            <span className="text-sm text-muted-foreground">Effective Date</span>
+                            <p className="font-medium mt-1">{formatDate(viewingBom.effective_date || viewingBom.valid_from)}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <span className="text-sm text-muted-foreground">Description</span>
+                            <p className="font-medium mt-1">{viewingBom.description || "—"}</p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                      <div>
+                        <h4 className="font-medium text-sm text-gray-500">Created At</h4>
+                        <p>{viewingBom.created_at ? new Date(viewingBom.created_at).toLocaleString() : "—"}</p>
+                      </div>
+                      <div>
+                        <h4 className="font-medium text-sm text-gray-500">Updated At</h4>
+                        <p>{viewingBom.updated_at ? new Date(viewingBom.updated_at).toLocaleString() : "—"}</p>
+                      </div>
+                    </div>
+
+                    <div className="border-t pt-3">
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 focus:outline-none"
+                        onClick={() => setAdminDataOpen(o => !o)}
+                      >
+                        {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                        <Info className="h-3 w-3" />
+                        Administrative Data
+                      </button>
+                      {adminDataOpen && (
+                        <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                          <div><dt className="font-medium inline">Created By (ID): </dt><dd className="inline">{viewingBom.created_by ?? "—"}</dd></div>
+                          <div><dt className="font-medium inline">Updated By (ID): </dt><dd className="inline">{viewingBom.updated_by ?? "—"}</dd></div>
+                          <div><dt className="font-medium inline">Tenant ID: </dt><dd className="inline">{viewingBom._tenantId ?? "—"}</dd></div>
+                        </dl>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </DialogContent>
+          </Dialog>
+
         </div>
       </div>
-      
+
       {/* Filter Panel */}
       {showFilters && (
         <Card>
@@ -648,8 +754,8 @@ export default function BomsContent() {
                 </Select>
               </div>
               <div className="flex items-end">
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   onClick={() => {
                     setStatusFilter("all");
                     setSearchTerm("");
@@ -662,7 +768,7 @@ export default function BomsContent() {
           </CardContent>
         </Card>
       )}
-      
+
       {/* BOMs Table */}
       <Card>
         <CardHeader>
@@ -693,7 +799,7 @@ export default function BomsContent() {
                 <TableBody>
                   {filteredBoms.map((bom) => (
                     <React.Fragment key={bom.id}>
-                      <TableRow 
+                      <TableRow
                         className="hover:bg-muted/50"
                       >
                         <TableCell className="w-8">
@@ -712,13 +818,24 @@ export default function BomsContent() {
                         </TableCell>
                         <TableCell className="font-medium">{bom.bom_number || bom.bom_code || "N/A"}</TableCell>
                         <TableCell>{bom.product_name || bom.material_code || "N/A"}</TableCell>
-                      <TableCell>{bom.description || "N/A"}</TableCell>
+                        <TableCell>{bom.description || "N/A"}</TableCell>
                         <TableCell>{bom.version || bom.bom_version || "N/A"}</TableCell>
                         <TableCell>{formatDate(bom.effective_date || bom.valid_from)}</TableCell>
-                      <TableCell>{bom.components || 0}</TableCell>
+                        <TableCell>{bom.components || 0}</TableCell>
                         <TableCell>{getStatusBadge(bom.status || bom.bom_status || "")}</TableCell>
                         <TableCell>
                           <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setViewingBom(bom);
+                                setShowViewBomDialog(true);
+                              }}
+                            >
+                              <Eye className="h-3 w-3" />
+                            </Button>
                             <Button
                               size="sm"
                               variant="ghost"
@@ -748,8 +865,8 @@ export default function BomsContent() {
                             <div className="p-4 bg-muted/30">
                               <div className="flex items-center justify-between mb-3">
                                 <h4 className="font-semibold text-sm">BOM Components</h4>
-                                <Button 
-                                  size="sm" 
+                                <Button
+                                  size="sm"
                                   variant="outline"
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -797,7 +914,7 @@ export default function BomsContent() {
                                             {item.unit_cost ? `$${parseFloat(item.unit_cost.toString()).toFixed(2)}` : "N/A"}
                                           </TableCell>
                                           <TableCell className="text-right">
-                                            {item.unit_cost 
+                                            {item.unit_cost
                                               ? `$${(parseFloat(item.quantity.toString()) * parseFloat(item.unit_cost.toString())).toFixed(2)}`
                                               : "N/A"}
                                           </TableCell>
@@ -866,7 +983,7 @@ export default function BomsContent() {
                               )}
                             </div>
                           </TableCell>
-                    </TableRow>
+                        </TableRow>
                       )}
                     </React.Fragment>
                   ))}
@@ -875,8 +992,8 @@ export default function BomsContent() {
             </div>
           ) : (
             <div className="text-center py-8">
-              {searchTerm || statusFilter !== "all" 
-                ? 'No bill of materials match your filters.' 
+              {searchTerm || statusFilter !== "all"
+                ? 'No bill of materials match your filters.'
                 : 'No bill of materials found.'}
             </div>
           )}
@@ -910,9 +1027,9 @@ export default function BomsContent() {
                   const selectedMaterial = materials?.find((m: any) => m.id.toString() === value);
                   const basePrice = selectedMaterial?.base_price;
                   const basePriceNum = basePrice != null ? parseFloat(basePrice.toString()) : null;
-                  
-                  setNewBomItem({ 
-                    ...newBomItem, 
+
+                  setNewBomItem({
+                    ...newBomItem,
                     material_id: value,
                     // Auto-fill unit cost from material's base price
                     unit_cost: (basePriceNum != null && !isNaN(basePriceNum)) ? basePriceNum.toString() : newBomItem.unit_cost
@@ -963,7 +1080,7 @@ export default function BomsContent() {
                 const basePrice = selectedMaterial?.base_price;
                 const basePriceNum = basePrice != null ? parseFloat(basePrice.toString()) : null;
                 const currentUnitCost = parseFloat(newBomItem.unit_cost || "0");
-                
+
                 if (basePriceNum != null && !isNaN(basePriceNum) && currentUnitCost !== basePriceNum) {
                   return (
                     <p className="text-xs text-muted-foreground mt-1">

@@ -1,10 +1,19 @@
 import { Request, Response } from "express";
 import { pool } from "../../db";
 
+// Helper to get user context
+const getUserContext = (req: Request) => {
+    return {
+        userId: (req as any).user?.id || 1,
+        tenantId: (req as any).user?.tenantId || '001'
+    };
+};
+
 // Get all Customer Account Assignment Groups
 export async function getCustomerAccountAssignmentGroups(req: Request, res: Response) {
     try {
         const { active_only, active } = req.query;
+        const { tenantId } = getUserContext(req);
 
         let query = `
       SELECT 
@@ -14,12 +23,16 @@ export async function getCustomerAccountAssignmentGroups(req: Request, res: Resp
         description,
         is_active,
         created_at,
-        updated_at
-      FROM sd_Customer_account_assignment_groups
-      WHERE 1=1
+        updated_at,
+        created_by,
+        updated_by,
+        "_tenantId",
+        "_deletedAt"
+      FROM sd_customer_account_assignment_groups
+      WHERE "_deletedAt" IS NULL AND "_tenantId" = $1
     `;
-        const params: any[] = [];
-        let paramIndex = 1;
+        const params: any[] = [tenantId];
+        let paramIndex = 2;
 
         // Filter by active status
         if (active_only === 'true' || active === 'true') {
@@ -43,14 +56,18 @@ export async function getCustomerAccountAssignmentGroups(req: Request, res: Resp
             description: row.description || row.name,
             isActive: row.is_active !== false,
             createdAt: row.created_at,
-            updatedAt: row.updated_at
+            updatedAt: row.updated_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            deletedAt: row._deletedAt
         }));
 
         return res.status(200).json(transformedRows);
     } catch (error: any) {
-        console.error("Error fetching Customer account assignment groups:", error);
+        console.error("Error fetching customer account assignment groups:", error);
         return res.status(500).json({
-            message: "Failed to fetch Customer account assignment groups",
+            message: "Failed to fetch customer account assignment groups",
             error: error.message || "Unknown error"
         });
     }
@@ -63,8 +80,9 @@ export async function getCustomerAccountAssignmentGroupById(req: Request, res: R
         if (isNaN(id)) {
             return res.status(400).json({ message: "Invalid ID format" });
         }
+        const { tenantId } = getUserContext(req);
 
-        const result = await pool.query("SELECT * FROM sd_Customer_account_assignment_groups WHERE id = $1", [id]);
+        const result = await pool.query("SELECT * FROM sd_customer_account_assignment_groups WHERE id = $1 AND \"_deletedAt\" IS NULL AND \"_tenantId\" = $2", [id, tenantId]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ message: "Customer account assignment group not found" });
@@ -78,14 +96,18 @@ export async function getCustomerAccountAssignmentGroupById(req: Request, res: R
             description: row.description || row.name,
             isActive: row.is_active !== false,
             createdAt: row.created_at,
-            updatedAt: row.updated_at
+            updatedAt: row.updated_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            deletedAt: row._deletedAt
         };
 
         return res.status(200).json(transformed);
     } catch (error: any) {
-        console.error("Error fetching Customer account assignment group:", error);
+        console.error("Error fetching customer account assignment group:", error);
         return res.status(500).json({
-            message: "Failed to fetch Customer account assignment group",
+            message: "Failed to fetch customer account assignment group",
             error: error.message || "Unknown error"
         });
     }
@@ -95,24 +117,32 @@ export async function getCustomerAccountAssignmentGroupById(req: Request, res: R
 export async function createCustomerAccountAssignmentGroup(req: Request, res: Response) {
     try {
         const { code, name, description, isActive } = req.body;
+        const { userId, tenantId } = getUserContext(req);
 
         if (!code || !name) {
             return res.status(400).json({ message: "Code and name are required" });
         }
 
-        const existingCode = await pool.query("SELECT id FROM sd_Customer_account_assignment_groups WHERE code = $1", [code]);
+        const existingCode = await pool.query(`
+            SELECT id FROM sd_customer_account_assignment_groups 
+            WHERE code = $1 AND "_deletedAt" IS NULL AND "_tenantId" = $2
+        `, [code, tenantId]);
+        
         if (existingCode.rows.length > 0) {
             return res.status(409).json({
                 message: `Code "${code}" already exists`,
-                details: `A Customer account assignment group with code "${code}" already exists.`
+                details: `A customer account assignment group with code "${code}" already exists.`
             });
         }
 
         const result = await pool.query(`
-      INSERT INTO sd_Customer_account_assignment_groups (code, name, description, is_active, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, NOW(), NOW())
+      INSERT INTO sd_customer_account_assignment_groups (
+          code, name, description, is_active, 
+          created_at, updated_at, created_by, updated_by, "_tenantId"
+      )
+      VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7)
       RETURNING *
-    `, [code, name, description || null, isActive !== false]);
+    `, [code, name, description || null, isActive !== false, userId, userId, tenantId]);
 
         const row = result.rows[0];
         const transformed = {
@@ -122,14 +152,18 @@ export async function createCustomerAccountAssignmentGroup(req: Request, res: Re
             description: row.description || row.name,
             isActive: row.is_active !== false,
             createdAt: row.created_at,
-            updatedAt: row.updated_at
+            updatedAt: row.updated_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            deletedAt: row._deletedAt
         };
 
         return res.status(201).json(transformed);
     } catch (error: any) {
-        console.error("Error creating Customer account assignment group:", error);
+        console.error("Error creating customer account assignment group:", error);
         return res.status(500).json({
-            message: "Failed to create Customer account assignment group",
+            message: "Failed to create customer account assignment group",
             error: error.message || "Unknown error"
         });
     }
@@ -144,14 +178,18 @@ export async function updateCustomerAccountAssignmentGroup(req: Request, res: Re
         }
 
         const { code, name, description, isActive } = req.body;
+        const { userId, tenantId } = getUserContext(req);
 
-        const existing = await pool.query("SELECT * FROM sd_Customer_account_assignment_groups WHERE id = $1", [id]);
+        const existing = await pool.query("SELECT * FROM sd_customer_account_assignment_groups WHERE id = $1 AND \"_deletedAt\" IS NULL AND \"_tenantId\" = $2", [id, tenantId]);
         if (existing.rows.length === 0) {
             return res.status(404).json({ message: "Customer account assignment group not found" });
         }
 
         if (code && code !== existing.rows[0].code) {
-            const codeConflict = await pool.query("SELECT id FROM sd_Customer_account_assignment_groups WHERE code = $1 AND id != $2", [code, id]);
+            const codeConflict = await pool.query(`
+                SELECT id FROM sd_customer_account_assignment_groups 
+                WHERE code = $1 AND id != $2 AND "_deletedAt" IS NULL AND "_tenantId" = $3
+            `, [code, id, tenantId]);
             if (codeConflict.rows.length > 0) {
                 return res.status(409).json({ message: "Code already exists" });
             }
@@ -183,16 +221,24 @@ export async function updateCustomerAccountAssignmentGroup(req: Request, res: Re
         }
 
         updates.push(`updated_at = NOW()`);
+        updates.push(`updated_by = $${paramCount++}`);
+        values.push(userId);
+        
         values.push(id);
+        values.push(tenantId);
 
         const query = `
-      UPDATE sd_Customer_account_assignment_groups 
+      UPDATE sd_customer_account_assignment_groups 
       SET ${updates.join(', ')}
-      WHERE id = $${paramCount}
+      WHERE id = $${paramCount} AND "_tenantId" = $${paramCount + 1} AND "_deletedAt" IS NULL
       RETURNING *
     `;
 
         const result = await pool.query(query, values);
+
+        if (result.rows.length === 0) {
+          return res.status(404).json({ message: "Customer account assignment group not found" });
+        }
 
         const row = result.rows[0];
         const transformed = {
@@ -202,7 +248,11 @@ export async function updateCustomerAccountAssignmentGroup(req: Request, res: Re
             description: row.description || row.name,
             isActive: row.is_active !== false,
             createdAt: row.created_at,
-            updatedAt: row.updated_at
+            updatedAt: row.updated_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            deletedAt: row._deletedAt
         };
 
         return res.status(200).json(transformed);
@@ -210,25 +260,30 @@ export async function updateCustomerAccountAssignmentGroup(req: Request, res: Re
         if (error.code === '23505') {
             return res.status(409).json({ message: "Code already exists" });
         }
-        console.error("Error updating Customer account assignment group:", error);
+        console.error("Error updating customer account assignment group:", error);
         return res.status(500).json({
-            message: "Failed to update Customer account assignment group",
+            message: "Failed to update customer account assignment group",
             error: error.message || "Unknown error"
         });
     }
 }
 
-// Delete Customer Account Assignment Group
+// Soft Delete Customer Account Assignment Group
 export async function deleteCustomerAccountAssignmentGroup(req: Request, res: Response) {
     try {
         const id = parseInt(req.params.id);
         if (isNaN(id)) {
             return res.status(400).json({ message: "Invalid ID format" });
         }
+        const { userId, tenantId } = getUserContext(req);
 
-        // TODO: Check references in other tables before deleting if necessary
-
-        const result = await pool.query("DELETE FROM sd_Customer_account_assignment_groups WHERE id = $1 RETURNING id", [id]);
+        // Soft delete instead of hard delete
+        const result = await pool.query(`
+            UPDATE sd_customer_account_assignment_groups 
+            SET "_deletedAt" = NOW(), updated_by = $1, is_active = false
+            WHERE id = $2 AND "_tenantId" = $3 AND "_deletedAt" IS NULL 
+            RETURNING id
+        `, [userId, id, tenantId]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ message: "Customer account assignment group not found" });
@@ -236,9 +291,9 @@ export async function deleteCustomerAccountAssignmentGroup(req: Request, res: Re
 
         return res.status(200).json({ message: "Deleted successfully" });
     } catch (error: any) {
-        console.error("Error deleting Customer account assignment group:", error);
+        console.error("Error deleting customer account assignment group:", error);
         return res.status(500).json({
-            message: "Failed to delete Customer account assignment group",
+            message: "Failed to delete customer account assignment group",
             error: error.message || "Unknown error"
         });
     }

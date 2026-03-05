@@ -1,0 +1,257 @@
+{
+  "erp_customers_cols": [
+    "id",
+    "customer_code",
+    "name",
+    "type",
+    "description",
+    "tax_id",
+    "industry",
+    "segment",
+    "address",
+    "city",
+    "state",
+    "country",
+    "postal_code",
+    "region",
+    "phone",
+    "alt_phone",
+    "email",
+    "website",
+    "currency",
+    "payment_terms",
+    "payment_method",
+    "credit_limit",
+    "credit_rating",
+    "discount_group",
+    "price_group",
+    "incoterms",
+    "shipping_method",
+    "delivery_terms",
+    "delivery_route",
+    "sales_rep_id",
+    "parent_customer_id",
+    "status",
+    "is_b2b",
+    "is_b2c",
+    "is_vip",
+    "notes",
+    "tags",
+    "company_code_id",
+    "is_active",
+    "created_at",
+    "updated_at",
+    "created_by",
+    "updated_by",
+    "version",
+    "active",
+    "reconciliation_account_code",
+    "dunning_procedure",
+    "dunning_block",
+    "payment_block",
+    "credit_control_area",
+    "risk_category",
+    "credit_limit_currency",
+    "credit_exposure",
+    "credit_check_procedure",
+    "tax_classification_code",
+    "tax_exemption_certificate",
+    "withholding_tax_code",
+    "bank_account_number",
+    "bank_routing_number",
+    "bank_name",
+    "electronic_payment_method",
+    "deletion_flag",
+    "authorization_group",
+    "credit_limit_group",
+    "tax_profile_id",
+    "tax_rule_id",
+    "account_group_id",
+    "language_code",
+    "distribution_channel_code",
+    "division_code",
+    "shipping_condition_key",
+    "delivery_priority",
+    "sales_district",
+    "sales_office_code",
+    "sales_group_code",
+    "price_list",
+    "sales_org_code",
+    "customer_type_id",
+    "credit_limit_group_id",
+    "tax_jurisdiction",
+    "last_dunning_date",
+    "last_dunning_level",
+    "customer_pricing_procedure",
+    "customer_assignment_group_id",
+    "tax_classification_id",
+    "_tenantId",
+    "_deletedAt"
+  ],
+  "billing_items_cols": [
+    "id",
+    "billing_id",
+    "line_item",
+    "sales_order_item_id",
+    "delivery_item_id",
+    "material_id",
+    "billing_quantity",
+    "unit",
+    "unit_price",
+    "net_amount",
+    "tax_code",
+    "tax_amount",
+    "account_key",
+    "gl_account",
+    "created_at"
+  ],
+  "billing_items_sample": [
+    {
+      "id": 200,
+      "billing_id": 215,
+      "line_item": 1,
+      "material_id": 166,
+      "gl_account": "15002",
+      "account_key": "ERL"
+    },
+    {
+      "id": 201,
+      "billing_id": 216,
+      "line_item": 1,
+      "material_id": 166,
+      "gl_account": "15002",
+      "account_key": "ERL"
+    },
+    {
+      "id": 202,
+      "billing_id": 217,
+      "line_item": 1,
+      "material_id": 166,
+      "gl_account": "15002",
+      "account_key": "ERL"
+    }
+  ],
+  "adm_cols": [
+    "id",
+    "account_key_code",
+    "business_scenario",
+    "gl_account_id",
+    "description",
+    "is_active",
+    "created_at",
+    "updated_at",
+    "sales_area_id",
+    "customer_assignment_group_id",
+    "material_assignment_group_id",
+    "condition_type_id"
+  ],
+  "adm_sample": [
+    {
+      "account_key_code": "ERL",
+      "account_number": "15002",
+      "account_name": "Sales Revenue (Domestic)"
+    },
+    {
+      "account_key_code": "ERL",
+      "account_number": "15002",
+      "account_name": "Sales Revenue (Domestic)"
+    },
+    {
+      "account_key_code": "ERL",
+      "account_number": "15002",
+      "account_name": "Sales Revenue (Domestic)"
+    },
+    {
+      "account_key_code": "ERL",
+      "account_number": "15002",
+      "account_name": "Sales Revenue (Domestic)"
+    },
+    {
+      "account_key_code": "ERF",
+      "account_number": null,
+      "account_name": null
+    },
+    {
+      "account_key_code": "ERF",
+      "account_number": null,
+      "account_name": null
+    },
+    {
+      "account_key_code": "ERL",
+      "account_number": "15002",
+      "account_name": "Sales Revenue (Domestic)"
+    },
+    {
+      "account_key_code": "ERL",
+      "account_number": "15002",
+      "account_name": "Sales Revenue (Domestic)"
+    },
+    {
+      "account_key_code": "ERL",
+      "account_number": "15002",
+      "account_name": "Sales Revenue (Domestic)"
+    },
+    {
+      "account_key_code": "ERL",
+      "account_number": "15002",
+      "account_name": "Sales Revenue (Domestic)"
+    }
+  ],
+  "cust_with_recon": [
+    {
+      "id": 45,
+      "name": "MRF TYRES",
+      "customer_code": "1001",
+      "reconciliation_account_code": "AR003"
+    },
+    {
+      "id": 40,
+      "name": "tt",
+      "customer_code": "CUST000010",
+      "reconciliation_account_code": "1010"
+    },
+    {
+      "id": 39,
+      "name": "Multi Address Test Corp",
+      "customer_code": "CUST000009",
+      "reconciliation_account_code": "AR001"
+    }
+  ],
+  "recon_gl_accounts": [],
+  "tax_condition_records_cols": [
+    "id",
+    "condition_type_code",
+    "departure_country",
+    "departure_state",
+    "destination_country",
+    "destination_state",
+    "customer_tax_class",
+    "material_tax_class",
+    "tax_profile_id",
+    "tax_rule_id",
+    "is_active",
+    "created_at",
+    "updated_at"
+  ],
+  "condition_tables": [
+    "client_DEMO_CLIENT_sd_condition_types",
+    "client_TEST_CLIENT_sd_condition_types",
+    "client_demo_client_sd_condition_types",
+    "client_test_client_sd_condition_types",
+    "condition_access_rules",
+    "condition_categories",
+    "condition_classes",
+    "condition_dependencies",
+    "condition_records",
+    "condition_types",
+    "pricing_conditions",
+    "sales_order_conditions",
+    "sales_order_item_conditions",
+    "sd_condition_tables",
+    "sd_condition_types",
+    "sd_shipping_conditions",
+    "shipping_condition_keys",
+    "shipping_conditions_master",
+    "tax_condition_records"
+  ]
+}

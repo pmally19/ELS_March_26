@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { FileText, Plus, Edit, Trash2, ArrowLeft } from "lucide-react";
+import { FileText, Plus, Edit, Trash2, ArrowLeft, Eye, Info, ChevronRight, ChevronDown } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 interface VATRegistration {
@@ -26,11 +26,18 @@ interface VATRegistration {
   activeStatus: boolean;
   createdAt: string;
   updatedAt: string;
+  createdBy?: number | null;
+  updatedBy?: number | null;
+  tenantId?: string | null;
+  deletedAt?: string | null;
 }
 
 export default function VATRegistration() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingRegistration, setEditingRegistration] = useState<VATRegistration | null>(null);
+  const [viewingRegistration, setViewingRegistration] = useState<VATRegistration | null>(null);
+  const [showViewDialog, setShowViewDialog] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -289,8 +296,8 @@ export default function VATRegistration() {
     <div className="container mx-auto p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center gap-4 mb-6">
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           size="sm"
           onClick={() => window.history.back()}
           className="flex items-center gap-2"
@@ -350,6 +357,18 @@ export default function VATRegistration() {
                   <Button
                     variant="outline"
                     size="sm"
+                    onClick={() => {
+                      setViewingRegistration(registration);
+                      setShowViewDialog(true);
+                      setAdminDataOpen(false);
+                    }}
+                    title="View Details"
+                  >
+                    <Eye className="h-4 w-4 text-blue-600" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => setEditingRegistration(registration)}
                   >
                     <Edit className="h-4 w-4" />
@@ -386,7 +405,7 @@ export default function VATRegistration() {
             </CardContent>
           </Card>
         ))}
-        
+
         {registrations.length === 0 && (
           <Card>
             <CardContent className="text-center py-8">
@@ -406,9 +425,9 @@ export default function VATRegistration() {
       {editingRegistration && (
         <Dialog open={true} onOpenChange={() => setEditingRegistration(null)}>
           <DialogContent className="max-w-2xl">
-                      <DialogHeader>
-            <DialogTitle>Edit VAT Registration</DialogTitle>
-          </DialogHeader>
+            <DialogHeader>
+              <DialogTitle>Edit VAT Registration</DialogTitle>
+            </DialogHeader>
             <RegistrationForm
               registration={editingRegistration}
               onSubmit={(data) => updateMutation.mutate({ id: editingRegistration.id, data })}
@@ -417,6 +436,135 @@ export default function VATRegistration() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* View Details Dialog */}
+      <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-hidden flex flex-col p-0">
+          <DialogHeader className="p-6 pb-2">
+            <DialogTitle>VAT Registration Details</DialogTitle>
+          </DialogHeader>
+
+          {viewingRegistration && (
+            <div className="flex-1 overflow-y-auto space-y-6 p-6 pt-2">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg">Basic Information</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <dl className="grid grid-cols-2 gap-4">
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Registration Key</dt>
+                      <dd className="text-sm font-bold text-gray-900 mt-1">{viewingRegistration.registrationKey}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">VAT Number</dt>
+                      <dd className="text-sm font-bold text-gray-900 mt-1">{viewingRegistration.vatNumber}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Country</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{viewingRegistration.country}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Tax Type</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{viewingRegistration.taxType}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Validity</dt>
+                      <dd className="text-sm text-gray-900 mt-1">
+                        {new Date(viewingRegistration.validFrom).toLocaleDateString()} -
+                        {viewingRegistration.validTo ? new Date(viewingRegistration.validTo).toLocaleDateString() : ' N/A'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Status</dt>
+                      <dd className="text-sm text-gray-900 mt-1">
+                        <Badge variant={viewingRegistration.activeStatus ? "default" : "secondary"}>
+                          {viewingRegistration.activeStatus ? "Active" : "Inactive"}
+                        </Badge>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Tax Office</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{viewingRegistration.taxOffice || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-sm font-medium text-gray-500">Tax Officer Name</dt>
+                      <dd className="text-sm text-gray-900 mt-1">{viewingRegistration.taxOfficerName || '—'}</dd>
+                    </div>
+                  </dl>
+                </CardContent>
+              </Card>
+
+              {/* ── Administrative Data (SAP ECC style) ────────────────── */}
+              <div className="border rounded-md overflow-hidden bg-white">
+                <button
+                  type="button"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                >
+                  <span className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <Info className="h-3.5 w-3.5" />
+                    Administrative Data
+                  </span>
+                  {adminDataOpen
+                    ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                    : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                </button>
+
+                {adminDataOpen && (
+                  <dl className="px-4 py-3 space-y-2 bg-white">
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingRegistration.createdAt
+                          ? new Date(viewingRegistration.createdAt).toLocaleString()
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingRegistration.createdBy ?? '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingRegistration.updatedAt
+                          ? new Date(viewingRegistration.updatedAt).toLocaleString()
+                          : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingRegistration.updatedBy ?? '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Tenant ID</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingRegistration.tenantId ?? '—'}
+                      </dd>
+                    </div>
+                    {viewingRegistration.deletedAt && (
+                      <div className="flex justify-between items-center">
+                        <dt className="text-xs text-red-500 font-medium">Deleted on</dt>
+                        <dd className="text-xs text-red-500 font-medium">
+                          {new Date(viewingRegistration.deletedAt).toLocaleString()}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="p-4 border-t bg-gray-50 flex justify-end">
+            <Button variant="outline" onClick={() => setShowViewDialog(false)}>Close</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

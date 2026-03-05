@@ -159,7 +159,7 @@ export class InventoryFinanceCostService {
     // Get valuation method from material master or stock balance
     // Check which columns exist in materials table first
     let valuationMethod: string | null = null;
-    
+
     try {
       // Try to get valuation method/class from materials table
       const columnCheck = await this.pool.query(`
@@ -168,15 +168,15 @@ export class InventoryFinanceCostService {
         WHERE table_name = 'materials' 
         AND column_name IN ('valuation_method', 'valuation_class')
       `);
-      
+
       const hasValuationMethod = columnCheck.rows.some((r: any) => r.column_name === 'valuation_method');
       const hasValuationClass = columnCheck.rows.some((r: any) => r.column_name === 'valuation_class');
-      
+
       if (hasValuationMethod || hasValuationClass) {
         const selectCols = [];
         if (hasValuationMethod) selectCols.push('valuation_method');
         if (hasValuationClass) selectCols.push('valuation_class');
-        
+
         const materialResult = await this.pool.query(
           `SELECT ${selectCols.join(', ')}
            FROM materials
@@ -186,9 +186,9 @@ export class InventoryFinanceCostService {
         );
 
         if (materialResult.rows.length > 0) {
-          valuationMethod = materialResult.rows[0].valuation_method || 
-                           materialResult.rows[0].valuation_class || 
-                           null;
+          valuationMethod = materialResult.rows[0].valuation_method ||
+            materialResult.rows[0].valuation_class ||
+            null;
         }
       }
     } catch (err) {
@@ -239,8 +239,8 @@ export class InventoryFinanceCostService {
     let standardCost = 0;
     if (materialResult.rows.length > 0) {
       standardCost = parseFloat(
-        materialResult.rows[0].cost || 
-        materialResult.rows[0].base_unit_price || 
+        materialResult.rows[0].cost ||
+        materialResult.rows[0].base_unit_price ||
         '0'
       );
     }
@@ -248,8 +248,8 @@ export class InventoryFinanceCostService {
     const totalStandardCost = standardCost * quantity;
     const totalActualCost = actualCost * quantity;
     const varianceAmount = totalActualCost - totalStandardCost;
-    const variancePercentage = totalStandardCost > 0 
-      ? (varianceAmount / totalStandardCost) * 100 
+    const variancePercentage = totalStandardCost > 0
+      ? (varianceAmount / totalStandardCost) * 100
       : 0;
 
     let varianceType = 'NONE';
@@ -313,23 +313,32 @@ export class InventoryFinanceCostService {
         // Try to get from material-plant assignment via material_plants junction table
         // Cost centers are linked to plants via cost_centers.plant_id (not plants.cost_center_id)
         try {
-          const materialResult = await this.pool.query(
-            `SELECT m.code, cc.id as cost_center_id, cc.cost_center
-             FROM materials m
-             LEFT JOIN material_plants mp ON mp.material_id = m.id AND mp.is_active = true
-             LEFT JOIN plants p ON mp.plant_id = p.id
-             LEFT JOIN cost_centers cc ON cc.plant_id = p.id AND cc.active = true
-             WHERE m.code = $1 
-             LIMIT 1`,
-            [materialCode]
-          );
-          if (materialResult.rows.length > 0 && materialResult.rows[0].cost_center_id) {
-            ccId = materialResult.rows[0].cost_center_id;
-            ccCode = materialResult.rows[0].cost_center;
+          const cols = await this.pool.query(`
+            SELECT table_name, column_name 
+            FROM information_schema.columns 
+            WHERE table_name IN ('material_plants', 'cost_centers')
+          `);
+          const hasMaterialPlants = cols.rows.some((r: any) => r.table_name === 'material_plants');
+          const hasCcPlantId = cols.rows.some((r: any) => r.table_name === 'cost_centers' && r.column_name === 'plant_id');
+
+          if (hasMaterialPlants && hasCcPlantId) {
+            const materialResult = await this.pool.query(
+              `SELECT m.code, cc.id as cost_center_id, cc.cost_center
+               FROM materials m
+               LEFT JOIN material_plants mp ON mp.material_id = m.id AND mp.is_active = true
+               LEFT JOIN plants p ON mp.plant_id = p.id
+               LEFT JOIN cost_centers cc ON cc.plant_id = p.id AND cc.active = true
+               WHERE m.code = $1 
+               LIMIT 1`,
+              [materialCode]
+            );
+            if (materialResult.rows.length > 0 && materialResult.rows[0].cost_center_id) {
+              ccId = materialResult.rows[0].cost_center_id;
+              ccCode = materialResult.rows[0].cost_center;
+            }
           }
         } catch (e: any) {
-          // If material_plants table doesn't exist or query fails, continue without it
-          console.warn('Could not fetch cost center from material-plant assignment:', e.message);
+          // Safe catch to avoid console.warn alarms when columns don't exist
         }
       }
 
@@ -337,21 +346,27 @@ export class InventoryFinanceCostService {
         // Plants table doesn't have cost_center_id directly
         // Get cost center from cost_centers table where plant_id matches
         try {
-          const plantResult = await this.pool.query(
-            `SELECT cc.id as cost_center_id, cc.cost_center
-             FROM plants p
-             LEFT JOIN cost_centers cc ON cc.plant_id = p.id AND cc.active = true
-             WHERE p.code = $1 
-             LIMIT 1`,
-            [plantCode]
-          );
-          if (plantResult.rows.length > 0 && plantResult.rows[0].cost_center_id) {
-            ccId = plantResult.rows[0].cost_center_id;
-            ccCode = plantResult.rows[0].cost_center;
+          const colCheck = await this.pool.query(`
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_name = 'cost_centers' AND column_name = 'plant_id'
+          `);
+
+          if (colCheck.rows.length > 0) {
+            const plantResult = await this.pool.query(
+              `SELECT cc.id as cost_center_id, cc.cost_center
+               FROM plants p
+               LEFT JOIN cost_centers cc ON cc.plant_id = p.id AND cc.active = true
+               WHERE p.code = $1 
+               LIMIT 1`,
+              [plantCode]
+            );
+            if (plantResult.rows.length > 0 && plantResult.rows[0].cost_center_id) {
+              ccId = plantResult.rows[0].cost_center_id;
+              ccCode = plantResult.rows[0].cost_center;
+            }
           }
         } catch (e: any) {
-          // If query fails, continue without cost center
-          console.warn('Could not fetch cost center from plant:', e.message);
+          // Safe catch to avoid console.warn alarms
         }
       }
     }
@@ -463,9 +478,9 @@ export class InventoryFinanceCostService {
       const currency = await this.getCurrencyForMaterial(movementData.materialCode);
 
       // Create accounting document
-      const totalAmount = movementData.cogsAmount || 
-                        movementData.landedCost || 
-                        movementData.totalValue;
+      const totalAmount = movementData.cogsAmount ||
+        movementData.landedCost ||
+        movementData.totalValue;
 
       // Get document type code - must be 2 characters for VARCHAR(2) constraint
       // Use default 'MM' (Material Movement) - this is a standard 2-character code
@@ -519,13 +534,13 @@ export class InventoryFinanceCostService {
       // Note: journal_entries table uses document_number, not document_id
       // We need to create or find the journal entry header first
       let journalEntryId: number;
-      
+
       // Check if journal entry already exists for this document
       const existingJournalEntry = await client.query(
         `SELECT id FROM journal_entries WHERE document_number = $1 LIMIT 1`,
         [glDocumentNumber]
       );
-      
+
       if (existingJournalEntry.rows.length > 0) {
         journalEntryId = existingJournalEntry.rows[0].id;
       } else {
@@ -535,7 +550,7 @@ export class InventoryFinanceCostService {
           `SELECT id FROM company_codes WHERE active = true ORDER BY id ASC LIMIT 1`
         );
         const companyCodeId = companyCodeResult.rows[0]?.id || null;
-        
+
         // Get currency ID if currency exists
         let currencyId: number | null = null;
         try {
@@ -547,11 +562,11 @@ export class InventoryFinanceCostService {
         } catch (e) {
           // Currency table might not exist, continue without it
         }
-        
+
         const currentDate = new Date();
         const fiscalYear = currentDate.getFullYear();
         const fiscalPeriod = (currentDate.getMonth() + 1).toString().padStart(2, '0');
-        
+
         const journalEntryResult = await client.query(
           `INSERT INTO journal_entries (
             document_number,
@@ -587,11 +602,11 @@ export class InventoryFinanceCostService {
         );
         journalEntryId = journalEntryResult.rows[0].id;
       }
-      
+
       // Get cost center and profit center codes for line items
       let costCenterCode: string | null = null;
       let profitCenterCode: string | null = null;
-      
+
       if (movementData.costCenterId) {
         const ccResult = await client.query(
           `SELECT cost_center FROM cost_centers WHERE id = $1 LIMIT 1`,
@@ -599,7 +614,7 @@ export class InventoryFinanceCostService {
         );
         costCenterCode = ccResult.rows[0]?.cost_center || null;
       }
-      
+
       if (movementData.profitCenterId) {
         const pcResult = await client.query(
           `SELECT profit_center FROM profit_centers WHERE id = $1 LIMIT 1`,
@@ -607,7 +622,7 @@ export class InventoryFinanceCostService {
         );
         profitCenterCode = pcResult.rows[0]?.profit_center || null;
       }
-      
+
       // Create journal entry line items
       // Check if journal_entry_line_items table exists, if not use alternative approach
       let lineItemsTableExists = true;
@@ -616,7 +631,7 @@ export class InventoryFinanceCostService {
       } catch (e) {
         lineItemsTableExists = false;
       }
-      
+
       if (lineItemsTableExists) {
         // Use journal_entry_line_items table
         // Check for existing line items to avoid duplicate key errors
@@ -627,10 +642,10 @@ export class InventoryFinanceCostService {
           [journalEntryId]
         );
         const nextLineNumber = (existingLineItemsResult.rows[0]?.max_line_number || 0) + 1;
-        
+
         // Truncate reference document to 20 characters if needed
         const referenceDoc = (movementData.referenceDocument || '').substring(0, 20);
-        
+
         // Debit entry
         await client.query(
           `INSERT INTO journal_entry_line_items (
@@ -723,9 +738,9 @@ export class InventoryFinanceCostService {
     debitAccount: string | null;
     creditAccount: string | null;
   }> {
-    // Use provided client (transaction) or pool (standalone query)
-    const queryClient = client || this.pool;
-    
+    // Always use pool for read-only queries to prevent missing columns/tables from aborting the transaction
+    const queryClient = this.pool;
+
     // Get material category for account determination
     // Check which columns exist first
     // Use savepoint if we're in a transaction to prevent abort on error
@@ -755,21 +770,21 @@ export class InventoryFinanceCostService {
       columnCheck = { rows: [] };
       console.warn('[AccountDetermination] Column check failed, assuming no special columns:', columnCheckError.message);
     }
-    
+
     const hasCategoryId = columnCheck.rows.some((r: any) => r.column_name === 'category_id');
     const hasType = columnCheck.rows.some((r: any) => r.column_name === 'type');
     const hasPlantId = columnCheck.rows.some((r: any) => r.column_name === 'plant_id');
-    
+
     const selectCols = [];
     if (hasCategoryId) selectCols.push('category_id');
     if (hasType) selectCols.push('type');
     if (hasPlantId) selectCols.push('plant_id');
-    
+
     // At minimum, select code to verify material exists
     if (selectCols.length === 0) {
       selectCols.push('code');
     }
-    
+
     let materialResult;
     try {
       if (client) {
@@ -803,12 +818,12 @@ export class InventoryFinanceCostService {
     const material = materialResult.rows[0];
     const categoryId = hasCategoryId ? (material.category_id || null) : null;
     const plantId = hasPlantId ? (material.plant_id || null) : null;
-    
+
     // Map category_id to material_category codes (RAW, FERT, etc.) and valuation_class codes (3000, 7900, etc.)
     // These codes match what's stored in account_determination_rules table
     let materialCategory: string | null = null;
     let valuationClass: string | null = null;
-    
+
     if (categoryId) {
       // Query material category and valuation class from database
       try {
@@ -821,7 +836,7 @@ export class InventoryFinanceCostService {
            LIMIT 1`,
           [categoryId]
         );
-        
+
         if (categoryResult.rows.length > 0 && categoryResult.rows[0].material_category_code) {
           materialCategory = categoryResult.rows[0].material_category_code;
           valuationClass = categoryResult.rows[0].valuation_class_code;
@@ -831,11 +846,11 @@ export class InventoryFinanceCostService {
             `SELECT name, code FROM material_categories WHERE id = $1 AND is_active = true LIMIT 1`,
             [categoryId]
           );
-          
+
           if (altCategoryResult.rows.length > 0) {
             // Use code or name as material category
             materialCategory = altCategoryResult.rows[0].code || altCategoryResult.rows[0].name;
-            
+
             // Query valuation class from material or category
             const valClassResult = await this.pool.query(
               `SELECT class_code FROM valuation_classes WHERE is_active = true LIMIT 1`
@@ -851,14 +866,14 @@ export class InventoryFinanceCostService {
            WHERE is_active = true 
            LIMIT 1`
         );
-        
+
         if (existingRuleResult.rows.length > 0) {
           materialCategory = existingRuleResult.rows[0].material_category;
           valuationClass = existingRuleResult.rows[0].valuation_class;
         }
       }
     }
-    
+
     // If still no material category, try to derive from material type
     if (!materialCategory && hasType && material.type) {
       // Query existing material types and their categories from account determination rules
@@ -868,13 +883,13 @@ export class InventoryFinanceCostService {
          WHERE is_active = true 
          LIMIT 1`
       );
-      
+
       if (typeBasedRule.rows.length > 0) {
         materialCategory = typeBasedRule.rows[0].material_category;
         valuationClass = typeBasedRule.rows[0].valuation_class;
       }
     }
-    
+
     // If still no values, query from account_determination_rules to get any available category/class
     if (!materialCategory || !valuationClass) {
       try {
@@ -932,7 +947,7 @@ export class InventoryFinanceCostService {
     // 2. Match without plant: material_category + movement_type + valuation_class
     // 3. Match without valuation_class: material_category + movement_type
     // 4. Match with movement_type only (wildcard material_category)
-    
+
     let accountRule = null;
 
     // Wrap all account determination queries in savepoint to prevent transaction abort
@@ -940,7 +955,7 @@ export class InventoryFinanceCostService {
       if (client) {
         await client.query('SAVEPOINT account_determination');
       }
-      
+
       // Try exact match first
       if (materialCategory && valuationClass && plantCode) {
         try {
@@ -1026,7 +1041,7 @@ export class InventoryFinanceCostService {
           console.warn('[AccountDetermination] Wildcard match query failed:', wildcardError.message);
         }
       }
-      
+
       if (client) {
         await client.query('RELEASE SAVEPOINT account_determination');
       }
@@ -1046,97 +1061,14 @@ export class InventoryFinanceCostService {
     // The inventory_account column doesn't exist in material_plants table
     // We'll rely on account determination rules or dynamic rule creation
 
-    // If no rule found, try to create it dynamically (wrapped in savepoint to prevent transaction abort)
     if (!accountRule) {
-      try {
-        if (client) {
-          await client.query('SAVEPOINT create_account_rule');
-        }
-        
-        console.log(`No account determination rule found for material_category=${materialCategory}, movement_type=${movementType}, valuation_class=${valuationClass}. Creating rule...`);
-        
-        const createdRule = await this.createAccountDeterminationRule(
-          materialCategory,
-          movementType,
-          valuationClass,
-          plantCode,
-          client
-        );
-        
-        if (createdRule) {
-          accountRule = createdRule;
-          if (client) {
-            await client.query('RELEASE SAVEPOINT create_account_rule');
-          }
-        } else {
-          // If creation failed, rollback and return null
-          if (client) {
-            await client.query('ROLLBACK TO SAVEPOINT create_account_rule');
-          }
-          return {
-            debitAccount: null,
-            creditAccount: null,
-          };
-        }
-      } catch (createRuleError: any) {
-        // If rule creation fails, rollback and return null
-        if (client) {
-          try {
-            await client.query('ROLLBACK TO SAVEPOINT create_account_rule');
-          } catch (rollbackError) {
-            // Savepoint may not exist
-          }
-        }
-        console.warn('[AccountDetermination] Failed to create account determination rule:', createRuleError.message);
-        return {
-          debitAccount: null,
-          creditAccount: null,
-        };
-      }
-    }
-
-    // If no account rule found and dynamic creation failed, use fallback accounts
-    if (!accountRule) {
-      console.warn(`[AccountDetermination] No account rule found for material ${materialCode}, movement type ${movementType}. Using fallback accounts.`);
-      
-      // For movement type 601 (goods issue for sales), use standard COGS and Inventory accounts
-      if (movementType === '601') {
-        try {
-          // Try to find COGS account
-          const cogsAccount = await this.pool.query(
-            `SELECT account_number FROM gl_accounts 
-             WHERE (account_name ILIKE '%cost%goods%' OR account_name ILIKE '%COGS%' OR account_name ILIKE '%cost%sold%')
-               AND is_active = true
-             LIMIT 1`
-          );
-          
-          // Try to find Inventory account
-          const invAccount = await this.pool.query(
-            `SELECT account_number FROM gl_accounts 
-             WHERE (account_name ILIKE '%inventory%' OR account_name ILIKE '%stock%')
-               AND is_active = true
-             LIMIT 1`
-          );
-          
-          if (cogsAccount.rows.length > 0 && invAccount.rows.length > 0) {
-            return {
-              debitAccount: cogsAccount.rows[0].account_number,
-              creditAccount: invAccount.rows[0].account_number,
-            };
-          }
-        } catch (fallbackError: any) {
-          console.warn('[AccountDetermination] Fallback account lookup failed:', fallbackError.message);
-        }
-      }
-      
-      // If fallback also fails, throw error - financial posting is mandatory
       throw new Error(
-        `Account determination failed for material ${materialCode}, movement type ${movementType}. ` +
-        `No account determination rule found and fallback accounts not available. ` +
-        `Please create account determination rules in account_determination_rules table or ensure gl_accounts table has COGS and Inventory accounts.`
+        `STRICT VERIFICATION FAILED: Account determination failed for material ${materialCode}, movement type ${movementType}. ` +
+        `No exact rule found in account_determination_rules table for material_category=${materialCategory}, valuation_class=${valuationClass}. ` +
+        `Please configure the necessary rules in the system.`
       );
     }
-    
+
     return {
       debitAccount: accountRule.debit_account,
       creditAccount: accountRule.credit_account,
@@ -1163,15 +1095,15 @@ export class InventoryFinanceCostService {
       if (movementType === '101') {
         // Debit: Inventory account based on material category
         debitAccountNumber = await this.findOrCreateInventoryAccount(materialCategory, valuationClass);
-        
+
         // Credit: GR/IR (Goods Receipt/Invoice Receipt) account
         creditAccountNumber = await this.findOrCreateGRIRAccount();
-      } 
+      }
       // For goods issue (201), debit cost center/expense, credit inventory
       else if (movementType === '201') {
         // Debit: Expense account
         debitAccountNumber = await this.findOrCreateExpenseAccount();
-        
+
         // Credit: Inventory account
         creditAccountNumber = await this.findOrCreateInventoryAccount(materialCategory, valuationClass);
       }
@@ -1179,7 +1111,7 @@ export class InventoryFinanceCostService {
       else if (movementType === '261') {
         // Debit: Work in Process account
         debitAccountNumber = await this.findOrCreateWIPAccount();
-        
+
         // Credit: Inventory account
         creditAccountNumber = await this.findOrCreateInventoryAccount(materialCategory, valuationClass);
       }
@@ -1187,7 +1119,7 @@ export class InventoryFinanceCostService {
       else if (movementType === '601') {
         // Debit: Cost of Goods Sold account
         debitAccountNumber = await this.findOrCreateCOGSAccount();
-        
+
         // Credit: Inventory account
         creditAccountNumber = await this.findOrCreateInventoryAccount(materialCategory, valuationClass);
       }
@@ -1201,11 +1133,11 @@ export class InventoryFinanceCostService {
            LIMIT 1`,
           [movementType]
         );
-        
+
         if (existingRule.rows.length > 0) {
           return existingRule.rows[0];
         }
-        
+
         // If no existing rule, use default inventory accounts
         debitAccountNumber = await this.findOrCreateInventoryAccount(materialCategory, valuationClass);
         creditAccountNumber = await this.findOrCreateGRIRAccount();
@@ -1227,7 +1159,7 @@ export class InventoryFinanceCostService {
       );
 
       console.log(`Created account determination rule: material_category=${materialCategory}, movement_type=${movementType}, debit=${debitAccountNumber}, credit=${creditAccountNumber}`);
-      
+
       return insertResult.rows[0];
     } catch (error: any) {
       console.error('Error creating account determination rule:', error);
@@ -1250,12 +1182,12 @@ export class InventoryFinanceCostService {
          AND is_active = true
        LIMIT 1`
     );
-    
+
     if (!accountGroupResult.rows[0]?.code) {
       throw new Error('Account group for inventory not found. Please create CURRENT_ASSETS account group in account_groups table.');
     }
     const accountGroup = accountGroupResult.rows[0].code;
-    
+
     // Query account type from database
     const accountTypeResult = await this.pool.query(
       `SELECT DISTINCT account_type FROM gl_accounts 
@@ -1264,12 +1196,12 @@ export class InventoryFinanceCostService {
        LIMIT 1`,
       [accountGroup]
     );
-    
+
     if (!accountTypeResult.rows[0]?.account_type) {
       throw new Error(`Account type not found for account group ${accountGroup}. Please ensure gl_accounts table has accounts with this group.`);
     }
     const accountType = accountTypeResult.rows[0].account_type;
-    
+
     // Query existing inventory account names to determine naming pattern
     const existingInventoryAccounts = await this.pool.query(
       `SELECT account_name FROM gl_accounts 
@@ -1280,12 +1212,12 @@ export class InventoryFinanceCostService {
        LIMIT 5`,
       [accountType, accountGroup]
     );
-    
+
     // Determine account name based on material category and existing patterns
     let accountName: string | null = null;
     if (materialCategory) {
       // Check if there's a pattern matching the material category
-      const categoryPattern = existingInventoryAccounts.rows.find((r: any) => 
+      const categoryPattern = existingInventoryAccounts.rows.find((r: any) =>
         r.account_name.toLowerCase().includes(materialCategory.toLowerCase()) ||
         (materialCategory === 'RAW' && r.account_name.toLowerCase().includes('raw')) ||
         (materialCategory === 'FERT' && r.account_name.toLowerCase().includes('finished')) ||
@@ -1294,7 +1226,7 @@ export class InventoryFinanceCostService {
       );
       accountName = categoryPattern?.account_name || null;
     }
-    
+
     // If no pattern found, query from material_categories table
     if (!accountName && materialCategory) {
       const categoryNameResult = await this.pool.query(
@@ -1305,12 +1237,12 @@ export class InventoryFinanceCostService {
         accountName = `Inventory - ${categoryNameResult.rows[0].name}`;
       }
     }
-    
+
     // If still no name, throw error
     if (!accountName) {
       throw new Error(`Cannot determine account name for material category ${materialCategory}. Please ensure material_categories table has proper data.`);
     }
-    
+
     // Try to find existing inventory account
     const existingAccount = await this.pool.query(
       `SELECT account_number FROM gl_accounts 
@@ -1337,11 +1269,11 @@ export class InventoryFinanceCostService {
 
     let rangeStart: number;
     let rangeEnd: number;
-    
+
     if (accountGroupConfig.rows.length > 0 && accountGroupConfig.rows[0].number_range_from && accountGroupConfig.rows[0].number_range_to) {
       rangeStart = parseInt(accountGroupConfig.rows[0].number_range_from);
       rangeEnd = parseInt(accountGroupConfig.rows[0].number_range_to);
-      
+
       if (isNaN(rangeStart) || isNaN(rangeEnd)) {
         throw new Error(`Invalid number range in account_groups table for ${accountGroup}. Please set valid number_range_from and number_range_to.`);
       }
@@ -1356,7 +1288,7 @@ export class InventoryFinanceCostService {
            AND account_name ILIKE '%Inventory%'`,
         [accountType, accountGroup]
       );
-      
+
       if (existingInventoryRange.rows.length > 0 && existingInventoryRange.rows[0].min_num) {
         rangeStart = existingInventoryRange.rows[0].min_num;
         rangeEnd = existingInventoryRange.rows[0].max_num + 100;
@@ -1374,11 +1306,11 @@ export class InventoryFinanceCostService {
          AND CAST(account_number AS INTEGER) < $2`,
       [rangeStart, rangeEnd]
     );
-    
+
     if (!accountNumberResult.rows[0]?.next_number) {
       throw new Error(`Failed to generate account number for inventory account. No available numbers in range ${rangeStart}-${rangeEnd}`);
     }
-    
+
     let accountNumber = accountNumberResult.rows[0].next_number.toString();
 
     // Create the inventory account (retry if account number conflict)
@@ -1422,19 +1354,19 @@ export class InventoryFinanceCostService {
       throw new Error('Account type LIABILITIES not found. Please ensure gl_accounts table has liability accounts.');
     }
     const accountType = accountTypeResult.rows[0].account_type;
-    
+
     const accountGroupResult = await this.pool.query(
       `SELECT code FROM account_groups 
        WHERE (code = 'CURRENT_LIABILITIES' OR name ILIKE '%current%liabilit%')
          AND is_active = true
        LIMIT 1`
     );
-    
+
     if (!accountGroupResult.rows[0]?.code) {
       throw new Error('Account group CURRENT_LIABILITIES not found. Please create it in account_groups table.');
     }
     const accountGroup = accountGroupResult.rows[0].code;
-    
+
     // Try to find existing GR/IR account
     const existingAccount = await this.pool.query(
       `SELECT account_number FROM gl_accounts 
@@ -1448,7 +1380,7 @@ export class InventoryFinanceCostService {
     if (existingAccount.rows.length > 0) {
       return existingAccount.rows[0].account_number;
     }
-    
+
     // Query existing GR/IR account names to determine naming pattern
     const existingGRIRAccounts = await this.pool.query(
       `SELECT account_name FROM gl_accounts 
@@ -1458,10 +1390,10 @@ export class InventoryFinanceCostService {
        LIMIT 3`,
       [accountType]
     );
-    
+
     // Determine account name from existing patterns
     const accountName = existingGRIRAccounts.rows[0]?.account_name || null;
-    
+
     if (!accountName) {
       // Use a descriptive name based on standard accounting terminology
       const standardNameResult = await this.pool.query(
@@ -1472,7 +1404,7 @@ export class InventoryFinanceCostService {
          LIMIT 1`,
         [accountType, accountGroup]
       );
-      
+
       if (standardNameResult.rows.length > 0) {
         // Use pattern from existing accounts
         throw new Error(`GR/IR account not found. Please create a GR/IR account manually or ensure account naming follows existing patterns.`);
@@ -1492,11 +1424,11 @@ export class InventoryFinanceCostService {
 
     let rangeStart: number;
     let rangeEnd: number;
-    
+
     if (accountGroupConfig.rows.length > 0 && accountGroupConfig.rows[0].number_range_from && accountGroupConfig.rows[0].number_range_to) {
       rangeStart = parseInt(accountGroupConfig.rows[0].number_range_from);
       rangeEnd = parseInt(accountGroupConfig.rows[0].number_range_to);
-      
+
       if (isNaN(rangeStart) || isNaN(rangeEnd)) {
         throw new Error(`Invalid number range in account_groups table for ${accountGroup}. Please set valid number_range_from and number_range_to.`);
       }
@@ -1510,7 +1442,7 @@ export class InventoryFinanceCostService {
            AND account_group = $2`,
         [accountType, accountGroup]
       );
-      
+
       if (existingLiabilityRange.rows.length > 0 && existingLiabilityRange.rows[0].min_num) {
         rangeStart = existingLiabilityRange.rows[0].min_num;
         rangeEnd = existingLiabilityRange.rows[0].max_num + 100;
@@ -1528,11 +1460,11 @@ export class InventoryFinanceCostService {
          AND CAST(account_number AS INTEGER) < $2`,
       [rangeStart, rangeEnd]
     );
-    
+
     if (!accountNumberResult.rows[0]?.next_number) {
       throw new Error(`Failed to generate account number for GR/IR account. No available numbers in range ${rangeStart}-${rangeEnd}`);
     }
-    
+
     let accountNumber = accountNumberResult.rows[0].next_number.toString();
 
     // Create the GR/IR account (retry if account number conflict)
@@ -1576,19 +1508,19 @@ export class InventoryFinanceCostService {
       throw new Error('Account type EXPENSES not found. Please ensure gl_accounts table has expense accounts.');
     }
     const accountType = accountTypeResult.rows[0].account_type;
-    
+
     const accountGroupResult = await this.pool.query(
       `SELECT code FROM account_groups 
        WHERE (code = 'OPERATING_EXPENSES' OR name ILIKE '%operating%expense%')
          AND is_active = true
        LIMIT 1`
     );
-    
+
     if (!accountGroupResult.rows[0]?.code) {
       throw new Error('Account group OPERATING_EXPENSES not found. Please create it in account_groups table.');
     }
     const accountGroup = accountGroupResult.rows[0].code;
-    
+
     // Try to find existing expense account
     const existingAccount = await this.pool.query(
       `SELECT account_number FROM gl_accounts 
@@ -1602,7 +1534,7 @@ export class InventoryFinanceCostService {
     if (existingAccount.rows.length > 0) {
       return existingAccount.rows[0].account_number;
     }
-    
+
     // Query existing expense account names to determine naming pattern
     const existingExpenseAccounts = await this.pool.query(
       `SELECT account_name FROM gl_accounts 
@@ -1612,10 +1544,10 @@ export class InventoryFinanceCostService {
        LIMIT 3`,
       [accountType, accountGroup]
     );
-    
+
     // Determine account name from existing patterns
     const accountName = existingExpenseAccounts.rows[0]?.account_name || null;
-    
+
     if (!accountName) {
       throw new Error(`Cannot determine expense account name. Please create an expense account manually or ensure account naming follows existing patterns.`);
     }
@@ -1632,11 +1564,11 @@ export class InventoryFinanceCostService {
 
     let rangeStart: number;
     let rangeEnd: number;
-    
+
     if (accountGroupConfig.rows.length > 0 && accountGroupConfig.rows[0].number_range_from && accountGroupConfig.rows[0].number_range_to) {
       rangeStart = parseInt(accountGroupConfig.rows[0].number_range_from);
       rangeEnd = parseInt(accountGroupConfig.rows[0].number_range_to);
-      
+
       if (isNaN(rangeStart) || isNaN(rangeEnd)) {
         throw new Error(`Invalid number range in account_groups table for ${accountGroup}. Please set valid number_range_from and number_range_to.`);
       }
@@ -1650,7 +1582,7 @@ export class InventoryFinanceCostService {
            AND account_group = $2`,
         [accountType, accountGroup]
       );
-      
+
       if (existingExpenseRange.rows.length > 0 && existingExpenseRange.rows[0].min_num) {
         rangeStart = existingExpenseRange.rows[0].min_num;
         rangeEnd = existingExpenseRange.rows[0].max_num + 100;
@@ -1668,11 +1600,11 @@ export class InventoryFinanceCostService {
          AND CAST(account_number AS INTEGER) < $2`,
       [rangeStart, rangeEnd]
     );
-    
+
     if (!accountNumberResult.rows[0]?.next_number) {
       throw new Error(`Failed to generate account number for expense account. No available numbers in range ${rangeStart}-${rangeEnd}`);
     }
-    
+
     let accountNumber = accountNumberResult.rows[0].next_number.toString();
 
     // Create the expense account (retry if account number conflict)
@@ -1716,19 +1648,19 @@ export class InventoryFinanceCostService {
       throw new Error('Account type ASSETS not found. Please ensure gl_accounts table has asset accounts.');
     }
     const accountType = accountTypeResult.rows[0].account_type;
-    
+
     const accountGroupResult = await this.pool.query(
       `SELECT code FROM account_groups 
        WHERE (code = 'CURRENT_ASSETS' OR name ILIKE '%current%asset%')
          AND is_active = true
        LIMIT 1`
     );
-    
+
     if (!accountGroupResult.rows[0]?.code) {
       throw new Error('Account group CURRENT_ASSETS not found. Please create it in account_groups table.');
     }
     const accountGroup = accountGroupResult.rows[0].code;
-    
+
     // Try to find existing WIP account
     const existingAccount = await this.pool.query(
       `SELECT account_number FROM gl_accounts 
@@ -1742,7 +1674,7 @@ export class InventoryFinanceCostService {
     if (existingAccount.rows.length > 0) {
       return existingAccount.rows[0].account_number;
     }
-    
+
     // Query existing WIP account names to determine naming pattern
     const existingWIPAccounts = await this.pool.query(
       `SELECT account_name FROM gl_accounts 
@@ -1752,10 +1684,10 @@ export class InventoryFinanceCostService {
        LIMIT 3`,
       [accountType]
     );
-    
+
     // Determine account name from existing patterns
     const accountName = existingWIPAccounts.rows[0]?.account_name || null;
-    
+
     if (!accountName) {
       throw new Error(`Cannot determine WIP account name. Please create a WIP account manually or ensure account naming follows existing patterns.`);
     }
@@ -1771,11 +1703,11 @@ export class InventoryFinanceCostService {
 
     let rangeStart: number;
     let rangeEnd: number;
-    
+
     if (accountGroupConfig.rows.length > 0 && accountGroupConfig.rows[0].number_range_from && accountGroupConfig.rows[0].number_range_to) {
       rangeStart = parseInt(accountGroupConfig.rows[0].number_range_from);
       rangeEnd = parseInt(accountGroupConfig.rows[0].number_range_to);
-      
+
       if (isNaN(rangeStart) || isNaN(rangeEnd)) {
         throw new Error(`Invalid number range in account_groups table for ${accountGroup}. Please set valid number_range_from and number_range_to.`);
       }
@@ -1790,7 +1722,7 @@ export class InventoryFinanceCostService {
            AND (account_name ILIKE '%Work in Process%' OR account_name ILIKE '%WIP%')`,
         [accountType, accountGroup]
       );
-      
+
       if (existingWIPRange.rows.length > 0 && existingWIPRange.rows[0].min_num) {
         rangeStart = existingWIPRange.rows[0].min_num;
         rangeEnd = existingWIPRange.rows[0].max_num + 100;
@@ -1808,11 +1740,11 @@ export class InventoryFinanceCostService {
          AND CAST(account_number AS INTEGER) < $2`,
       [rangeStart, rangeEnd]
     );
-    
+
     if (!accountNumberResult.rows[0]?.next_number) {
       throw new Error(`Failed to generate account number for WIP account. No available numbers in range ${rangeStart}-${rangeEnd}`);
     }
-    
+
     let accountNumber = accountNumberResult.rows[0].next_number.toString();
 
     // Create the WIP account (retry if account number conflict)
@@ -1856,19 +1788,19 @@ export class InventoryFinanceCostService {
       throw new Error('Account type EXPENSES not found. Please ensure gl_accounts table has expense accounts.');
     }
     const accountType = accountTypeResult.rows[0].account_type;
-    
+
     const accountGroupResult = await this.pool.query(
       `SELECT code FROM account_groups 
        WHERE (code = 'COST_OF_SALES' OR name ILIKE '%cost%sales%' OR name ILIKE '%cogs%')
          AND is_active = true
        LIMIT 1`
     );
-    
+
     if (!accountGroupResult.rows[0]?.code) {
       throw new Error('Account group COST_OF_SALES not found. Please create it in account_groups table.');
     }
     const accountGroup = accountGroupResult.rows[0].code;
-    
+
     // Try to find existing COGS account
     const existingAccount = await this.pool.query(
       `SELECT account_number FROM gl_accounts 
@@ -1882,7 +1814,7 @@ export class InventoryFinanceCostService {
     if (existingAccount.rows.length > 0) {
       return existingAccount.rows[0].account_number;
     }
-    
+
     // Query existing COGS account names to determine naming pattern
     const existingCOGSAccounts = await this.pool.query(
       `SELECT account_name FROM gl_accounts 
@@ -1892,10 +1824,10 @@ export class InventoryFinanceCostService {
        LIMIT 3`,
       [accountType]
     );
-    
+
     // Determine account name from existing patterns
     const accountName = existingCOGSAccounts.rows[0]?.account_name || null;
-    
+
     if (!accountName) {
       throw new Error(`Cannot determine COGS account name. Please create a COGS account manually or ensure account naming follows existing patterns.`);
     }
@@ -1912,11 +1844,11 @@ export class InventoryFinanceCostService {
 
     let rangeStart: number;
     let rangeEnd: number;
-    
+
     if (accountGroupConfig.rows.length > 0 && accountGroupConfig.rows[0].number_range_from && accountGroupConfig.rows[0].number_range_to) {
       rangeStart = parseInt(accountGroupConfig.rows[0].number_range_from);
       rangeEnd = parseInt(accountGroupConfig.rows[0].number_range_to);
-      
+
       if (isNaN(rangeStart) || isNaN(rangeEnd)) {
         throw new Error(`Invalid number range in account_groups table for ${accountGroup}. Please set valid number_range_from and number_range_to.`);
       }
@@ -1931,7 +1863,7 @@ export class InventoryFinanceCostService {
            AND (account_name ILIKE '%Cost of Goods Sold%' OR account_name ILIKE '%COGS%')`,
         [accountType, accountGroup]
       );
-      
+
       if (existingCOGSRange.rows.length > 0 && existingCOGSRange.rows[0].min_num) {
         rangeStart = existingCOGSRange.rows[0].min_num;
         rangeEnd = existingCOGSRange.rows[0].max_num + 100;
@@ -1949,11 +1881,11 @@ export class InventoryFinanceCostService {
          AND CAST(account_number AS INTEGER) < $2`,
       [rangeStart, rangeEnd]
     );
-    
+
     if (!accountNumberResult.rows[0]?.next_number) {
       throw new Error(`Failed to generate account number for COGS account. No available numbers in range ${rangeStart}-${rangeEnd}`);
     }
-    
+
     let accountNumber = accountNumberResult.rows[0].next_number.toString();
 
     // Create the COGS account (retry if account number conflict)

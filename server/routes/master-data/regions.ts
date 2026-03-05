@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { db } from "../../db";
 import { regions } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import * as xlsx from "xlsx";
 
 const router = Router();
@@ -18,7 +18,7 @@ const regionSchema = z.object({
 // GET /api/master-data/regions
 router.get("/", async (req, res) => {
   try {
-    const allRegions = await db.select().from(regions).orderBy(regions.name);
+    const allRegions = await db.select().from(regions).where(isNull(regions.deletedAt)).orderBy(regions.name);
     res.json(allRegions);
   } catch (error) {
     console.error("Error fetching regions:", error);
@@ -30,12 +30,12 @@ router.get("/", async (req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const [region] = await db.select().from(regions).where(eq(regions.id, id));
-    
+    const [region] = await db.select().from(regions).where(and(eq(regions.id, id), isNull(regions.deletedAt)));
+
     if (!region) {
       return res.status(404).json({ error: "Region not found" });
     }
-    
+
     res.json(region);
   } catch (error) {
     console.error("Error fetching region:", error);
@@ -47,13 +47,16 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const validatedData = regionSchema.parse(req.body);
-    
+
     const [newRegion] = await db
       .insert(regions)
       .values({
         ...validatedData,
         createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
+        createdBy: (req as any).user?.id || 1,
+        updatedBy: (req as any).user?.id || 1,
+        tenantId: (req as any).user?.tenantId || '001'
       })
       .returning();
 
@@ -78,9 +81,10 @@ router.put("/:id", async (req, res) => {
       .update(regions)
       .set({
         ...validatedData,
-        updatedAt: new Date()
+        updatedAt: new Date(),
+        updatedBy: (req as any).user?.id || 1
       })
-      .where(eq(regions.id, id))
+      .where(and(eq(regions.id, id), isNull(regions.deletedAt)))
       .returning();
 
     if (!updatedRegion) {
@@ -102,10 +106,14 @@ router.put("/:id", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    
+
     const [deletedRegion] = await db
-      .delete(regions)
-      .where(eq(regions.id, id))
+      .update(regions)
+      .set({
+        deletedAt: new Date(),
+        updatedBy: (req as any).user?.id || 1
+      })
+      .where(and(eq(regions.id, id), isNull(regions.deletedAt)))
       .returning();
 
     if (!deletedRegion) {
@@ -145,11 +153,14 @@ router.post("/import", async (req, res) => {
         };
 
         const validatedData = regionSchema.parse(regionData);
-        
+
         await db.insert(regions).values({
           ...validatedData,
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
+          createdBy: (req as any).user?.id || 1,
+          updatedBy: (req as any).user?.id || 1,
+          tenantId: (req as any).user?.tenantId || '001'
         }).onConflictDoNothing();
 
         imported++;

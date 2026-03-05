@@ -10,6 +10,7 @@ router.get('/', async (req, res) => {
         const pool = ensureActivePool();
         const result = await pool.query(`
       SELECT * FROM purchasing_item_categories 
+      WHERE "_deletedAt" IS NULL
       ORDER BY code
     `);
 
@@ -23,13 +24,16 @@ router.get('/', async (req, res) => {
 // POST /api/master-data/purchasing-item-categories
 router.post('/', async (req, res) => {
     const { code, name, description, is_active } = req.body;
+    const userId = (req as any).user?.id || 1;
+    const tenantId = (req as any).user?.tenantId || '001';
+
     try {
         const pool = ensureActivePool();
         const result = await pool.query(
-            `INSERT INTO purchasing_item_categories (code, name, description, is_active) 
-             VALUES ($1, $2, $3, $4) 
+            `INSERT INTO purchasing_item_categories (code, name, description, is_active, created_by, updated_by, "_tenantId") 
+             VALUES ($1, $2, $3, $4, $5, $6, $7) 
              RETURNING *`,
-            [code, name, description, is_active !== undefined ? is_active : true]
+            [code, name, description, is_active !== undefined ? is_active : true, userId, userId, tenantId]
         );
         res.status(201).json(result.rows[0]);
     } catch (error) {
@@ -42,14 +46,15 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
     const { code, name, description, is_active } = req.body;
+    const userId = (req as any).user?.id || 1;
     try {
         const pool = ensureActivePool();
         const result = await pool.query(
             `UPDATE purchasing_item_categories 
-             SET code = $1, name = $2, description = $3, is_active = $4 
-             WHERE id = $5 
+             SET code = $1, name = $2, description = $3, is_active = $4, updated_by = $5 
+             WHERE id = $6 AND "_deletedAt" IS NULL
              RETURNING *`,
-            [code, name, description, is_active, id]
+            [code, name, description, is_active, userId, id]
         );
         if (result.rowCount === 0) {
             return res.status(404).json({ error: 'Purchasing item category not found' });
@@ -61,12 +66,15 @@ router.put('/:id', async (req, res) => {
     }
 });
 
-// DELETE /api/master-data/purchasing-item-categories/:id
 router.delete('/:id', async (req, res) => {
     const { id } = req.params;
+    const userId = (req as any).user?.id || 1;
     try {
         const pool = ensureActivePool();
-        const result = await pool.query('DELETE FROM purchasing_item_categories WHERE id = $1 RETURNING *', [id]);
+        const result = await pool.query(
+            'UPDATE purchasing_item_categories SET "_deletedAt" = NOW(), updated_by = $1 WHERE id = $2 AND "_deletedAt" IS NULL RETURNING *',
+            [userId, id]
+        );
         if (result.rowCount === 0) {
             return res.status(404).json({ error: 'Purchasing item category not found' });
         }

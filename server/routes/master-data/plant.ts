@@ -42,6 +42,10 @@ export async function getPlants(req: Request, res: Response) {
         p.is_active as "isActive",
         p.created_at as "createdAt",
         p.updated_at as "updatedAt",
+        p.created_by as "_createdBy",
+        p.updated_by as "_updatedBy",
+        p."_tenantId",
+        p."_deletedAt",
         p.valuation_grouping_code_id as "valuationGroupingCodeId",
         cc.name as "companyCodeName",
         vgc.code as "valuationGroupingCode",
@@ -50,6 +54,7 @@ export async function getPlants(req: Request, res: Response) {
       LEFT JOIN company_codes cc ON p.company_code_id = cc.id 
       LEFT JOIN valuation_grouping_codes vgc ON p.valuation_grouping_code_id = vgc.id
       WHERE ${whereCondition}
+        AND p.is_active IS NOT false
       ORDER BY p.code
     `);
     return res.status(200).json(result.rows);
@@ -92,6 +97,10 @@ export async function getPlantById(req: Request, res: Response) {
         p.is_active as "isActive",
         p.created_at as "createdAt",
         p.updated_at as "updatedAt",
+        p.created_by as "_createdBy",
+        p.updated_by as "_updatedBy",
+        p."_tenantId",
+        p."_deletedAt",
         p.valuation_grouping_code_id as "valuationGroupingCodeId",
         cc.name as "companyCodeName",
         vgc.code as "valuationGroupingCode",
@@ -100,6 +109,7 @@ export async function getPlantById(req: Request, res: Response) {
       LEFT JOIN company_codes cc ON p.company_code_id = cc.id 
       LEFT JOIN valuation_grouping_codes vgc ON p.valuation_grouping_code_id = vgc.id
       WHERE p.id = ${id}
+        AND p.is_active IS NOT false
     `);
 
     if (result.rows.length === 0) {
@@ -154,12 +164,17 @@ export async function createPlant(req: Request, res: Response) {
 
       const result = await pool.query(`
         INSERT INTO plants (
-          code, name, company_code_id, type, status, is_active, valuation_grouping_code_id
+          code, name, company_code_id, type, status, is_active,
+          valuation_grouping_code_id, created_by, updated_by, "_tenantId", "_deletedAt"
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL
         ) RETURNING *
       `, [
-        data.code, data.name, data.companyCodeId, data.type, status, isActive, data.valuationGroupingCodeId || null
+        data.code, data.name, data.companyCodeId, data.type, status, isActive,
+        data.valuationGroupingCodeId || null,
+        (req as any).user?.id ?? 1,
+        (req as any).user?.id ?? 1,
+        (req as any).user?.tenantId ?? '001'
       ]);
 
       newPlant = result.rows[0];
@@ -287,22 +302,22 @@ export async function updatePlant(req: Request, res: Response) {
       return res.status(400).json({ error: "Invalid company code ID" });
     }
 
-    // Update plant
+    // Update plant — inject updated_by for audit trail
     const updateResult = await pool.query(`
       UPDATE plants 
       SET code = $1, name = $2, description = $3, company_code_id = $4, type = $5, 
           category = $6, address = $7, city = $8, state = $9, country = $10, 
           postal_code = $11, phone = $12, email = $13, manager = $14, timezone = $15, 
           operating_hours = $16, coordinates = $17, factory_calendar = $18, status = $19, is_active = $20, 
-          valuation_grouping_code_id = $21, updated_at = NOW()
-      WHERE id = $22
+          valuation_grouping_code_id = $21, updated_at = NOW(), updated_by = $22
+      WHERE id = $23
       RETURNING *
     `, [
       data.code, data.name, data.description, data.companyCodeId, data.type,
       data.category, data.address, data.city, data.state, data.country,
       data.postalCode, data.phone, data.email, data.manager, data.timezone,
       data.operatingHours, data.coordinates, data.factoryCalendar, data.status, data.isActive,
-      data.valuationGroupingCodeId || null, id
+      data.valuationGroupingCodeId || null, (req as any).user?.id ?? 1, id
     ]);
 
     const updatedPlant = updateResult.rows[0];
@@ -412,18 +427,25 @@ export async function deletePlant(req: Request, res: Response) {
       }
     }
 
-    // Delete plant
+    // Soft-delete: set is_active=false, _deletedAt=NOW(), updated_by=userId
+    // Data preserved in DB — ACID compliant
+    const userId = (req as any).user?.id ?? 1;
     await pool.query(`
-      DELETE FROM plants WHERE id = $1
-    `, [id]);
+      UPDATE plants
+      SET is_active = false,
+          status = 'inactive',
+          "_deletedAt" = NOW(),
+          updated_by = $1,
+          updated_at = NOW()
+      WHERE id = $2
+    `, [userId, id]);
 
     // Sync deletion to OneProject table
     try {
       await oneProjectSyncAgent.syncBusinessToOneProject('plants', plantToDelete.id.toString(), 'DELETE', plantToDelete);
-      console.log(`✅ Plant ${plantToDelete.code} deletion synced to OneProject table`);
+      console.log(`✅ Plant ${plantToDelete.code} soft-deletion synced to OneProject table`);
     } catch (syncError) {
       console.error(`❌ Failed to sync plant ${plantToDelete.code} deletion to OneProject:`, syncError);
-      // Don't fail the request, just log the sync error
     }
 
     return res.status(200).json({ message: "Plant deleted successfully" });
@@ -461,13 +483,15 @@ export async function deactivatePlant(req: Request, res: Response) {
 
     const existingPlant = existingResult.rows[0];
 
-    // Deactivate plant
+    // Soft-deactivate: set is_active=false + _deletedAt for audit trail
+    const deactivateUserId = (req as any).user?.id ?? 1;
     const updateResult = await pool.query(`
       UPDATE plants 
-      SET is_active = false, status = 'inactive', updated_at = NOW()
-      WHERE id = $1
+      SET is_active = false, status = 'inactive', updated_at = NOW(),
+          updated_by = $1, "_deletedAt" = NOW()
+      WHERE id = $2
       RETURNING *
-    `, [id]);
+    `, [deactivateUserId, id]);
 
     const deactivatedPlant = updateResult.rows[0];
 

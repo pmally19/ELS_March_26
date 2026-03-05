@@ -7,7 +7,7 @@ const router = Router();
 router.get('/', async (req, res) => {
     try {
         const result = await pool.query(`
-      SELECT * FROM condition_classes
+      SELECT *, "_tenantId" as tenant_id FROM condition_classes
       ORDER BY class_code
     `);
 
@@ -24,7 +24,7 @@ router.get('/:id', async (req, res) => {
         const { id } = req.params;
 
         const result = await pool.query(`
-      SELECT * FROM condition_classes WHERE id = $1
+      SELECT *, "_tenantId" as tenant_id FROM condition_classes WHERE id = $1
     `, [id]);
 
         if (result.rows.length === 0) {
@@ -73,17 +73,20 @@ router.post('/', async (req, res) => {
             });
         }
 
-        // Insert new class
         const insertResult = await pool.query(`
       INSERT INTO condition_classes (
-        class_code, class_name, description, is_active
-      ) VALUES ($1, $2, $3, $4)
+        class_code, class_name, description, is_active,
+        created_by, updated_by, "_tenantId"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
     `, [
             class_code.toUpperCase(),
             class_name,
             description,
-            is_active !== undefined ? is_active : true
+            is_active !== undefined ? is_active : true,
+            (req as any).user?.id || 1,
+            (req as any).user?.id || 1,
+            (req as any).user?.tenantId || '001'
         ]);
 
         res.status(201).json(insertResult.rows[0]);
@@ -127,14 +130,14 @@ router.put('/:id', async (req, res) => {
             }
         }
 
-        // Update class
         const updateResult = await pool.query(`
       UPDATE condition_classes SET
         class_code = COALESCE($1, class_code),
         class_name = COALESCE($2, class_name),
         description = $3,
         is_active = COALESCE($4, is_active),
-        updated_at = now()
+        updated_at = now(),
+        updated_by = $6
       WHERE id = $5
       RETURNING *
     `, [
@@ -142,7 +145,8 @@ router.put('/:id', async (req, res) => {
             class_name,
             description,
             is_active,
-            id
+            id,
+            (req as any).user?.id || 1
         ]);
 
         res.json(updateResult.rows[0]);

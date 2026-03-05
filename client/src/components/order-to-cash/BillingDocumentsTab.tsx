@@ -418,85 +418,118 @@ export default function BillingDocumentsTab() {
                 </Card>
               </div>
 
-              {/* Line Items */}
+              {/* Line Items with Pricing Breakdown */}
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-sm">Invoice Items</CardTitle>
+                  <CardTitle className="text-sm">Invoice Line Items &amp; Price Breakdown</CardTitle>
+                  <p className="text-xs text-gray-500">Pricing chain: List Price → Discounts → Net Value → Tax → Total</p>
                 </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Material</TableHead>
-                        <TableHead>Description</TableHead>
-                        <TableHead className="text-right">Quantity</TableHead>
-                        <TableHead className="text-right">Unit Price</TableHead>
-                        <TableHead className="text-right">Net Amount</TableHead>
-                        <TableHead className="text-right">Tax</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {selectedInvoice.items?.map((item: any, index: number) => (
-                        <TableRow key={index}>
-                          <TableCell>{item.material_code || item.material_id || '-'}</TableCell>
-                          <TableCell>{item.material_description || item.product_name || 'N/A'}</TableCell>
-                          <TableCell className="text-right">
-                            {parseFloat(item.billing_quantity || 0).toFixed(2)} {item.unit || 'EA'}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            ${parseFloat(item.unit_price || 0).toFixed(2)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            ${parseFloat(item.net_amount || 0).toFixed(2)}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            ${parseFloat(item.tax_amount || 0).toFixed(2)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                <CardContent className="space-y-4">
+                  {selectedInvoice.items?.map((item: any, index: number) => (
+                    <div key={index} className="border rounded-lg overflow-hidden">
+                      {/* Item summary row */}
+                      <div className="bg-gray-50 px-4 py-2 grid grid-cols-6 gap-2 text-xs font-semibold text-gray-600 border-b">
+                        <span>Material</span>
+                        <span className="col-span-2">Description</span>
+                        <span className="text-right">Qty</span>
+                        <span className="text-right">Unit Price</span>
+                        <span className="text-right">Net Amount</span>
+                      </div>
+                      <div className="px-4 py-2 grid grid-cols-6 gap-2 text-sm">
+                        <span className="font-medium">{item.material_code || item.material_id || '-'}</span>
+                        <span className="col-span-2">{item.material_description || item.product_name || 'N/A'}</span>
+                        <span className="text-right">{parseFloat(item.billing_quantity || 0).toFixed(2)} {item.unit || 'EA'}</span>
+                        <span className="text-right">{parseFloat(item.unit_price || 0).toFixed(2)}</span>
+                        <span className="text-right font-semibold">{parseFloat(item.net_amount || 0).toFixed(2)}</span>
+                      </div>
 
-                  {/* Totals */}
+                      {/* Pricing Conditions from sales_order_item_conditions */}
+                      {item.pricing_conditions && item.pricing_conditions.length > 0 && (
+                        <div className="border-t">
+                          <div className="px-4 py-1 text-xs font-semibold text-blue-700 bg-blue-50 border-b">
+                            Pricing Conditions
+                          </div>
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-gray-500 bg-gray-50 border-b">
+                                <th className="text-left px-3 py-1">Step</th>
+                                <th className="text-left px-3 py-1">Type</th>
+                                <th className="text-left px-3 py-1">Description</th>
+                                <th className="text-left px-3 py-1">Acct Key</th>
+                                <th className="text-right px-3 py-1">Base Value</th>
+                                <th className="text-right px-3 py-1">Rate</th>
+                                <th className="text-right px-3 py-1">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {item.pricing_conditions.map((cond: any, ci: number) => {
+                                const amount = parseFloat(cond.amount ?? cond.base_value ?? 0);
+                                const isTax = cond.is_tax === true || cond.condition_type === 'MWST';
+                                const isNegative = amount < 0;
+                                const isCost = cond.condition_type === 'VPRS';
+                                const condType = cond.condition_type ?? cond.type ?? '';
+                                if (!condType && amount === 0) return null;
+                                return (
+                                  <tr key={ci} className={"border-b last:border-0 " + (
+                                    isTax ? 'bg-amber-50' :
+                                      isNegative ? 'bg-red-50' :
+                                        isCost ? 'bg-gray-50' : ''
+                                  )}>
+                                    <td className="px-3 py-1 font-mono text-gray-400">{cond.step ?? cond.step_number ?? '-'}</td>
+                                    <td className="px-3 py-1 font-mono font-bold">{condType || '-'}</td>
+                                    <td className="px-3 py-1">{cond.condition_name ?? cond.name ?? '-'}</td>
+                                    <td className="px-3 py-1 font-mono text-blue-600 text-xs">{cond.account_key ?? '-'}</td>
+                                    <td className="px-3 py-1 text-right">{parseFloat(cond.base_value || 0).toFixed(2)}</td>
+                                    <td className="px-3 py-1 text-right">{cond.rate != null ? parseFloat(cond.rate).toFixed(2) + '%' : '-'}</td>
+                                    <td className={"px-3 py-1 text-right font-semibold " + (
+                                      isTax ? 'text-amber-700' : isNegative ? 'text-red-600' : isCost ? 'text-gray-400' : 'text-gray-900'
+                                    )}>
+                                      {isNegative ? '-' : ''}
+                                      {Math.abs(amount).toFixed(2)}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                          <div className="px-4 py-2 bg-gray-50 border-t flex justify-end gap-6 text-xs">
+                            <span>Net: <span className="font-semibold">{parseFloat(item.net_amount || 0).toFixed(2)}</span></span>
+                            <span>Tax: <span className="font-semibold text-amber-700">{parseFloat(item.tax_amount || 0).toFixed(2)}</span></span>
+                            <span className="font-bold">Item Total: {(parseFloat(item.net_amount || 0) + parseFloat(item.tax_amount || 0)).toFixed(2)}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {/* Document Totals */}
                   <div className="mt-4 space-y-2 border-t pt-4">
                     <div className="flex justify-between">
                       <span>Net Amount:</span>
-                      <span className="font-semibold">
-                        ${parseFloat(selectedInvoice.net_amount || 0).toFixed(2)}
-                      </span>
+                      <span className="font-semibold">{parseFloat(selectedInvoice.net_amount || 0).toFixed(2)}</span>
                     </div>
-                    {/* Tax Breakdown - Show all tax types */}
                     {selectedInvoice.tax_breakdown && Array.isArray(selectedInvoice.tax_breakdown) && selectedInvoice.tax_breakdown.length > 0 ? (
                       <div className="space-y-1">
                         {selectedInvoice.tax_breakdown.map((tax: any, index: number) => (
-                          <div key={index} className="flex justify-between">
-                            <span>
-                              {tax.title || tax.rule_code || `Tax ${index + 1}`}
-                              {tax.rate_percent ? ` (${tax.rate_percent}%)` : ''}:
-                            </span>
-                            <span className="font-semibold">
-                              ${parseFloat(tax.amount || 0).toFixed(2)}
-                            </span>
+                          <div key={index} className="flex justify-between text-amber-700">
+                            <span>{tax.title || tax.rule_code || "Tax " + (index + 1)}{tax.rate_percent ? " (" + tax.rate_percent + "%)" : ""}:</span>
+                            <span className="font-semibold">{parseFloat(tax.amount || 0).toFixed(2)}</span>
                           </div>
                         ))}
                         <div className="flex justify-between text-sm text-gray-600 pt-1 border-t">
                           <span>Total Tax Amount:</span>
-                          <span>
-                            ${parseFloat(selectedInvoice.tax_amount || 0).toFixed(2)}
-                          </span>
+                          <span>{parseFloat(selectedInvoice.tax_amount || 0).toFixed(2)}</span>
                         </div>
                       </div>
                     ) : (
                       <div className="flex justify-between">
                         <span>Tax Amount:</span>
-                        <span className="font-semibold">
-                          ${parseFloat(selectedInvoice.tax_amount || 0).toFixed(2)}
-                        </span>
+                        <span className="font-semibold text-amber-700">{parseFloat(selectedInvoice.tax_amount || 0).toFixed(2)}</span>
                       </div>
                     )}
                     <div className="flex justify-between text-lg font-bold border-t pt-2">
                       <span>Total Amount:</span>
-                      <span>${parseFloat(selectedInvoice.total_amount || 0).toFixed(2)}</span>
+                      <span>{parseFloat(selectedInvoice.total_amount || 0).toFixed(2)}</span>
                     </div>
                   </div>
                 </CardContent>

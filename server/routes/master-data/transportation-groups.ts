@@ -2,7 +2,7 @@
 import { Router } from "express";
 import { db } from "../../db";
 import { transportationGroups, insertTransportationGroupSchema } from "../../../shared/sales-distribution-schema";
-import { eq, desc, ilike, or } from "drizzle-orm";
+import { eq, desc, ilike, or, isNull, and } from "drizzle-orm";
 import { z } from "zod";
 
 const router = Router();
@@ -12,20 +12,30 @@ router.get("/", async (req, res) => {
     try {
         const search = req.query.search as string;
 
-        let query = db.select().from(transportationGroups);
+        let results;
 
         if (search) {
-            query.where(
-                or(
-                    ilike(transportationGroups.code, `%${search}%`),
-                    ilike(transportationGroups.description, `%${search}%`)
+            results = await db
+                .select()
+                .from(transportationGroups)
+                .where(
+                    and(
+                        isNull(transportationGroups.deletedAt),
+                        or(
+                            ilike(transportationGroups.code, `%${search}%`),
+                            ilike(transportationGroups.description, `%${search}%`)
+                        )
+                    )
                 )
-            );
+                .orderBy(desc(transportationGroups.createdAt));
+        } else {
+            results = await db
+                .select()
+                .from(transportationGroups)
+                .where(isNull(transportationGroups.deletedAt))
+                .orderBy(desc(transportationGroups.createdAt));
         }
 
-        query.orderBy(desc(transportationGroups.createdAt));
-
-        const results = await query;
         res.json(results);
     } catch (error) {
         console.error("Error fetching transportation groups:", error);
@@ -34,7 +44,7 @@ router.get("/", async (req, res) => {
 });
 
 // Create new transportation group
-router.post("/", async (req, res) => {
+router.post("/", async (req: any, res) => {
     try {
         const data = insertTransportationGroupSchema.parse(req.body);
 
@@ -49,7 +59,17 @@ router.post("/", async (req, res) => {
             return res.status(400).json({ message: "Transportation Group Code already exists" });
         }
 
-        const result = await db.insert(transportationGroups).values(data).returning();
+        const userId = req.user?.id || 1;
+        const tenantId = req.user?.tenantId || '001';
+
+        const enrichedData = {
+            ...data,
+            createdBy: userId,
+            updatedBy: userId,
+            tenantId
+        };
+
+        const result = await db.insert(transportationGroups).values(enrichedData).returning();
         res.status(201).json(result[0]);
     } catch (error) {
         if (error instanceof z.ZodError) {
@@ -61,16 +81,17 @@ router.post("/", async (req, res) => {
 });
 
 // Update transportation group
-router.put("/:id", async (req, res) => {
+router.put("/:id", async (req: any, res) => {
     try {
         const id = parseInt(req.params.id);
         if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
 
         const data = insertTransportationGroupSchema.partial().parse(req.body);
+        const userId = req.user?.id || 1;
 
         const result = await db
             .update(transportationGroups)
-            .set({ ...data, updatedAt: new Date() })
+            .set({ ...data, updatedAt: new Date(), updatedBy: userId })
             .where(eq(transportationGroups.id, id))
             .returning();
 
@@ -89,13 +110,15 @@ router.put("/:id", async (req, res) => {
 });
 
 // Delete transportation group
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", async (req: any, res) => {
     try {
         const id = parseInt(req.params.id);
+        const userId = req.user?.id || 1;
         if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
 
         const result = await db
-            .delete(transportationGroups)
+            .update(transportationGroups)
+            .set({ deletedAt: new Date(), updatedBy: userId, updatedAt: new Date() })
             .where(eq(transportationGroups.id, id))
             .returning();
 

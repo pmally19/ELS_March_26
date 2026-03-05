@@ -42,11 +42,16 @@ router.get('/', async (req, res) => {
         COALESCE(b.is_active, b.active, true) as is_active,
         b.created_at,
         b.updated_at,
+        b.created_by,
+        b.updated_by,
+        b."_tenantId",
+        b."_deletedAt",
         (SELECT COUNT(*) FROM bom_components bc WHERE bc.bom_id = b.id) as components
       FROM bill_of_materials b 
       LEFT JOIN materials m ON b.material_id = m.id
       LEFT JOIN production_orders po ON po.bom_id = b.id
       LEFT JOIN plants p ON po.plant_id = p.id
+      WHERE b."_deletedAt" IS NULL
       ORDER BY b.code
     `);
     return res.status(200).json(result.rows);
@@ -96,6 +101,7 @@ router.get('/material/:materialId/components', async (req, res) => {
       FROM bill_of_materials bom
       WHERE bom.material_id = ${materialId}
         AND COALESCE(bom.is_active, bom.active, true) = true
+        AND bom."_deletedAt" IS NULL
       LIMIT 1
     `);
 
@@ -177,7 +183,7 @@ router.get('/:id', async (req, res) => {
         m.base_uom as uom
       FROM bill_of_materials bom
       JOIN materials m ON bom.material_id = m.id
-      WHERE bom.id = ${id}
+      WHERE bom.id = ${id} AND bom."_deletedAt" IS NULL
     `);
 
     if (bomResult.rows.length === 0) {
@@ -232,9 +238,12 @@ router.post('/', async (req, res) => {
     // Use current time for validation dates if format is YYYY-MM-DD
     const now = new Date();
 
+    const userId = (req as any).user?.id || 1;
+    const tenantId = (req as any).user?.tenantId || '001';
+
     const result = await db.execute(sql`
       INSERT INTO bill_of_materials (
-        code, material_id, description, base_quantity, active, is_active, created_at, updated_at
+        code, material_id, description, base_quantity, active, is_active, created_at, updated_at, created_by, updated_by, "_tenantId"
       )
       SELECT 
         ${data.bom_code},
@@ -244,7 +253,10 @@ router.post('/', async (req, res) => {
         ${data.is_active ?? true},
         ${data.is_active ?? true},
         NOW(),
-        NOW()
+        NOW(),
+        ${userId},
+        ${userId},
+        ${tenantId}
       FROM materials m WHERE m.code = ${data.material_code}
       RETURNING *
     `);
@@ -269,6 +281,8 @@ router.put('/:id', async (req, res) => {
     const { id } = req.params;
     const { description, is_active, base_quantity } = req.body;
 
+    const userId = (req as any).user?.id || 1;
+
     const result = await db.execute(sql`
       UPDATE bill_of_materials
       SET 
@@ -276,7 +290,8 @@ router.put('/:id', async (req, res) => {
         is_active = COALESCE(${is_active}, is_active),
         active = COALESCE(${is_active}, active),
         base_quantity = COALESCE(${base_quantity}, base_quantity),
-        updated_at = NOW()
+        updated_at = NOW(),
+        updated_by = ${userId}
       WHERE id = ${id}
       RETURNING *
     `);
@@ -567,10 +582,13 @@ router.post('/', async (req, res) => {
       }
     }
 
+    const userId = (req as any).user?.id || 1;
+    const tenantId = (req as any).user?.tenantId || '001';
+
     // Insert BOM using correct column names - no hardcoded values
     const insertResult = await db.execute(sql`
       INSERT INTO bill_of_materials (
-        code, name, material_id, description, version, is_active, created_at, updated_at
+        code, name, material_id, description, version, is_active, created_at, updated_at, created_by, updated_by, "_tenantId"
       )
       VALUES (
         ${data.bom_code}, 
@@ -580,7 +598,10 @@ router.post('/', async (req, res) => {
         ${data.bom_version || null}, 
         ${data.is_active !== undefined ? data.is_active : null}, 
         NOW(), 
-        NOW()
+        NOW(),
+        ${userId},
+        ${userId},
+        ${tenantId}
       )
       RETURNING *
     `);
@@ -600,7 +621,11 @@ router.post('/', async (req, res) => {
       valid_to: data.valid_to || null,
       is_active: createdBom.is_active,
       created_at: createdBom.created_at,
-      updated_at: createdBom.updated_at
+      updated_at: createdBom.updated_at,
+      created_by: createdBom.created_by,
+      updated_by: createdBom.updated_by,
+      _tenantId: createdBom._tenantId,
+      _deletedAt: createdBom._deletedAt,
     };
 
     return res.status(201).json(responseData);
@@ -679,7 +704,11 @@ router.patch('/:id', async (req, res) => {
       updateClauses.push(`is_active = $${updateValues.length + 1}`);
       updateValues.push(data.is_active);
     }
+
+    const userId = (req as any).user?.id || 1;
     updateClauses.push(`updated_at = NOW()`);
+    updateClauses.push(`updated_by = $${updateValues.length + 1}`);
+    updateValues.push(userId);
 
     if (updateClauses.length === 0) {
       return res.status(400).json({ error: "No fields to update" });
@@ -743,7 +772,11 @@ router.patch('/:id', async (req, res) => {
       valid_to: data.valid_to || null,
       is_active: updatedBom.is_active,
       created_at: updatedBom.created_at,
-      updated_at: updatedBom.updated_at
+      updated_at: updatedBom.updated_at,
+      created_by: updatedBom.created_by,
+      updated_by: updatedBom.updated_by,
+      _tenantId: updatedBom._tenantId,
+      _deletedAt: updatedBom._deletedAt,
     };
 
     return res.status(200).json(responseData);
@@ -765,8 +798,10 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: "BOM not found" });
     }
 
-    // Delete BOM
-    await db.execute(sql`DELETE FROM bill_of_materials WHERE id = ${id}`);
+    const userId = (req as any).user?.id || 1;
+
+    // Delete BOM (Soft Delete)
+    await db.execute(sql`UPDATE bill_of_materials SET is_active = false, active = false, "_deletedAt" = NOW(), updated_by = ${userId}, updated_at = NOW() WHERE id = ${id}`);
 
     return res.status(200).json({ message: "BOM deleted successfully" });
   } catch (error: any) {
@@ -824,10 +859,13 @@ router.post('/bulk-import', async (req, res) => {
           continue;
         }
 
+        const userId = (req as any).user?.id || 1;
+        const tenantId = (req as any).user?.tenantId || '001';
+
         // Insert BOM using correct column names - no hardcoded values
         await db.execute(sql`
           INSERT INTO bill_of_materials (
-            code, name, material_id, description, version, is_active, created_at, updated_at
+            code, name, material_id, description, version, is_active, created_at, updated_at, created_by, updated_by, "_tenantId"
           )
           VALUES (
             ${data.bom_code}, 
@@ -837,7 +875,10 @@ router.post('/bulk-import', async (req, res) => {
             ${data.bom_version || null}, 
             ${data.is_active !== undefined ? data.is_active : null}, 
             NOW(), 
-            NOW()
+            NOW(),
+            ${userId},
+            ${userId},
+            ${tenantId}
           )
         `);
 

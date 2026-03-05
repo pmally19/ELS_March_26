@@ -101,6 +101,7 @@ router.get("/", async (req: Request, res: Response) => {
       updatedAt: row.updated_at,
       createdBy: row.created_by,
       updatedBy: row.updated_by,
+      tenantId: row["_tenantId"],
       module: row.module || 'ALL',
     }));
 
@@ -160,6 +161,7 @@ router.get("/:id", async (req: Request, res: Response) => {
       updatedAt: row.updated_at,
       createdBy: row.created_by,
       updatedBy: row.updated_by,
+      tenantId: row["_tenantId"],
       module: row.module || 'ALL',
     };
 
@@ -223,13 +225,17 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
+    const userId = (req as any).user?.id || 1;
+    const tenantId = (req as any).user?.tenantId || '001';
+
     const result = await pool.query(`
       INSERT INTO posting_period_controls (
         company_code_id, fiscal_year_variant_id, fiscal_year,
         period_from, period_to, posting_status,
         allow_posting, allow_adjustments, allow_reversals,
-        control_reason, is_active, module
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        control_reason, is_active, module,
+        created_by, updated_by, "_tenantId"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *
     `, [
       validatedData.companyCodeId,
@@ -244,6 +250,9 @@ router.post("/", async (req: Request, res: Response) => {
       validatedData.controlReason || null,
       validatedData.isActive,
       validatedData.module,
+      userId,
+      userId,
+      tenantId,
     ]);
 
     const row = result.rows[0];
@@ -286,6 +295,7 @@ router.post("/", async (req: Request, res: Response) => {
       updatedAt: fullRow.updated_at,
       createdBy: fullRow.created_by,
       updatedBy: fullRow.updated_by,
+      tenantId: fullRow["_tenantId"],
       module: fullRow.module || 'ALL',
     };
 
@@ -371,6 +381,8 @@ router.put("/:id", async (req: Request, res: Response) => {
       return res.status(400).json({ message: "No fields to update" });
     }
 
+    const userId = (req as any).user?.id || 1;
+
     // If status is being changed to CLOSED or LOCKED, set controlled_at
     if (validatedData.postingStatus &&
       (validatedData.postingStatus === 'CLOSED' || validatedData.postingStatus === 'LOCKED')) {
@@ -378,6 +390,8 @@ router.put("/:id", async (req: Request, res: Response) => {
     }
 
     updates.push(`updated_at = NOW()`);
+    updates.push(`updated_by = $${paramCount++}`);
+    values.push(userId);
     values.push(id);
 
     const query = `
@@ -427,6 +441,7 @@ router.put("/:id", async (req: Request, res: Response) => {
       updatedAt: fullRow.updated_at,
       createdBy: fullRow.created_by,
       updatedBy: fullRow.updated_by,
+      tenantId: fullRow["_tenantId"],
       module: fullRow.module || 'ALL',
     };
 

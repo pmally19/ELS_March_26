@@ -2,6 +2,7 @@ import pkg from 'pg';
 const { Pool } = pkg;
 type PoolType = InstanceType<typeof Pool>;
 import { InventoryTrackingService } from './inventoryTrackingService.js';
+import { grGLPostingService } from './gr-gl-posting-service.js';
 
 interface GoodsReceiptData {
   grnNumber: string;
@@ -51,6 +52,7 @@ export class GoodsReceiptService {
         materialCode?: string;
         receivedQuantity: number;
         unitPrice: number;
+        unitOfMeasure?: string;
         batchNumber?: string;
         qualityInspectionRequired?: boolean;
       }>;
@@ -65,6 +67,8 @@ export class GoodsReceiptService {
       deliveryNote?: string;
       billOfLading?: string;
       movementType?: string; // Movement type for goods receipt (default: 101)
+      documentNumber?: string | null; // Pre-generated document number from DocumentNumberingService
+      documentTypeId?: number | null; // Document Type ID resolved from numbering service
     },
     receivedBy: string | null = null,
     providedClient?: any
@@ -166,16 +170,17 @@ export class GoodsReceiptService {
         }
       }
 
-      // Get Plant Code
-      const plantResult = await client.query('SELECT code, name FROM plants WHERE id = $1', [plantId]);
+      // Get Plant Code and Company Code
+      const plantResult = await client.query('SELECT code, name, company_code_id FROM plants WHERE id = $1', [plantId]);
       const plantCode = plantResult.rows[0]?.code?.substring(0, 4);
+      const companyCodeId = plantResult.rows[0]?.company_code_id || 1;
       if (!plantCode) throw new Error(`Plant code not found for plant_id: ${plantId}`);
 
       // Validate Vendor Code (Required for Header)
       let vendorCode = poData.vendor_code ? poData.vendor_code.substring(0, 10) : null;
       if (!vendorCode) throw new Error(`Vendor code not found for vendor_id: ${poData.vendor_id}`);
 
-      // NOTE: Storage location is retrieved at ITEM level (SAP standard)
+      // NOTE: Storage location is retrieved at ITEM level (ERP standard)
       // Each material gets its storage location from purchase_order_items table
       // No warehouse_type_id needed at header level
 
@@ -188,12 +193,41 @@ export class GoodsReceiptService {
       }
 
       // 2. Create Header (goods_receipts)
-      const grnNumber = `GRN${Date.now().toString().slice(-8)}${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
-
       // Calculate Header Totals
       const totalQuantity = items.reduce((sum, item) => sum + item.receivedQuantity, 0);
       const totalValue = items.reduce((sum, item) => sum + (item.receivedQuantity * item.unitPrice), 0);
-      const headerStatus = 'COMPLETED'; // Simplified for bulk
+      const headerStatus = 'COMPLETED';
+
+      // ERP-style: ensure movement_type & document_type_id columns exist in goods_receipts (defensive migration)
+      try {
+        await client.query(`ALTER TABLE goods_receipts ADD COLUMN IF NOT EXISTS movement_type VARCHAR(10)`);
+        await client.query(`ALTER TABLE goods_receipts ADD COLUMN IF NOT EXISTS document_type_id INTEGER`);
+      } catch (_) { /* columns already exist */ }
+
+      const effectiveMovementType = receiptData.movementType || '101';
+
+      // Use pre-generated document number from route layer (DocumentNumberingService),
+      // or generate here as fallback if not provided
+      let effectiveGrnNumber = receiptData.documentNumber || null;
+      let resolvedDocTypeId = receiptData.documentTypeId || null;
+      if (!effectiveGrnNumber) {
+        try {
+          const { DocumentNumberingService } = await import('./documentNumberingService.js');
+          const docResult = await DocumentNumberingService.getNextDocumentNumber(
+            effectiveMovementType,
+            'WE',
+            companyCodeId,
+            resolvedDocTypeId || undefined
+          );
+          effectiveGrnNumber = docResult.documentNumber;
+          resolvedDocTypeId = docResult.documentTypeId;
+          console.log(`[GoodsReceipt] Generated numbered GRN from number range: ${effectiveGrnNumber}`);
+        } catch (numErr: any) {
+          // Number range not configured — fall back to timestamp-based reference
+          effectiveGrnNumber = `GRN${Date.now().toString().slice(-8)}${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+          console.warn(`[GoodsReceipt] Number range not configured for Movement Type ${effectiveMovementType}/WE. Using fallback GRN: ${effectiveGrnNumber}. Error: ${numErr.message}`);
+        }
+      }
 
       const headerQuery = `
         INSERT INTO goods_receipts (
@@ -201,27 +235,28 @@ export class GoodsReceiptService {
           warehouse_type_id, total_quantity, total_amount, 
           receipt_date, receipt_type, received_by, status,
           delivery_note, bill_of_lading,
-          material_code, quantity, unit_price, total_value -- LEGACY HEADER FIELDS (Use first item or agg)
-        ) VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, CURRENT_DATE, 'PURCHASE_ORDER', $9, $10, $11, $12, $13, $14, $15, $16)
+          material_code, quantity, unit_price, total_value, movement_type, document_type_id
+        ) VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, CURRENT_DATE, 'PURCHASE_ORDER', $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         RETURNING id
       `;
 
       // For legacy columns on header (material_code, quantity, etc.), we use the first item's data
-      // This ensures backward compatibility if any systems read from header-level material info
       const firstItem = items[0];
 
       const headerValues = [
-        grnNumber, purchaseOrderId, vendorCode, plantId, plantCode,
+        effectiveGrnNumber, purchaseOrderId, vendorCode, plantId, plantCode,
         null, // warehouse_type_id - deprecated, storage location now at item level
         totalQuantity, totalValue,
         finalReceivedBy, headerStatus,
         receiptData.deliveryNote || null, receiptData.billOfLading || null,
-        firstItem.materialCode || 'BULK', totalQuantity, (totalValue / totalQuantity) || 0, totalValue
+        firstItem.materialCode || 'BULK', totalQuantity, (totalValue / totalQuantity) || 0, totalValue,
+        effectiveMovementType,
+        resolvedDocTypeId || null // ERP: document_type_id resolved via DocumentNumberingService
       ];
 
       const grHeaderResult = await client.query(headerQuery, headerValues);
       const grId = grHeaderResult.rows[0].id;
-      console.log(`[GoodsReceipt] Created Header ID: ${grId} (GRN: ${grnNumber})`);
+      console.log(`[GoodsReceipt] Created Header ID: ${grId} (GRN: ${effectiveGrnNumber}, Movement: ${effectiveMovementType})`);
 
       // 3. Process Items
       let requiresQualityCheck = false;
@@ -229,7 +264,7 @@ export class GoodsReceiptService {
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
 
-        // Get PO item details including plant and storage location (SAP standard - item level)
+        // Get PO item details including plant and storage location (ERP standard - item level)
         const poItemResult = await client.query(`
           SELECT 
             poi.plant_id as item_plant_id,
@@ -341,7 +376,7 @@ export class GoodsReceiptService {
             itemStorageLocationCode,
             item.receivedQuantity,
             item.unitPrice,
-            receiptData.movementType || '101' // Pass movement type or default to 101
+            effectiveMovementType // ERP: use the resolved movement type
           );
         } else {
           await this.createQualityInspection(grId, item.materialCode, item.receivedQuantity);
@@ -352,9 +387,25 @@ export class GoodsReceiptService {
         await client.query('COMMIT');
       }
 
+      // ── ERP-style: Auto-trigger GL posting via Movement Type Transaction Keys ──
+      // Fire-and-forget: runs after GR is fully committed, does NOT block the HTTP response.
+      // Flow: movement_type → transaction_key (BSX/WRX) → material_account_determination → GL accounts → journal_entries
+      setImmediate(async () => {
+        try {
+          const glResult = await grGLPostingService.postGRToGL(grId);
+          if (glResult.success) {
+            console.log(`✅ GL posting completed for GR ${grId}: Dr(${glResult.debitAccount}) Cr(${glResult.creditAccount}) Amount=${glResult.totalAmount}`);
+          } else {
+            console.warn(`⚠️ GL posting failed for GR ${grId}: ${glResult.error}`);
+          }
+        } catch (glErr: any) {
+          console.warn(`⚠️ GL posting exception for GR ${grId} (GR is committed, only GL journal skipped): ${glErr.message}`);
+        }
+      });
+
       return {
         success: true,
-        grnNumber,
+        grnNumber: effectiveGrnNumber,  // Return the actual numbered GRN (from number range or fallback)
         grnId: grId,
         requiresQualityCheck
       };
@@ -733,6 +784,15 @@ export class GoodsReceiptService {
       }
 
       const docNumber = `MOV-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      // ERP-style: read movement type from goods_receipts header (stored on creation)
+      let stockMovementType = '101'; // default: GR for PO
+      try {
+        const mtRes = await client.query('SELECT movement_type FROM goods_receipts WHERE id = $1', [grnId]);
+        if (mtRes.rows.length > 0 && mtRes.rows[0].movement_type) {
+          stockMovementType = mtRes.rows[0].movement_type;
+        }
+      } catch (_) { /* keep default */ }
+
       await client.query(`
         INSERT INTO stock_movements (
           document_number,
@@ -755,7 +815,7 @@ export class GoodsReceiptService {
         materialCode,
         plantCode,
         storageLocation,
-        '101', // Goods Receipt movement type
+        stockMovementType, // ERP: use actual movement type from GR header
         quantity,
         unitPrice,
         (quantity * unitPrice),
@@ -1290,7 +1350,7 @@ export class GoodsReceiptService {
   }
 
   /**
-   * Post Goods Receipt with direct storage location (SAP standard - item level)
+   * Post Goods Receipt with direct storage location (ERP standard - item level)
    * This method accepts storage location directly instead of warehouse_type_id
    */
   private async postGoodsReceiptWithStorageLocation(

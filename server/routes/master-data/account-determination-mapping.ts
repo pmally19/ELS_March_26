@@ -473,18 +473,15 @@ export async function getConditionTypesBySalesArea(req: Request, res: Response) 
         }
 
         const result = await pool.query(`
-      SELECT DISTINCT
+      SELECT
         ct.id,
         ct.condition_code as code,
         ct.condition_name as name,
         ct.is_active
       FROM condition_types ct
-      JOIN company_codes cc ON ct.company_code_id = cc.id
-      JOIN sd_sales_organizations so ON so.company_code_id = cc.id
-      JOIN sd_sales_areas sa ON sa.sales_org_code = so.code
-      WHERE sa.id = $1 AND ct.is_active = true
+      WHERE ct.is_active = true
       ORDER BY ct.condition_code
-    `, [id]);
+    `, []);
 
         return res.json(result.rows);
     } catch (error: any) {

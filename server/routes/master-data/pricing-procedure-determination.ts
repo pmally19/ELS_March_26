@@ -16,7 +16,8 @@ router.get('/', async (req, res) => {
         ppd.division_id, dv.name as division_name, dv.code as division_code,
         ppd.customer_pricing_procedure_id, cpp.procedure_code as customer_pricing_procedure_code, cpp.description as customer_pricing_procedure_description,
         ppd.document_pricing_procedure_id, dpp.procedure_code as document_pricing_procedure_code, dpp.description as document_pricing_procedure_description,
-        ppd.pricing_procedure_id, pp.procedure_code as pricing_procedure_code, pp.procedure_name as pricing_procedure_name
+        ppd.pricing_procedure_id, pp.procedure_code as pricing_procedure_code, pp.procedure_name as pricing_procedure_name,
+        ppd.created_at, ppd.updated_at, ppd.created_by, ppd.updated_by, ppd."_deletedAt", ppd."_tenantId" as tenant_id
       FROM pricing_procedure_determinations ppd
       JOIN sd_sales_organizations so ON ppd.sales_organization_id = so.id
       JOIN sd_distribution_channels dc ON ppd.distribution_channel_id = dc.id
@@ -24,6 +25,7 @@ router.get('/', async (req, res) => {
       JOIN customer_pricing_procedures cpp ON ppd.customer_pricing_procedure_id = cpp.id
       JOIN document_pricing_procedures dpp ON ppd.document_pricing_procedure_id = dpp.id
       JOIN pricing_procedures pp ON ppd.pricing_procedure_id = pp.id
+      WHERE ppd."_deletedAt" IS NULL
       ORDER BY so.code, dc.code, dv.code
     `);
         res.json(result.rows);
@@ -59,6 +61,7 @@ router.post('/', async (req, res) => {
       AND division_id = $3
       AND customer_pricing_procedure_id = $4
       AND document_pricing_procedure_id = $5
+      AND "_deletedAt" IS NULL
     `, [sales_organization_id, distribution_channel_id, division_id, customer_pricing_procedure_id, document_pricing_procedure_id]);
 
         if (existing.rows.length > 0) {
@@ -68,10 +71,21 @@ router.post('/', async (req, res) => {
         const result = await pool.query(`
       INSERT INTO pricing_procedure_determinations (
         sales_organization_id, distribution_channel_id, division_id,
-        customer_pricing_procedure_id, document_pricing_procedure_id, pricing_procedure_id
-      ) VALUES ($1, $2, $3, $4, $5, $6)
+        customer_pricing_procedure_id, document_pricing_procedure_id, pricing_procedure_id,
+        created_by, updated_by, "_tenantId"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *
-    `, [sales_organization_id, distribution_channel_id, division_id, customer_pricing_procedure_id, document_pricing_procedure_id, pricing_procedure_id]);
+    `, [
+            sales_organization_id,
+            distribution_channel_id,
+            division_id,
+            customer_pricing_procedure_id,
+            document_pricing_procedure_id,
+            pricing_procedure_id,
+            (req as any).user?.id || 1,
+            (req as any).user?.id || 1,
+            (req as any).user?.tenantId || '001'
+        ]);
 
         res.status(201).json(result.rows[0]);
     } catch (error) {
@@ -84,7 +98,25 @@ router.post('/', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const result = await pool.query('DELETE FROM pricing_procedure_determinations WHERE id = $1 RETURNING *', [id]);
+
+        // Check if determination exists and is not already deleted
+        const existingResult = await pool.query(`
+            SELECT id FROM pricing_procedure_determinations WHERE id = $1 AND "_deletedAt" IS NULL
+        `, [id]);
+
+        if (existingResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Determination not found or already deleted' });
+        }
+
+        // Soft delete the determination
+        const result = await pool.query(`
+            UPDATE pricing_procedure_determinations 
+            SET 
+                "_deletedAt" = NOW(),
+                updated_by = $2
+            WHERE id = $1
+            RETURNING *
+        `, [id, (req as any).user?.id || 1]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Determination not found' });

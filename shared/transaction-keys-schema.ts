@@ -9,9 +9,12 @@ export const transactionKeys = pgTable('transaction_keys', {
     description: text('description'),
     businessContext: varchar('business_context', { length: 100 }),
     isActive: boolean('is_active').default(true),
+    tenantId: varchar('_tenantId', { length: 3 }).default('001'),
     createdBy: integer('created_by'),
+    updatedBy: integer('updated_by'),
     createdAt: timestamp('created_at').defaultNow(),
-    updatedAt: timestamp('updated_at').defaultNow()
+    updatedAt: timestamp('updated_at').defaultNow(),
+    deletedAt: timestamp('_deletedAt', { withTimezone: true })
 });
 
 // Zod schemas for validation

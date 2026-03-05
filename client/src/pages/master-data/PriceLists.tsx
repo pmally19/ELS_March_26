@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { MoreHorizontal, Plus, Edit, Trash2, Search, DollarSign, RefreshCw, Download, ArrowLeft } from 'lucide-react';
+import { MoreHorizontal, Plus, Edit, Trash2, Search, DollarSign, RefreshCw, Download, ArrowLeft, Info, ChevronDown, ChevronRight, AlertCircle, Eye } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 interface PriceList {
@@ -21,6 +21,10 @@ interface PriceList {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  createdBy?: number;
+  updatedBy?: number;
+  tenantId?: string;
+  deletedAt?: string | null;
 }
 
 export default function PriceLists() {
@@ -28,6 +32,9 @@ export default function PriceLists() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showDialog, setShowDialog] = useState(false);
+  const [viewingPriceList, setViewingPriceList] = useState<PriceList | null>(null);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     priceListCode: '',
@@ -49,16 +56,16 @@ export default function PriceLists() {
       setLoading(true);
       const res = await apiRequest('/api/master-data/price-lists');
       const data = await res.json();
-      
+
       // Handle both array response and object with records property for backward compatibility
       const priceListsArray = Array.isArray(data) ? data : (data?.records?.rows || data?.records || []);
       setPriceLists(priceListsArray);
     } catch (error: any) {
       console.error('Error fetching price lists:', error);
-      toast({ 
-        title: 'Failed to fetch price lists', 
+      toast({
+        title: 'Failed to fetch price lists',
         description: error?.message || 'An error occurred while loading price lists',
-        variant: 'destructive' 
+        variant: 'destructive'
       });
       setPriceLists([]);
     } finally {
@@ -103,7 +110,8 @@ export default function PriceLists() {
     }
   });
 
-  const handleEdit = (priceList: PriceList) => {
+  const handleEdit = (priceList: PriceList, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     setFormData({
       priceListCode: priceList.priceListCode,
       name: priceList.name,
@@ -117,7 +125,14 @@ export default function PriceLists() {
     setShowDialog(true);
   };
 
-  const handleDelete = async (id: number) => {
+  const openDetails = (priceList: PriceList) => {
+    setViewingPriceList(priceList);
+    setIsDetailsOpen(true);
+    setAdminDataOpen(false);
+  };
+
+  const handleDelete = async (id: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     if (confirm('Are you sure you want to delete this price list?')) {
       try {
         await apiRequest(`/api/master-data/price-lists/${id}`, { method: 'DELETE' });
@@ -125,10 +140,10 @@ export default function PriceLists() {
         await fetchPriceLists();
       } catch (error: any) {
         console.error('Error deleting price list:', error);
-        toast({ 
-          title: 'Failed to delete price list', 
+        toast({
+          title: 'Failed to delete price list',
           description: error?.message || 'An error occurred while deleting',
-          variant: 'destructive' 
+          variant: 'destructive'
         });
       }
     }
@@ -190,8 +205,8 @@ export default function PriceLists() {
     <div className="p-6">
       {/* Header */}
       <div className="flex items-center gap-4 mb-6">
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           size="sm"
           onClick={() => window.history.back()}
           className="flex items-center gap-2"
@@ -239,7 +254,7 @@ export default function PriceLists() {
       </div>
 
       {/* Create/Edit Dialog */}
-      <Dialog open={showDialog} onOpenChange={(o)=>{ if (!o) resetForm(); else setShowDialog(true); }}>
+      <Dialog open={showDialog} onOpenChange={(o) => { if (!o) resetForm(); else setShowDialog(true); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editingId ? 'Edit Price List' : 'New Price List'}</DialogTitle>
@@ -248,19 +263,19 @@ export default function PriceLists() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-2">Price List Code*</label>
-              <Input value={formData.priceListCode} onChange={(e)=>setFormData({ ...formData, priceListCode: e.target.value })} required />
+              <Input value={formData.priceListCode} onChange={(e) => setFormData({ ...formData, priceListCode: e.target.value })} required />
             </div>
             <div>
               <label className="block text-sm font-medium mb-2">Name*</label>
-              <Input value={formData.name} onChange={(e)=>setFormData({ ...formData, name: e.target.value })} required />
+              <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required />
             </div>
             <div className="md:col-span-2">
               <label className="block text-sm font-medium mb-2">Description</label>
-              <Input value={formData.description} onChange={(e)=>setFormData({ ...formData, description: e.target.value })} />
+              <Input value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-2">Currency*</label>
-              <select value={formData.currency} onChange={(e)=>setFormData({ ...formData, currency: e.target.value })} className="w-full p-2 border border-gray-300 rounded-md" required>
+              <select value={formData.currency} onChange={(e) => setFormData({ ...formData, currency: e.target.value })} className="w-full p-2 border border-gray-300 rounded-md" required>
                 <option value="USD">USD</option>
                 <option value="EUR">EUR</option>
                 <option value="GBP">GBP</option>
@@ -269,7 +284,7 @@ export default function PriceLists() {
             </div>
             <div>
               <label className="block text-sm font-medium mb-2">Price List Type*</label>
-              <select value={formData.priceListType} onChange={(e)=>setFormData({ ...formData, priceListType: e.target.value })} className="w-full p-2 border border-gray-300 rounded-md" required>
+              <select value={formData.priceListType} onChange={(e) => setFormData({ ...formData, priceListType: e.target.value })} className="w-full p-2 border border-gray-300 rounded-md" required>
                 <option value="standard">Standard</option>
                 <option value="promotional">Promotional</option>
                 <option value="contract">Contract</option>
@@ -277,19 +292,135 @@ export default function PriceLists() {
             </div>
             <div>
               <label className="block text-sm font-medium mb-2">Valid From*</label>
-              <Input type="date" value={formData.validFrom} onChange={(e)=>setFormData({ ...formData, validFrom: e.target.value })} required pattern="\\d{4}-\\d{2}-\\d{2}" title="YYYY-MM-DD" />
+              <Input type="date" value={formData.validFrom} onChange={(e) => setFormData({ ...formData, validFrom: e.target.value })} required pattern="\\d{4}-\\d{2}-\\d{2}" title="YYYY-MM-DD" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-2">Valid To</label>
-              <Input type="date" value={formData.validTo} onChange={(e)=>setFormData({ ...formData, validTo: e.target.value })} pattern="\\d{4}-\\d{2}-\\d{2}" title="YYYY-MM-DD" />
+              <Input type="date" value={formData.validTo} onChange={(e) => setFormData({ ...formData, validTo: e.target.value })} pattern="\\d{4}-\\d{2}-\\d{2}" title="YYYY-MM-DD" />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={resetForm}>Cancel</Button>
-            <Button onClick={()=> editingId ? updateMutation.mutate() : createMutation.mutate()} disabled={createMutation.isPending || updateMutation.isPending}>
+            <Button onClick={() => editingId ? updateMutation.mutate() : createMutation.mutate()} disabled={createMutation.isPending || updateMutation.isPending}>
               {createMutation.isPending || updateMutation.isPending ? 'Saving...' : (editingId ? 'Save Changes' : 'Save')}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Details Dialog - View Only */}
+      <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Price List Details</DialogTitle>
+            <DialogDescription>
+              View complete information for this price list
+            </DialogDescription>
+          </DialogHeader>
+          {viewingPriceList && (
+            <div className="space-y-6">
+              {/* Basic Information */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold border-b pb-2">Basic Information</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Code</p>
+                    <p className="font-medium">{viewingPriceList.priceListCode}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Name</p>
+                    <p className="font-medium">{viewingPriceList.name}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Currency</p>
+                    <p className="font-medium">{viewingPriceList.currency}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Type</p>
+                    <p className="font-medium capitalize">{viewingPriceList.priceListType}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-sm text-muted-foreground">Description</p>
+                    <p className="font-medium">{viewingPriceList.description || '—'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Validity */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold border-b pb-2">Validity</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Valid From</p>
+                    <p className="font-medium">{viewingPriceList.validFrom}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Valid To</p>
+                    <p className="font-medium">{viewingPriceList.validTo || '—'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Administrative Data (SAP ECC style) ────────────────── */}
+              <div className="border rounded-md overflow-hidden bg-white mt-4">
+                <button
+                  type="button"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                >
+                  <span className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <Info className="h-3.5 w-3.5" />
+                    Administrative Data
+                  </span>
+                  {adminDataOpen
+                    ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                    : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                </button>
+
+                {adminDataOpen && (
+                  <dl className="px-4 py-3 space-y-2 bg-white">
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingPriceList.createdAt ? new Date(viewingPriceList.createdAt).toLocaleString() : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">{viewingPriceList.createdBy ?? '—'}</dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingPriceList.updatedAt ? new Date(viewingPriceList.updatedAt).toLocaleString() : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">{viewingPriceList.updatedBy ?? '—'}</dd>
+                    </div>
+                    <div className="flex justify-between items-center pt-2 mt-2 border-t border-gray-100">
+                      <dt className="text-xs text-gray-400">Tenant / Client</dt>
+                      <dd className="text-xs text-gray-500 font-mono bg-gray-50 px-1.5 py-0.5 rounded">
+                        {viewingPriceList.tenantId || '001'}
+                      </dd>
+                    </div>
+                    {viewingPriceList.deletedAt && (
+                      <div className="flex justify-between items-center pt-2 mt-2 border-t border-red-50">
+                        <dt className="text-xs text-red-400 flex items-center gap-1.5">
+                          <AlertCircle className="h-3.5 w-3.5" />
+                          Deletion Flag
+                        </dt>
+                        <dd className="text-xs text-red-500 font-medium">
+                          Yes (Soft Deleted on {new Date(viewingPriceList.deletedAt).toLocaleDateString()})
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -316,7 +447,7 @@ export default function PriceLists() {
               </thead>
               <tbody>
                 {filteredPriceLists.map((priceList) => (
-                  <tr key={priceList.id} className="hover:bg-gray-50">
+                  <tr key={priceList.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openDetails(priceList)}>
                     <td className="border border-gray-300 px-4 py-2 font-mono">{priceList.priceListCode}</td>
                     <td className="border border-gray-300 px-4 py-2">{priceList.name}</td>
                     <td className="border border-gray-300 px-4 py-2 capitalize">{priceList.priceListType}</td>
@@ -324,24 +455,26 @@ export default function PriceLists() {
                     <td className="border border-gray-300 px-4 py-2">{priceList.validFrom}</td>
                     <td className="border border-gray-300 px-4 py-2">{priceList.validTo || '-'}</td>
                     <td className="border border-gray-300 px-4 py-2">
-                      <span className={`px-2 py-1 rounded text-xs ${
-                        priceList.isActive 
-                          ? 'bg-green-100 text-green-800' 
+                      <span className={`px-2 py-1 rounded text-xs ${priceList.isActive
+                          ? 'bg-green-100 text-green-800'
                           : 'bg-red-100 text-red-800'
-                      }`}>
+                        }`}>
                         {priceList.isActive ? 'Active' : 'Inactive'}
                       </span>
                     </td>
-                    <td className="border border-gray-300 px-4 py-2">
+                    <td className="border border-gray-300 px-4 py-2" onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => handleEdit(priceList)}>
+                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openDetails(priceList); }}>
+                            <Eye className="h-4 w-4 mr-2" /> View Details
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={(e) => handleEdit(priceList, e as any)}>
                             <Edit className="h-4 w-4 mr-2" /> Edit
                           </DropdownMenuItem>
-                          <DropdownMenuItem className="text-red-600" onClick={() => handleDelete(priceList.id)}>
+                          <DropdownMenuItem className="text-red-600" onClick={(e) => handleDelete(priceList.id, e as any)}>
                             <Trash2 className="h-4 w-4 mr-2" /> Delete
                           </DropdownMenuItem>
                         </DropdownMenuContent>

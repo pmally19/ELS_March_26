@@ -45,7 +45,7 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Plus, Search, Edit, Download, ArrowLeft, RefreshCw, MoreHorizontal, CheckCircle2, XCircle } from "lucide-react";
+import { Plus, Search, Edit, Trash2, Download, ArrowLeft, RefreshCw, MoreHorizontal, CheckCircle2, Eye, Info, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { Textarea } from "@/components/ui/textarea";
@@ -57,6 +57,12 @@ type PurchasingItemCategory = {
     name: string;
     description: string;
     is_active: boolean;
+    created_by?: number;
+    updated_by?: number;
+    _tenantId?: string;
+    _deletedAt?: string | null;
+    created_at?: string;
+    updated_at?: string;
 };
 
 // Form Schema
@@ -71,6 +77,9 @@ export default function PurchasingItemCategories() {
     const [searchQuery, setSearchQuery] = useState("");
     const [showDialog, setShowDialog] = useState(false);
     const [editingCategory, setEditingCategory] = useState<PurchasingItemCategory | null>(null);
+    const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+    const [viewingCategory, setViewingCategory] = useState<PurchasingItemCategory | null>(null);
+    const [adminDataOpen, setAdminDataOpen] = useState(false);
     const { toast } = useToast();
     const queryClient = useQueryClient();
 
@@ -218,6 +227,13 @@ export default function PurchasingItemCategories() {
         form.reset();
     };
 
+    // Handle view
+    const handleView = (category: PurchasingItemCategory) => {
+        setViewingCategory(category);
+        setIsViewDialogOpen(true);
+        setAdminDataOpen(false);
+    };
+
     // Handle edit
     const handleEdit = (category: PurchasingItemCategory) => {
         setEditingCategory(category);
@@ -353,35 +369,46 @@ export default function PurchasingItemCategories() {
                                     ) : filteredCategories.length === 0 ? (
                                         <TableRow>
                                             <TableCell colSpan={5} className="text-center h-24">
-                                                No categories found.
+                                                No categories found. {searchQuery ? "Try a different search." : "Create your first category."}
                                             </TableCell>
                                         </TableRow>
                                     ) : (
                                         filteredCategories.map((category) => (
-                                            <TableRow key={category.id} className="hover:bg-gray-50">
-                                                <TableCell className="font-medium">{category.code}</TableCell>
+                                            <TableRow key={category.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => handleView(category)}>
+                                                <TableCell className="font-medium font-mono">{category.code}</TableCell>
                                                 <TableCell>{category.name}</TableCell>
                                                 <TableCell className="hidden md:table-cell">{category.description}</TableCell>
                                                 <TableCell className="text-center">
-                                                    {category.is_active ? (
-                                                        <CheckCircle2 className="h-5 w-5 text-green-600 mx-auto" />
-                                                    ) : (
-                                                        <XCircle className="h-5 w-5 text-gray-400 mx-auto" />
-                                                    )}
+                                                    <span
+                                                        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${category.is_active
+                                                            ? "bg-green-100 text-green-800"
+                                                            : "bg-gray-100 text-gray-800"
+                                                            }`}
+                                                    >
+                                                        {category.is_active ? "Active" : "Inactive"}
+                                                    </span>
                                                 </TableCell>
-                                                <TableCell className="text-right">
+                                                <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                                                     <DropdownMenu>
                                                         <DropdownMenuTrigger asChild>
-                                                            <Button variant="ghost" size="sm">
+                                                            <Button variant="ghost" size="icon" title="More actions">
                                                                 <MoreHorizontal className="h-4 w-4" />
                                                             </Button>
                                                         </DropdownMenuTrigger>
                                                         <DropdownMenuContent align="end">
+                                                            <DropdownMenuItem onClick={() => handleView(category)}>
+                                                                <Eye className="mr-2 h-4 w-4" />
+                                                                View Details
+                                                            </DropdownMenuItem>
                                                             <DropdownMenuItem onClick={() => handleEdit(category)}>
                                                                 <Edit className="mr-2 h-4 w-4" />
                                                                 Edit
                                                             </DropdownMenuItem>
-                                                            <DropdownMenuItem onClick={() => handleDelete(category)} className="text-red-600">
+                                                            <DropdownMenuItem
+                                                                onClick={() => handleDelete(category)}
+                                                                className="text-red-600"
+                                                            >
+                                                                <Trash2 className="mr-2 h-4 w-4" />
                                                                 Delete
                                                             </DropdownMenuItem>
                                                         </DropdownMenuContent>
@@ -479,6 +506,137 @@ export default function PurchasingItemCategories() {
                             </DialogFooter>
                         </form>
                     </Form>
+                </DialogContent>
+            </Dialog>
+
+            {/* View Details Dialog */}
+            <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+                <DialogContent className="sm:max-w-[900px] max-h-[90vh] overflow-hidden flex flex-col">
+                    {viewingCategory && (
+                        <>
+                            <DialogHeader className="flex-shrink-0">
+                                <div className="flex items-center space-x-4">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setIsViewDialogOpen(false)}
+                                        className="flex items-center space-x-2"
+                                    >
+                                        <ArrowLeft className="h-4 w-4" />
+                                        <span>Back</span>
+                                    </Button>
+                                    <div className="flex-1">
+                                        <DialogTitle>Item Category Details</DialogTitle>
+                                        <DialogDescription>
+                                            Comprehensive information about {viewingCategory.name}
+                                        </DialogDescription>
+                                    </div>
+                                </div>
+                            </DialogHeader>
+
+                            <div className="flex-1 overflow-y-auto space-y-6 px-1">
+                                <div className="bg-gray-50 p-4 rounded-lg flex justify-between items-start">
+                                    <div>
+                                        <h3 className="text-xl font-bold">{viewingCategory.name}</h3>
+                                        <div className="flex items-center mt-1">
+                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-800 mr-2">
+                                                {viewingCategory.code}
+                                            </span>
+                                            <span
+                                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${viewingCategory.is_active
+                                                    ? "bg-green-100 text-green-800"
+                                                    : "bg-gray-100 text-gray-800"
+                                                    }`}
+                                            >
+                                                {viewingCategory.is_active ? "Active" : "Inactive"}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <Button variant="outline" size="sm" onClick={() => { setIsViewDialogOpen(false); handleEdit(viewingCategory); }}>
+                                        <Edit className="mr-2 h-4 w-4" />
+                                        Edit
+                                    </Button>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <Card className="shadow-sm border-gray-100">
+                                        <CardHeader className="pb-3 border-b border-gray-50 bg-gray-50/50">
+                                            <CardTitle className="text-sm font-semibold flex items-center text-gray-700">
+                                                <Info className="mr-2 h-4 w-4 text-gray-500" />
+                                                Basic Information
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="pt-4 space-y-4">
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-500 mb-1">Code</p>
+                                                    <p className="text-sm font-mono">{viewingCategory.code}</p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-500 mb-1">Name</p>
+                                                    <p className="text-sm">{viewingCategory.name}</p>
+                                                </div>
+                                                <div className="col-span-2">
+                                                    <p className="text-sm font-medium text-gray-500 mb-1">Description</p>
+                                                    <p className="text-sm">{viewingCategory.description || 'No description provided'}</p>
+                                                </div>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+
+                                    <Card className="shadow-sm border-gray-100">
+                                        <CardHeader className="pb-3 border-b border-gray-50 bg-gray-50/50">
+                                            <CardTitle className="text-sm font-semibold flex items-center text-gray-700">
+                                                <CheckCircle2 className="mr-2 h-4 w-4 text-gray-500" />
+                                                Administrative Data
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="pt-4 space-y-4">
+                                            <dl className="space-y-3">
+                                                <div className="flex justify-between">
+                                                    <dt className="text-sm text-gray-500">Created on</dt>
+                                                    <dd className="text-sm font-medium">
+                                                        {viewingCategory.created_at ? new Date(viewingCategory.created_at).toLocaleString() : '—'}
+                                                    </dd>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <dt className="text-sm text-gray-500">Created by</dt>
+                                                    <dd className="text-sm font-medium">{viewingCategory.created_by ?? '—'}</dd>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <dt className="text-sm text-gray-500">Last changed on</dt>
+                                                    <dd className="text-sm font-medium">
+                                                        {viewingCategory.updated_at ? new Date(viewingCategory.updated_at).toLocaleString() : '—'}
+                                                    </dd>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <dt className="text-sm text-gray-500">Last changed by</dt>
+                                                    <dd className="text-sm font-medium">{viewingCategory.updated_by ?? '—'}</dd>
+                                                </div>
+                                                <div className="flex justify-between pt-2 border-t border-gray-100">
+                                                    <dt className="text-sm text-gray-500">Tenant</dt>
+                                                    <dd className="text-sm font-mono bg-gray-100 px-2 py-0.5 rounded">
+                                                        {viewingCategory._tenantId || '001'}
+                                                    </dd>
+                                                </div>
+                                                {viewingCategory._deletedAt && (
+                                                    <div className="flex justify-between pt-2 border-t border-red-100">
+                                                        <dt className="text-sm text-red-500 flex items-center">
+                                                            <AlertCircle className="mr-1 h-3.5 w-3.5" />
+                                                            Deletion Flag
+                                                        </dt>
+                                                        <dd className="text-sm text-red-600 font-medium">
+                                                            Yes (Soft Deleted on {new Date(viewingCategory._deletedAt).toLocaleDateString()})
+                                                        </dd>
+                                                    </div>
+                                                )}
+                                            </dl>
+                                        </CardContent>
+                                    </Card>
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </DialogContent>
             </Dialog>
         </div>

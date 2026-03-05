@@ -3,6 +3,7 @@ import { db, pool } from "../../db.js";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
 import { APInvoiceService } from "../../services/apInvoiceService.js";
 import { paymentAuthorizationService } from "../../services/paymentAuthorizationService.js";
+import { DocumentNumberingService } from "../../services/documentNumberingService.js";
 
 const router = Router();
 const apInvoiceService = new APInvoiceService(pool);
@@ -1426,7 +1427,8 @@ router.post("/invoices", async (req, res) => {
       items,
       currency,
       notes,
-      perform_validation = true
+      perform_validation = true,
+      document_type_id
     } = req.body;
 
     // DEBUG: Log exactly what we're receiving
@@ -1471,7 +1473,8 @@ router.post("/invoices", async (req, res) => {
       goodsReceiptId: goods_receipt_id,
       items: transformedItems,
       currency: currency || 'USD',
-      notes: notes
+      notes: notes,
+      documentTypeId: document_type_id
     }, perform_validation);
 
     if (!result.success) {
@@ -2282,40 +2285,14 @@ router.post('/manual-invoice', async (req, res) => {
 
     // Generate accounting document number (MANDATORY - transaction fails if this fails)
     let accountingDocNumber = null;
+    let accountingDocTypeId = null;
     try {
-      // Check for duplicate accounting document numbers with retry logic
-      let retryCount = 0;
-      const maxRetries = 10;
-
-      while (retryCount < maxRetries) {
-        const docCountResult = await client.query(
-          'SELECT COUNT(*)::integer as count FROM accounting_documents WHERE document_type = $1',
-          ['KR'] // KR = Vendor Invoice (Accounts Payable)
-        );
-        const docCount = parseInt(docCountResult.rows[0]?.count || 0) + retryCount + 1;
-        accountingDocNumber = `AP - ${new Date().getFullYear()} -${docCount.toString().padStart(6, '0')} `;
-
-        // Check if this document number already exists
-        const existingDocCheck = await client.query(
-          'SELECT id FROM accounting_documents WHERE document_number = $1 LIMIT 1',
-          [accountingDocNumber]
-        );
-
-        if (existingDocCheck.rows.length === 0) {
-          // Document number is unique, break out of loop
-          break;
-        }
-
-        retryCount++;
-        if (retryCount >= maxRetries) {
-          // Fallback: add timestamp to make it unique
-          accountingDocNumber = `AP - ${new Date().getFullYear()} -${Date.now().toString().slice(-6)} `;
-          break;
-        }
-      }
+      const docResult = await DocumentNumberingService.getNextDocumentNumberForDirectType('KR', finalCompanyCodeId);
+      accountingDocNumber = docResult.documentNumber;
+      accountingDocTypeId = docResult.documentTypeId;
     } catch (e) {
       await client.query('ROLLBACK');
-      throw new Error(`Failed to generate accounting document number: ${e.message} `);
+      throw new Error(`Failed to generate accounting document number: ${e.message}`);
     }
 
     // Validate accounting document number is not null (MANDATORY)
@@ -2519,17 +2496,18 @@ AND(
 
       const accountingDocResult = await client.query(`
         INSERT INTO accounting_documents(
-  document_number, company_code, fiscal_year, document_type,
+  document_number, company_code, fiscal_year, document_type, document_type_id,
   posting_date, document_date, period, reference, header_text,
   total_amount, currency, source_module, source_document_id,
   source_document_type, created_by
-) VALUES($1, $2, $3, $4, $5:: date, $6:: date, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+) VALUES($1, $2, $3, $4, $5, $6:: date, $7:: date, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         RETURNING id
       `, [
         accountingDocNumber,
         companyCodeShort,
         fiscalYear,
         'KR', // KR = Vendor Invoice (Accounts Payable)
+        accountingDocTypeId,
         invoice_date,
         invoice_date,
         period,

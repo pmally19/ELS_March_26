@@ -40,14 +40,14 @@ export interface AppliedTaxRule {
  * Follows standard ERP tax determination logic without SAP terminology
  */
 export class TaxCalculationService {
-  
+
   /**
    * Calculate tax for a transaction
    */
   async calculateTax(request: TaxCalculationRequest): Promise<TaxCalculationResult> {
     // Step 1: Determine applicable tax profile
     const profile = await this.determineTaxProfile(request);
-    
+
     if (!profile) {
       throw new Error('No applicable tax profile found for this transaction');
     }
@@ -106,7 +106,7 @@ export class TaxCalculationService {
           eq(taxProfiles.isActive, true)
         ))
         .limit(1);
-      
+
       return profile;
     }
 
@@ -120,7 +120,7 @@ export class TaxCalculationService {
           eq(taxProfiles.isActive, true)
         ))
         .limit(1);
-      
+
       if (profile) return profile;
     }
 

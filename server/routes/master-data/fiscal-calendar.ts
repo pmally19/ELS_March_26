@@ -71,9 +71,12 @@ router.post('/', async (req: Request, res: Response) => {
             return res.status(400).json({ success: false, error: 'Number of periods must be between 1 and 52' });
         }
 
+        const userId = (req as any).user?.id || 1;
+        const tenantId = (req as any).user?.tenantId || '001';
+
         const result = await db.execute(sql`
-      INSERT INTO fiscal_calendars (calendar_id, start_date, end_date, number_of_periods, active)
-      VALUES (${calendar_id}, ${start_date}, ${end_date}, ${periods}, ${active !== false})
+      INSERT INTO fiscal_calendars (calendar_id, start_date, end_date, number_of_periods, active, created_by, updated_by, "_tenantId")
+      VALUES (${calendar_id}, ${start_date}, ${end_date}, ${periods}, ${active !== false}, ${userId}, ${userId}, ${tenantId})
       RETURNING *
     `);
 
@@ -119,6 +122,10 @@ router.put('/:id', async (req: Request, res: Response) => {
         if (end_date !== undefined) { updates.push(`end_date = $${paramCount++}`); values.push(end_date); }
         if (number_of_periods !== undefined) { updates.push(`number_of_periods = $${paramCount++}`); values.push(number_of_periods); }
         if (active !== undefined) { updates.push(`active = $${paramCount++}`); values.push(active); }
+
+        const userId = (req as any).user?.id || 1;
+        updates.push(`updated_by = $${paramCount++}`);
+        values.push(userId);
 
         updates.push(`updated_at = NOW()`);
         values.push(parseInt(id));

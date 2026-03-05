@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -213,6 +213,9 @@ export default function OrderToCash() {
   const [selectedOrderScheduleLines, setSelectedOrderScheduleLines] = useState<any[]>([]);
   const [showScheduleLines, setShowScheduleLines] = useState(false);
   const [showBlockPanel, setShowBlockPanel] = useState(false);
+
+  // PGI state
+  const [pgiMovementType, setPgiMovementType] = useState<Record<number, string>>({});
   const [showSplitDialog, setShowSplitDialog] = useState(false);
   const [selectedScheduleLineForSplit, setSelectedScheduleLineForSplit] = useState<any>(null);
 
@@ -628,8 +631,10 @@ export default function OrderToCash() {
   // Handler to complete delivery and process inventory reduction
   const handlePostGoodsIssue = async (deliveryId: number) => {
     try {
+      const movementType = pgiMovementType[deliveryId] || '601';
       const response = await apiRequest(`/api/order-to-cash/delivery-documents/${deliveryId}/post-goods-issue`, {
         method: "POST",
+        body: JSON.stringify({ movementType }),
       });
 
       const result = await response.json();
@@ -1812,11 +1817,11 @@ export default function OrderToCash() {
           <TabsTrigger value="inventory">Inventory Check</TabsTrigger>
           <TabsTrigger value="process">Process Flow</TabsTrigger>
           <TabsTrigger value="delivery">Delivery</TabsTrigger>
+          <TabsTrigger value="transfer">Transfer Orders</TabsTrigger>
           <TabsTrigger value="pgi" className="bg-blue-50 data-[state=active]:bg-blue-100">
             <Package className="h-4 w-4 mr-2" />
             Post Goods Issue
           </TabsTrigger>
-          <TabsTrigger value="transfer">Transfer Orders</TabsTrigger>
           <TabsTrigger value="invoicing">Invoicing</TabsTrigger>
           <TabsTrigger value="financial">Financial Posting</TabsTrigger>
           <TabsTrigger value="credit">Credit Management</TabsTrigger>
@@ -2821,6 +2826,22 @@ export default function OrderToCash() {
                                     <div className="text-xs text-gray-500">
                                       {delivery.items} item(s)
                                     </div>
+                                  </div>
+                                  <div className="flex flex-col space-y-2 mr-4 text-right items-end">
+                                    <div className="text-xs font-medium text-gray-700">Movement Type</div>
+                                    <Select
+                                      value={pgiMovementType[delivery.id] || '601'}
+                                      onValueChange={(value) => setPgiMovementType(prev => ({ ...prev, [delivery.id]: value }))}
+                                    >
+                                      <SelectTrigger className="w-[200px] h-8 text-xs bg-white">
+                                        <SelectValue placeholder="Select movement type" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="601">601 - GI for delivery</SelectItem>
+                                        <SelectItem value="602">602 - RE for delivery</SelectItem>
+                                        <SelectItem value="641">641 - TF to stck in trans.</SelectItem>
+                                      </SelectContent>
+                                    </Select>
                                   </div>
                                   <Button
                                     size="lg"
@@ -3849,9 +3870,11 @@ export default function OrderToCash() {
         onSubmit={(data) => createOrderMutation.mutate(data)}
         isLoading={createOrderMutation.isPending}
         customers={customers}
-        products={uniqueProducts}
+        products={products}
         productsLoading={productsLoading}
         productsError={productsError}
+        shippingPointList={shippingPointList}
+        setShippingPointList={setShippingPointList}
       />
 
       {/* Letter Modal */}
@@ -4260,7 +4283,8 @@ export default function OrderToCash() {
 }
 
 // Create Sales Order Dialog Component
-function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, customers = [], products = [], productsLoading = false, productsError = null }) {
+function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, customers = [], products = [], productsLoading = false, productsError = null, shippingPointList = [], setShippingPointList = () => { } }) {
+  const queryClient = useQueryClient();
   const { toast } = useToast();
   const [customerAddresses, setCustomerAddresses] = useState({
     sold_to: [],
@@ -4281,11 +4305,80 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
   const [documentTypes, setDocumentTypes] = useState<any[]>([]);
   const [documentTypesLoading, setDocumentTypesLoading] = useState(false);
 
+  // Fetch all item categories for dropdown
+  const { data: itemCategories = [] } = useQuery<any[]>({
+    queryKey: ['/api/master-data/item-categories'],
+    queryFn: async () => {
+      try {
+        const response = await fetch('/api/master-data/item-categories');
+        const data = await response.json();
+        return data?.data || data || [];
+      } catch {
+        return [];
+      }
+    },
+  });
+
   // Track auto-filled fields for UI indication
   const [autoFilledFields, setAutoFilledFields] = useState<Set<string>>(new Set());
 
   // Track auto-filled fields for each line item
   const [autoFilledItemFields, setAutoFilledItemFields] = useState<Map<number, Set<string>>>(new Map());
+
+  // Which item index is selected in the Pricing Conditions panel tab bar
+  // null = aggregated (all items), 0/1/2... = specific item
+  const [selectedPricingItemIndex, setSelectedPricingItemIndex] = useState<number | null>(null);
+
+  // Manual price overrides for pricing procedure steps (PR00, FR10 etc.)
+  // Key = condition_type_code (e.g. 'PR00'), Value = user-entered rate as string
+  const [manualPriceOverrides, setManualPriceOverrides] = useState<Record<string, string>>({});
+  const setManualRate = (conditionCode: string, value: string) => {
+    setManualPriceOverrides(prev => ({ ...prev, [conditionCode]: value }));
+  };
+
+  /**
+   * Fetch the PR00 (or any) condition record price for a material + customer combination.
+   * Auto-fills the item's unit_price if a condition record is found.
+   * Falls back to catalogPrice if no condition record exists.
+   */
+  const fetchConditionPrice = async (
+    index: number,
+    materialId: string | number,
+    catalogPrice: number | null,
+    itemAutoFilled: Set<string>
+  ) => {
+    if (!orderData.pricing_procedure) {
+      // No pricing procedure yet — use catalog price as fallback
+      if (catalogPrice != null && catalogPrice > 0) {
+        updateItem(index, 'unit_price', String(catalogPrice));
+        itemAutoFilled.add('unit_price');
+      }
+      return;
+    }
+    try {
+      const params = new URLSearchParams({
+        conditionType: 'PR00',
+        materialId: String(materialId),
+        ...(orderData.customer_id ? { customerId: String(orderData.customer_id) } : {}),
+        ...(orderData.sales_org_id ? { salesOrgId: String(orderData.sales_org_id) } : {}),
+      });
+      const res = await apiRequest(`/api/pricing-procedures/price-lookup?${params}`);
+      const data = await res.json();
+      if (data.found && data.price > 0) {
+        updateItem(index, 'unit_price', String(data.price));
+        itemAutoFilled.add('unit_price');
+        itemAutoFilled.add('unit_price_from_condition');
+      } else if (catalogPrice != null && catalogPrice > 0) {
+        updateItem(index, 'unit_price', String(catalogPrice));
+        itemAutoFilled.add('unit_price');
+      }
+    } catch {
+      if (catalogPrice != null && catalogPrice > 0) {
+        updateItem(index, 'unit_price', String(catalogPrice));
+        itemAutoFilled.add('unit_price');
+      }
+    }
+  };
 
   // Fetch shipping conditions for delivery date calculation
   const { data: shippingConditions = [], isLoading: shippingConditionsLoading } = useQuery<any[]>({
@@ -4845,7 +4938,9 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
         plant_code: '',
         storage_location_id: '',
         storage_location_name: '',
-        storage_location_code: ''
+        storage_location_code: '',
+        item_category: '',
+        item_category_group: ''
       }
     ]
   });
@@ -4881,19 +4976,30 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
   const { data: pricingPreview, isLoading: pricingPreviewLoading } = useQuery({
     queryKey: ['/api/pricing-procedures/preview', orderData.pricing_procedure, orderData.customer_id,
       orderData.sales_org_id, orderData.distribution_channel_id, orderData.division_id,
-      JSON.stringify(orderData.items?.map((i: any) => ({ mid: i.material_id, q: i.quantity, p: i.unit_price })))],
+      selectedPricingItemIndex,
+      JSON.stringify(orderData.items?.map((i: any) => ({ mid: i.material_id, q: i.quantity, p: i.unit_price }))),
+      JSON.stringify(manualPriceOverrides)],
     enabled: !!orderData.pricing_procedure && !!hasItemsForPreview,
     queryFn: async () => {
       try {
+        // When a specific item tab is selected, only send that item's data
+        const allItems = orderData.items?.filter((i: any) => i.material_id && parseFloat(i.quantity || 0) > 0);
+        const itemsToSend = selectedPricingItemIndex !== null
+          ? [allItems[selectedPricingItemIndex]].filter(Boolean)
+          : allItems;
+
+        if (!itemsToSend || itemsToSend.length === 0) return null;
+
         const response = await apiRequest(`/api/pricing-procedures/${orderData.pricing_procedure}/preview`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            items: orderData.items?.filter((i: any) => i.material_id && parseFloat(i.quantity || 0) > 0),
+            items: itemsToSend,
             customerId: orderData.customer_id,
             salesOrgId: orderData.sales_org_id,
             distributionChannelId: orderData.distribution_channel_id,
             divisionId: orderData.division_id,
+            manualOverrides: manualPriceOverrides,
           }),
         });
         const data = await response.json();
@@ -4913,20 +5019,68 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
     approval: { status: 'pending', required: false }
   });
 
-  // Initialize delivery date when dialog opens or order date is set
   useEffect(() => {
-    if (open && orderData.order_date && !orderData.delivery_date) {
-      const calculatedDeliveryDate = calculateDeliveryDate(
-        orderData.order_date,
-        orderData.shipping_method,
-        orderData.shipping_condition
-      );
-      if (calculatedDeliveryDate) {
-        setOrderData(prev => ({ ...prev, delivery_date: calculatedDeliveryDate }));
+    if (open) {
+      // 1. Initialize delivery date when dialog opens or order date is set
+      if (orderData.order_date && !orderData.delivery_date) {
+        const calculatedDeliveryDate = calculateDeliveryDate(
+          orderData.order_date,
+          orderData.shipping_method,
+          orderData.shipping_condition
+        );
+        if (calculatedDeliveryDate) {
+          setOrderData(prev => ({ ...prev, delivery_date: calculatedDeliveryDate }));
+        }
+      }
+
+      // 2. Auto-determine Shipping Point based on Shipping Condition and Plant
+      if (orderData.shipping_condition && shippingPointList.length > 0) {
+        const fetchShippingPoint = async () => {
+          try {
+            // Usually requires Plant from the first item, default to PL01 if no items
+            const firstPlant = orderData.items?.[0]?.plant_id || 'PL01';
+
+            // In a real SAP system, this calls the determination table based on 
+            // Shipping Condition + Loading Group (from material) + Plant
+            // For this UI, we do a basic suggestion if we have a shipping condition
+
+            // Try to fetch from backend determination logic
+            const response = await fetch(`/api/order-to-cash/shipping-point-determination?shippingCondition=${orderData.shipping_condition}&plant=${firstPlant}`);
+            if (response.ok) {
+              const data = await response.json();
+              if (data && data.shipping_point_id && data.shipping_point_id !== orderData.shipping_point_id?.toString()) {
+                setOrderData(prev => ({
+                  ...prev,
+                  shipping_point_id: data.shipping_point_id,
+                  shipping_point_code: data.shipping_point_code
+                }));
+                setAutoFilledFields(prev => new Set(prev).add('shipping_point_id'));
+              }
+            } else {
+              // Fallback: just pick the first standard shipping point if none selected
+              if (!orderData.shipping_point_id && shippingPointList.length > 0) {
+                const defaultSp = shippingPointList.find((sp: any) => sp.code === 'SP01') || shippingPointList[0];
+                setOrderData(prev => ({
+                  ...prev,
+                  shipping_point_id: defaultSp.id?.toString() || defaultSp.code,
+                  shipping_point_code: defaultSp.code
+                }));
+                setAutoFilledFields(prev => new Set(prev).add('shipping_point_id'));
+              }
+            }
+          } catch (err) {
+            console.error('Failed to auto-determine shipping point:', err);
+          }
+        };
+
+        // Only run if we don't already have one or if it wasn't manually overridden
+        if (!orderData.shipping_point_id || autoFilledFields.has('shipping_point_id')) {
+          fetchShippingPoint();
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, orderData.order_date, orderData.shipping_method, orderData.shipping_condition]);
+  }, [open, orderData.order_date, orderData.shipping_condition, orderData.items?.[0]?.plant_id, shippingPointList.length]);
 
   // Real-time inventory status
   const [inventoryStatus, setInventoryStatus] = useState<Record<string, any>>({});
@@ -5019,7 +5173,9 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
         plant_code: '',
         storage_location_id: '',
         storage_location_name: '',
-        storage_location_code: ''
+        storage_location_code: '',
+        item_category: '',
+        item_category_group: ''
       }]
     }));
   };
@@ -5031,6 +5187,26 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
         i === index ? { ...item, [field]: value } : item
       )
     }));
+  };
+
+  // Auto-determine item category from the determination table
+  const determineItemCategory = async (index: number, salesDocType: string, icGroup: string) => {
+    if (!salesDocType || !icGroup) return;
+    try {
+      const params = new URLSearchParams({
+        sales_document_type: salesDocType,
+        item_category_group: icGroup
+      });
+      const response = await fetch(`/api/master-data/item-category-determination/determine?${params}`);
+      const data = await response.json();
+      if (data.found && data.item_category) {
+        updateItem(index, 'item_category', data.item_category);
+      } else {
+        updateItem(index, 'item_category', '');
+      }
+    } catch (err) {
+      console.error('Error determining item category:', err);
+    }
   };
 
   const handleSubmit = () => {
@@ -5105,8 +5281,8 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
     }
 
     // Frontend calculates an estimated subtotal for display / credit check.
-    // The backend pricing engine will recalculate the final amounts.
-    const subtotal = orderData.items.reduce((sum, item) =>
+    // Use pricingPreview values if available (they come from the pricing engine with manual overrides).
+    const subtotal = pricingPreview?.netTotal ?? orderData.items.reduce((sum, item) =>
       sum + (parseFloat(String(item.quantity) || '0') * parseFloat(String(item.unit_price) || '0')), 0
     );
 
@@ -5120,10 +5296,10 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
       amount: subtotal * (rule.rate_percent / 100)
     }));
 
-    const taxAmountEstimate = taxBreakdown.reduce((sum, tax) => sum + tax.amount, 0);
+    const taxAmountEstimate = pricingPreview?.taxTotal ?? taxBreakdown.reduce((sum, tax) => sum + tax.amount, 0);
     const shippingAmount = parseFloat(String(orderData.shipping_amount)) || 0;
-    // estimated total for credit check only — backend will persist final
-    const estimatedTotal = subtotal + taxAmountEstimate + shippingAmount;
+    // Use pricingPreview.grandTotal if available — this is the authoritative calculated total
+    const estimatedTotal = pricingPreview?.grandTotal ?? (subtotal + taxAmountEstimate + shippingAmount);
 
     // Credit-check using estimated total (conservative approach)
     if (customerCreditInfo.creditLimit > 0 && estimatedTotal > customerCreditInfo.availableCredit) {
@@ -5172,8 +5348,9 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
       tax_rules: taxRules,
       tax_profile_id: orderData.tax_profile_id,
       company_code_id: orderData.company_code_id ? parseInt(orderData.company_code_id) : null,
-      items: orderData.items.map(item => ({
+      items: orderData.items.map((item, index) => ({
         ...item,
+        manual_conditions: manualPriceOverrides[index] || undefined,
         material_id: parseInt(item.material_id),
         quantity: parseInt(item.quantity),
         unit_price: parseFloat(item.unit_price),
@@ -5191,9 +5368,9 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Create Sales Order with Inventory Checking</DialogTitle>
+          <DialogTitle className="text-xl font-semibold">Create Sales Order</DialogTitle>
         </DialogHeader>
         <div className="space-y-6">
           {/* Header Information */}
@@ -5288,7 +5465,13 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 // Shipping and delivery fields
                 if (customer?.shipping_condition_key || customer?.shippingConditions) {
                   if (isEmpty(orderData.shipping_condition) || isCustomerChanging) {
-                    const shippingCondition = customer?.shipping_condition_key || customer?.shippingConditions || '';
+                    let shippingCondition = customer?.shipping_condition_key || customer?.shippingConditions || '';
+
+                    // Map single digit keys from customer master to 2-digit codes used in shipping conditions master (e.g., '4' -> '04')
+                    if (shippingCondition && shippingCondition.length === 1 && /^\d$/.test(shippingCondition)) {
+                      shippingCondition = `0${shippingCondition}`;
+                    }
+
                     updatedData.shipping_condition = shippingCondition;
                     fieldsAutoFilled.add('shipping_condition');
 
@@ -5302,6 +5485,14 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                     if (calculatedDeliveryDate) {
                       updatedData.delivery_date = calculatedDeliveryDate;
                     }
+                  }
+                }
+
+                // Auto-fill shipping method from customer master
+                if (customer?.shipping_method) {
+                  if (isEmpty(orderData.shipping_method) || isCustomerChanging) {
+                    updatedData.shipping_method = customer.shipping_method;
+                    fieldsAutoFilled.add('shipping_method');
                   }
                 }
 
@@ -5528,6 +5719,22 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                         }
                       })
                       .catch(error => console.error('[Pricing Determination] ❌ Error:', error));
+                  } else {
+                    // Fall back to simple matching if customer isn't fully ready
+                    if (selectedDocType && selectedDocType.pricing_procedure_id) {
+                      const matchedProcedure = pricingProcedures.find((pp: any) =>
+                        String(pp.id) === String(selectedDocType.pricing_procedure_id) ||
+                        String(pp.procedure_code) === String(selectedDocType.pricing_procedure_id)
+                      );
+
+                      if (matchedProcedure) {
+                        setOrderData(prev => ({
+                          ...prev,
+                          pricing_procedure: matchedProcedure.procedure_code ? String(matchedProcedure.procedure_code) : String(matchedProcedure.id)
+                        }));
+                        setAutoFilledFields(prev => new Set(prev).add('pricing_procedure'));
+                      }
+                    }
                   }
                 }}
                 disabled={documentTypesLoading}
@@ -5556,6 +5763,7 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 </SelectContent>
               </Select>
             </div>
+
             <div>
               <Label htmlFor="sales_org_id">
                 Sales Organization <span className="text-red-500">*</span>
@@ -5568,7 +5776,6 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
               <Select
                 value={orderData.sales_org_id || ''}
                 onValueChange={async (value) => {
-                  // Show warning if changing a sales org that was auto-filled from customer
                   if (autoFilledFields.has('sales_org_id')) {
                     toast({
                       title: "⚠️ Sales Organization Changed",
@@ -5578,14 +5785,12 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                     });
                   }
 
-                  // Remove from auto-filled fields when user manually changes it
                   setAutoFilledFields(prev => {
                     const updated = new Set(prev);
                     updated.delete('sales_org_id');
                     return updated;
                   });
 
-                  // Find the selected sales organization
                   const selectedSalesOrg = salesOrganizations.find((so: any) => String(so.id) === value);
 
                   if (!selectedSalesOrg) {
@@ -5593,11 +5798,8 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                     return;
                   }
 
-                  // Auto-fill company code from sales organization
-                  // Check both camelCase and snake_case, and handle null/undefined/0
                   let companyCodeId = selectedSalesOrg.companyCodeId ?? selectedSalesOrg.company_code_id;
 
-                  // If still not found, try to fetch it directly from API
                   if (!companyCodeId || companyCodeId === null || companyCodeId === 0) {
                     try {
                       const response = await fetch(`/api/master-data/sales-organization/${selectedSalesOrg.id}`);
@@ -5610,17 +5812,6 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                     }
                   }
 
-                  // Debug: Log the sales org data to help troubleshoot
-                  console.log('Selected Sales Org:', {
-                    id: selectedSalesOrg.id,
-                    code: selectedSalesOrg.code,
-                    name: selectedSalesOrg.name,
-                    companyCodeId: selectedSalesOrg.companyCodeId,
-                    company_code_id: selectedSalesOrg.company_code_id,
-                    resolvedCompanyCodeId: companyCodeId,
-                    allKeys: Object.keys(selectedSalesOrg)
-                  });
-
                   if (companyCodeId && companyCodeId !== null && companyCodeId !== 0 && companyCodeId !== '0' && companyCodeId !== '') {
                     setOrderData(prev => ({
                       ...prev,
@@ -5628,7 +5819,6 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                       company_code_id: String(companyCodeId)
                     }));
                   } else {
-                    // Clear company code if sales org doesn't have one
                     setOrderData(prev => ({
                       ...prev,
                       sales_org_id: value,
@@ -5655,41 +5845,35 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 </SelectContent>
               </Select>
             </div>
-          </div>
 
-          {/* Company Code - Read-only display from Sales Organization */}
-          {orderData.sales_org_id && (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="company_code_id">
-                  Company Code
-                  {orderData.company_code_id ? (
-                    <span className="ml-2 text-xs text-green-600 font-normal">(Auto-filled from Sales Organization)</span>
-                  ) : (
-                    <span className="ml-2 text-xs text-amber-600 font-normal">(Not assigned to Sales Organization)</span>
-                  )}
-                </Label>
-                <Input
-                  id="company_code_id"
-                  value={getCompanyCodeDisplay() || 'No company code assigned'}
-                  readOnly
-                  disabled
-                  className={orderData.company_code_id ? "bg-green-50 border-green-200 cursor-not-allowed" : "bg-amber-50 border-amber-200 cursor-not-allowed"}
-                  placeholder="Company code will appear here when sales organization is selected"
-                />
-                {orderData.sales_org_id && !orderData.company_code_id && (
-                  <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                    <span>⚠️</span>
-                    <span>The selected sales organization does not have a company code assigned. Please assign a company code to this sales organization in Master Data.</span>
-                  </p>
+            {/* Company Code - Read-only display from Sales Organization */}
+            <div className={!orderData.sales_org_id ? "hidden" : ""}>
+              <Label htmlFor="company_code_id">
+                Company Code
+                {orderData.company_code_id ? (
+                  <span className="ml-2 text-xs text-green-600 font-normal">(Auto-filled from Sales Organization)</span>
+                ) : (
+                  <span className="ml-2 text-xs text-amber-600 font-normal">(Not assigned to Sales Organization)</span>
                 )}
-              </div>
-              <div></div>
+              </Label>
+              <Input
+                id="company_code_id"
+                value={getCompanyCodeDisplay() || 'No company code assigned'}
+                readOnly
+                disabled
+                className={orderData.company_code_id ? "bg-green-50 border-green-200 cursor-not-allowed" : "bg-amber-50 border-amber-200 cursor-not-allowed"}
+                placeholder="Company code will appear here when sales organization is selected"
+              />
+              {orderData.sales_org_id && !orderData.company_code_id && (
+                <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                  <span>⚠️</span>
+                  <span>The selected sales organization does not have a company code assigned. Please assign a company code to this sales organization in Master Data.</span>
+                </p>
+              )}
             </div>
-          )}
 
-          {/* Distribution Channel and Division - Required Fields */}
-          <div className="grid grid-cols-2 gap-4">
+            {!orderData.sales_org_id ? <div className="hidden"></div> : null}
+
             <div>
               <Label htmlFor="distribution_channel_id">
                 Distribution Channel <span className="text-red-500">*</span>
@@ -5703,7 +5887,6 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 value={orderData.distribution_channel_id || ''}
                 onValueChange={(value) => {
                   setOrderData(prev => ({ ...prev, distribution_channel_id: value }));
-                  // Remove from auto-filled fields when user manually changes it
                   setAutoFilledFields(prev => {
                     const updated = new Set(prev);
                     updated.delete('distribution_channel_id');
@@ -5729,6 +5912,7 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 </SelectContent>
               </Select>
             </div>
+
             <div>
               <Label htmlFor="division_id">
                 Division <span className="text-red-500">*</span>
@@ -5742,7 +5926,6 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 value={orderData.division_id || ''}
                 onValueChange={(value) => {
                   setOrderData(prev => ({ ...prev, division_id: value }));
-                  // Remove from auto-filled fields when user manually changes it
                   setAutoFilledFields(prev => {
                     const updated = new Set(prev);
                     updated.delete('division_id');
@@ -5768,10 +5951,7 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 </SelectContent>
               </Select>
             </div>
-          </div>
 
-          {/* Pricing Procedure and Tax Code - Required Fields */}
-          <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="pricing_procedure">Pricing Procedure <span className="text-red-500">*</span></Label>
               <Select
@@ -5798,6 +5978,7 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 </SelectContent>
               </Select>
             </div>
+
             <div>
               <Label htmlFor="tax_code">Tax Code <span className="text-red-500">*</span></Label>
               <Input
@@ -5807,26 +5988,25 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 placeholder="Enter tax code"
               />
             </div>
-          </div>
 
-          {/* Sales Office Field - Read-only, auto-filled from customer */}
-          <div>
-            <Label htmlFor="sales_office_code">
-              Sales Office
-              {autoFilledFields.has('sales_office_code') && (
-                <span className="ml-2 text-xs text-green-600 font-normal">
-                  (Auto-filled from Customer)
-                </span>
-              )}
-            </Label>
-            <Input
-              id="sales_office_code"
-              value={orderData.sales_office_code || ''}
-              readOnly
-              disabled
-              className={autoFilledFields.has('sales_office_code') ? 'bg-green-50 border-green-300 cursor-not-allowed' : 'bg-gray-50 cursor-not-allowed'}
-              placeholder="Select a customer to auto-fill"
-            />
+            <div>
+              <Label htmlFor="sales_office_code">
+                Sales Office
+                {autoFilledFields.has('sales_office_code') && (
+                  <span className="ml-2 text-xs text-green-600 font-normal">
+                    (Auto-filled from Customer)
+                  </span>
+                )}
+              </Label>
+              <Input
+                id="sales_office_code"
+                value={orderData.sales_office_code || ''}
+                readOnly
+                disabled
+                className={autoFilledFields.has('sales_office_code') ? 'bg-green-50 border-green-300 cursor-not-allowed' : 'bg-gray-50 cursor-not-allowed'}
+                placeholder="Select a customer to auto-fill"
+              />
+            </div>
           </div>
 
           {/* Credit Limit Information */}
@@ -5909,145 +6089,9 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
             </div>
           )}
 
-          {/* Tax Information */}
-          {orderData.customer_id && customerTaxInfo && (
-            <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-lg p-4 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-lg font-semibold text-purple-900 flex items-center gap-2">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                  </svg>
-                  Tax Information
-                  {customerTaxInfo.taxProfile && (
-                    <span className="ml-2 text-sm font-normal text-purple-700">
-                      ({customerTaxInfo.taxProfile.name || customerTaxInfo.taxProfile.profile_code})
-                    </span>
-                  )}
-                </h3>
-                {taxInfoLoading && (
-                  <div className="flex items-center gap-2 text-purple-600">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
-                    <span className="text-sm">Loading...</span>
-                  </div>
-                )}
-              </div>
-
-              {taxInfoLoading ? (
-                <div className="flex items-center justify-center py-4">
-                  <div className="animate-pulse flex space-x-4 w-full">
-                    <div className="flex-1 space-y-2 py-1">
-                      <div className="h-4 bg-purple-200 rounded w-3/4"></div>
-                      <div className="h-4 bg-purple-200 rounded w-1/2"></div>
-                    </div>
-                    <div className="flex-1 space-y-2 py-1">
-                      <div className="h-4 bg-purple-200 rounded w-3/4"></div>
-                      <div className="h-4 bg-purple-200 rounded w-1/2"></div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                    <div className="bg-white rounded-lg p-3 border border-purple-100">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium text-gray-600">Tax Profile</span>
-                        <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                      </div>
-                      <p className="text-sm font-semibold text-gray-900">
-                        {customerTaxInfo.tax_profile_id ? `ID: ${customerTaxInfo.tax_profile_id}` : 'Not Set'}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-lg p-3 border border-purple-100">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium text-gray-600">Tax Classification</span>
-                        <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-                        </svg>
-                      </div>
-                      <p className="text-sm font-semibold text-gray-900">
-                        {customerTaxInfo.tax_classification_code || 'Standard'}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-lg p-3 border border-purple-100">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium text-gray-600">Withholding Tax</span>
-                        <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
-                        </svg>
-                      </div>
-                      <p className="text-sm font-semibold text-gray-900">
-                        {customerTaxInfo.withholding_tax_code || 'None'}
-                      </p>
-                    </div>
-
-                    <div className="bg-white rounded-lg p-3 border border-purple-100">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium text-gray-600">Tax Exemption</span>
-                        <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      </div>
-                      <p className="text-sm font-semibold text-gray-900">
-                        {customerTaxInfo.tax_exemption_certificate || 'None'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Tax Rules */}
-                  {taxRules.length > 0 && (
-                    <div className="bg-white rounded-lg p-4 border border-purple-200">
-                      <h4 className="text-sm font-semibold text-purple-900 mb-3 flex items-center gap-2">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                        </svg>
-                        Applicable Tax Rules ({taxRules.length})
-                      </h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {taxRules.map((rule, index) => (
-                          <div key={rule.id || index} className="bg-gradient-to-br from-purple-50 to-white p-3 rounded-lg border border-purple-200 hover:shadow-md transition-shadow">
-                            <div className="flex justify-between items-start mb-2">
-                              <div>
-                                <p className="text-xs font-medium text-gray-600">{rule.rule_code}</p>
-                                <p className="text-sm font-semibold text-gray-900">{rule.title}</p>
-                              </div>
-                              <div className="bg-purple-600 text-white px-2 py-1 rounded-full text-xs font-bold">
-                                {rule.rate_percent}%
-                              </div>
-                            </div>
-                            {rule.jurisdiction && (
-                              <p className="text-xs text-gray-600 mb-1">
-                                <svg className="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                                </svg>
-                                {rule.jurisdiction}
-                              </p>
-                            )}
-                            {rule.applies_to && (
-                              <p className="text-xs text-purple-700 font-medium">Applies to: {rule.applies_to}</p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-
-              <div className="mt-3 p-2 bg-purple-100 rounded text-xs text-purple-800">
-                <svg className="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Tax rules will be automatically applied to product prices. {orderData.payment_terms && <span>Payment Terms: <strong>{orderData.payment_terms}</strong></span>} {orderData.currency && <span>Currency: <strong>{orderData.currency}</strong></span>}
-              </div>
-            </div>
-          )}
-
           {/* Address Selection */}
+
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="sold_to_address_id">Sold To Address</Label>
@@ -6164,7 +6208,6 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 value={orderData.payment_terms || ""}
                 onValueChange={(value) => {
                   setOrderData(prev => ({ ...prev, payment_terms: value }));
-                  // Remove from auto-filled fields when user manually changes it
                   setAutoFilledFields(prev => {
                     const updated = new Set(prev);
                     updated.delete('payment_terms');
@@ -6195,7 +6238,6 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                       <SelectItem value="PREPAID">Prepaid</SelectItem>
                     </>
                   )}
-                  {/* If payment_terms is set but not in the list, add it as a custom option */}
                   {orderData.payment_terms && !paymentTermsData.find((term: any) => {
                     const termCode = (term.code || term.paymentTermCode || term.payment_term_key || term.id?.toString() || "").toString();
                     return termCode === orderData.payment_terms;
@@ -6208,31 +6250,74 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
               </Select>
             </div>
             <div>
-              <Label htmlFor="shipping_method">Shipping Method</Label>
+              <Label htmlFor="shipping_condition">
+                Shipping Condition
+                {autoFilledFields.has('shipping_condition') && (
+                  <span className="ml-2 text-xs text-green-600 font-normal">(Auto-filled from Customer)</span>
+                )}
+              </Label>
               <Select
-                value={orderData.shipping_method}
+                value={orderData.shipping_condition}
                 onValueChange={(value) => {
-                  // Auto-calculate delivery date when shipping method changes
                   const calculatedDeliveryDate = calculateDeliveryDate(
                     orderData.order_date || new Date().toISOString().split('T')[0],
-                    value,
-                    orderData.shipping_condition
+                    orderData.shipping_method,
+                    value
                   );
+                  setAutoFilledFields(prev => { const u = new Set(prev); u.delete('shipping_condition'); return u; });
                   setOrderData(prev => ({
                     ...prev,
-                    shipping_method: value,
+                    shipping_condition: value,
                     delivery_date: calculatedDeliveryDate || prev.delivery_date
                   }));
                 }}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select shipping method" />
+                <SelectTrigger className={autoFilledFields.has('shipping_condition') ? 'bg-green-50 border-green-300' : ''}>
+                  <SelectValue placeholder="Select shipping condition" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Standard">Standard</SelectItem>
-                  <SelectItem value="Express">Express</SelectItem>
-                  <SelectItem value="Overnight">Overnight</SelectItem>
-                  <SelectItem value="Pickup">Customer Pickup</SelectItem>
+                  {shippingConditions.map((condition: any) => (
+                    <SelectItem key={`sc-${condition.id || condition.code}`} value={condition.code || condition.conditionCode || condition.shippingConditionCode}>
+                      {condition.code || condition.conditionCode || condition.shippingConditionCode} - {condition.name || condition.description}
+                    </SelectItem>
+                  ))}
+                  {shippingConditions.length === 0 && (
+                    <SelectItem value="none" disabled>No conditions available</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="shipping_point">
+                Shipping Point
+                {autoFilledFields.has('shipping_point_id') && (
+                  <span className="ml-2 text-xs text-green-600 font-normal">(Auto-filled)</span>
+                )}
+              </Label>
+              <Select
+                value={orderData.shipping_point_id?.toString() || ""}
+                onValueChange={(value) => {
+                  setAutoFilledFields(prev => { const u = new Set(prev); u.delete('shipping_point_id'); return u; });
+                  const selectedPoint = shippingPointList.find((sp: any) => sp.id?.toString() === value || sp.code === value);
+                  setOrderData(prev => ({
+                    ...prev,
+                    shipping_point_id: value,
+                    shipping_point_code: selectedPoint ? selectedPoint.code : prev.shipping_point_code
+                  }));
+                }}
+              >
+                <SelectTrigger className={autoFilledFields.has('shipping_point_id') ? 'bg-green-50 border-green-300' : ''}>
+                  <SelectValue placeholder="Select shipping point" />
+                </SelectTrigger>
+                <SelectContent>
+                  {shippingPointList.map((sp: any) => (
+                    <SelectItem key={`sp-${sp.id || sp.code}`} value={sp.id?.toString() || sp.code}>
+                      {sp.code} - {sp.name}
+                    </SelectItem>
+                  ))}
+                  {shippingPointList.length === 0 && (
+                    <SelectItem value="none" disabled>No shipping points available</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -6253,9 +6338,6 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 </SelectContent>
               </Select>
             </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-4">
             <div>
               <Label htmlFor="sales_rep">Sales Representative</Label>
               <Input
@@ -6277,7 +6359,6 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 value={orderData.currency || ""}
                 onValueChange={(value) => {
                   setOrderData(prev => ({ ...prev, currency: value }));
-                  // Remove from auto-filled fields when user manually changes it
                   setAutoFilledFields(prev => {
                     const updated = new Set(prev);
                     updated.delete('currency');
@@ -6306,709 +6387,594 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 placeholder="0.00"
               />
             </div>
+            <div className="col-span-2">
+              <Label htmlFor="notes">Notes</Label>
+              <Input
+                value={orderData.notes}
+                onChange={(e) => setOrderData(prev => ({ ...prev, notes: e.target.value }))}
+                placeholder="Enter order notes"
+              />
+            </div>
           </div>
 
+          {/* Line Items — SAP-style compact table */}
           <div>
-            <Label htmlFor="notes">Notes</Label>
-            <Input
-              value={orderData.notes}
-              onChange={(e) => setOrderData(prev => ({ ...prev, notes: e.target.value }))}
-              placeholder="Enter order notes"
-            />
-          </div>
-
-          {/* Line Items */}
-          <div>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Order Items</h3>
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-base font-semibold text-gray-800">Order Items</h3>
               <div className="flex gap-2">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={fetchAllInventoryStatus}
                   disabled={inventoryLoading}
-                  className="flex items-center gap-2"
+                  className="flex items-center gap-1.5 text-xs"
                 >
-                  <RefreshCw className={`w-4 h-4 ${inventoryLoading ? 'animate-spin' : ''}`} />
-                  Refresh Inventory
+                  <RefreshCw className={`w-3.5 h-3.5 ${inventoryLoading ? 'animate-spin' : ''}`} />
+                  Refresh Stock
                 </Button>
-                <Button onClick={addItem} size="sm">
-                  <Plus className="h-4 w-4 mr-2" />
+                <Button onClick={addItem} size="sm" className="flex items-center gap-1.5 text-xs">
+                  <Plus className="h-3.5 w-3.5" />
                   Add Item
                 </Button>
               </div>
             </div>
-            <div className="space-y-4">
+
+            {/* Column Headers */}
+            <div className="grid gap-x-2 mb-1 px-2" style={{ gridTemplateColumns: '2.5fr 0.6fr 0.7fr 0.9fr 1fr 1fr 1fr 0.8fr 0.5fr' }}>
+              {['Material', 'Qty', 'Unit', 'Unit Price', 'Plant', 'Storage Loc.', 'Item Cat.', 'Line Total', ''].map((h) => (
+                <span key={h} className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</span>
+              ))}
+            </div>
+
+            <div className="space-y-2">
               {orderData.items.map((item, index) => (
-                <div key={index} className="border rounded-lg p-4 space-y-4">
-                  {/* Product Selection Row */}
-                  <div className="grid grid-cols-5 gap-4">
-                    <div>
-                      <Label>Product</Label>
-                      <Select onValueChange={(value) => {
-                        updateItem(index, 'material_id', value);
-                        const selected = Array.isArray(products) ? (products as any[]).find(p => String(p.id) === String(value)) : null;
+                <div key={index} className="grid gap-x-2 items-center bg-white border border-gray-200 rounded-lg px-2 py-2 hover:border-blue-300 transition-colors"
+                  style={{ gridTemplateColumns: '2.5fr 0.6fr 0.7fr 0.9fr 1fr 1fr 1fr 0.8fr 0.5fr' }}>
 
-                        // Track which fields are auto-filled for this item
-                        const itemAutoFilled = new Set<string>();
-
-                        if (selected) {
-                          updateItem(index, 'material_description', selected.name);
-
-                          // Auto-fill unit_price
-                          if (selected.price != null && selected.price > 0) {
-                            updateItem(index, 'unit_price', String(selected.price));
-                            itemAutoFilled.add('unit_price');
-                          }
-
-                          // Auto-fill unit from product
-                          if (selected.unit || selected.base_uom) {
-                            updateItem(index, 'unit', selected.unit || selected.base_uom || 'PC');
-                            itemAutoFilled.add('unit');
-                          }
-
-                          // Store plant and storage location information
-                          if (selected.plant_id || selected.product_plant_id) {
-                            updateItem(index, 'plant_id', selected.plant_id || selected.product_plant_id || '');
-                            itemAutoFilled.add('plant_id');
-                          }
-                          if (selected.plant_name) {
-                            updateItem(index, 'plant_name', selected.plant_name);
-                          }
-                          if (selected.plant_code || selected.product_plant_code) {
-                            updateItem(index, 'plant_code', selected.plant_code || selected.product_plant_code || '');
-                          }
-                          if (selected.storage_location_id) {
-                            updateItem(index, 'storage_location_id', selected.storage_location_id);
-                            itemAutoFilled.add('storage_location_id');
-                          }
-                          if (selected.storage_location_name) {
-                            updateItem(index, 'storage_location_name', selected.storage_location_name);
-                          }
-                          if (selected.storage_location_code) {
-                            updateItem(index, 'storage_location_code', selected.storage_location_code);
-                          }
-
-                          // Update auto-filled fields tracking for this item
-                          setAutoFilledItemFields(prev => {
-                            const updated = new Map(prev);
-                            updated.set(index, itemAutoFilled);
-                            return updated;
-                          });
-
-                          // Fetch real-time inventory status for the selected product
-                          fetchInventoryStatus(selected.id.toString());
-                        } else {
-                          // Clear auto-filled fields if product is cleared
-                          setAutoFilledItemFields(prev => {
-                            const updated = new Map(prev);
-                            updated.delete(index);
-                            return updated;
-                          });
-                        }
-                      }}>
-                        <SelectTrigger className="h-auto min-h-[40px]">
-                          <SelectValue placeholder={productsLoading ? "Loading products..." : "Select product"}>
-                            {item.material_id && item.material_description && (
-                              <div className="flex flex-col items-start text-left">
-                                <span className="font-medium text-sm">{item.material_description}</span>
-                                {(item.plant_name || item.storage_location_name) && (
-                                  <span className="text-xs text-gray-500">
-                                    {item.plant_name || item.plant_code} - {item.storage_location_name || item.storage_location_code}
-                                  </span>
-                                )}
-                              </div>
+                  {/* Material */}
+                  <Select onValueChange={(value) => {
+                    updateItem(index, 'material_id', value);
+                    const selected = Array.isArray(products) ? (products as any[]).find(p => String(p.id) === String(value)) : null;
+                    const itemAutoFilled = new Set<string>();
+                    if (selected) {
+                      updateItem(index, 'material_description', selected.name);
+                      if (selected.unit || selected.base_uom) { updateItem(index, 'unit', selected.unit || selected.base_uom || 'PC'); itemAutoFilled.add('unit'); }
+                      if (selected.plant_id || selected.product_plant_id) { updateItem(index, 'plant_id', selected.plant_id || selected.product_plant_id || ''); itemAutoFilled.add('plant_id'); }
+                      if (selected.plant_name) updateItem(index, 'plant_name', selected.plant_name);
+                      if (selected.plant_code || selected.product_plant_code) updateItem(index, 'plant_code', selected.plant_code || selected.product_plant_code || '');
+                      if (selected.storage_location_id) { updateItem(index, 'storage_location_id', selected.storage_location_id); itemAutoFilled.add('storage_location_id'); }
+                      if (selected.storage_location_name) updateItem(index, 'storage_location_name', selected.storage_location_name);
+                      if (selected.storage_location_code) updateItem(index, 'storage_location_code', selected.storage_location_code);
+                      const icGroup = selected.item_category_group || 'NORM';
+                      updateItem(index, 'item_category_group', icGroup);
+                      const salesDocType = orderData.document_type || 'OR';
+                      determineItemCategory(index, salesDocType, icGroup);
+                      fetchInventoryStatus(selected.id.toString());
+                      // Auto-fill unit_price from PR00 condition record (falls back to catalog price)
+                      fetchConditionPrice(index, selected.id, selected.price ?? null, itemAutoFilled).then(() => {
+                        setAutoFilledItemFields(prev => { const updated = new Map(prev); updated.set(index, new Set(itemAutoFilled)); return updated; });
+                      });
+                    } else {
+                      setAutoFilledItemFields(prev => { const updated = new Map(prev); updated.delete(index); return updated; });
+                    }
+                  }}>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder={productsLoading ? 'Loading...' : 'Select material'}>
+                        {item.material_id && item.material_description && (
+                          <span className="flex flex-col items-start text-left">
+                            <span className="font-medium text-xs truncate">{item.material_description}</span>
+                            {item.material_id && inventoryStatus[item.material_id] && (
+                              <span className={`text-xs ${inventoryStatus[item.material_id].stock_status === 'AVAILABLE' ? 'text-green-600' : inventoryStatus[item.material_id].stock_status === 'LOW_STOCK' ? 'text-yellow-600' : 'text-red-600'}`}>
+                                {inventoryStatus[item.material_id].stock_status === 'AVAILABLE' ? '✓' : inventoryStatus[item.material_id].stock_status === 'LOW_STOCK' ? '⚠' : '✗'} {inventoryStatus[item.material_id].free_stock} in stock
+                              </span>
                             )}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="max-h-80 overflow-y-auto w-full min-w-[400px]">
-                          {productsLoading ? (
-                            <SelectItem value="loading" disabled>
-                              Loading products...
-                            </SelectItem>
-                          ) : productsError ? (
-                            <SelectItem value="error" disabled>
-                              Error loading products: {productsError.message}
-                            </SelectItem>
-                          ) : !Array.isArray(products) || products.length === 0 ? (
-                            <SelectItem value="no-products" disabled>
-                              No products available
-                            </SelectItem>
-                          ) : (
-                            products.map((p: any) => (
-                              <SelectItem key={p.id} value={String(p.id)} className="py-3">
-                                <div className="flex flex-col space-y-1 w-full">
-                                  <div className="flex items-center justify-between">
-                                    <span className="font-medium text-sm truncate max-w-[200px]">{p.name}</span>
-                                    <span className="text-xs text-gray-400 ml-2">({p.sku})</span>
-                                  </div>
-                                  <div className="flex items-center gap-2 text-xs text-gray-500">
-                                    <span className="inline-flex items-center gap-1">
-                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                                      </svg>
-                                      {p.plant_name || p.product_plant_code || 'N/A'}
-                                    </span>
-                                    <span className="text-gray-300">•</span>
-                                    <span className="inline-flex items-center gap-1">
-                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                                      </svg>
-                                      {p.storage_location_name || p.storage_location_code || 'N/A'}
-                                    </span>
-                                  </div>
-                                </div>
-                              </SelectItem>
-                            ))
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>Quantity</Label>
-                      <Input
-                        type="number"
-                        placeholder="0"
-                        value={item.quantity}
-                        onChange={(e) => updateItem(index, 'quantity', e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label>
-                        Unit
-                        {autoFilledItemFields.get(index)?.has('unit') && (
-                          <span className="ml-2 text-xs text-green-600 font-normal">
-                            (Auto-filled from Product)
                           </span>
                         )}
-                      </Label>
-                      <Select
-                        value={item.unit || 'PC'}
-                        onValueChange={(value) => {
-                          updateItem(index, 'unit', value);
-                          // Remove from auto-filled fields when user manually changes it
-                          setAutoFilledItemFields(prev => {
-                            const updated = new Map(prev);
-                            const itemFields = updated.get(index) || new Set();
-                            itemFields.delete('unit');
-                            updated.set(index, itemFields);
-                            return updated;
-                          });
-                        }}
-                      >
-                        <SelectTrigger className={autoFilledItemFields.get(index)?.has('unit') ? 'bg-green-50 border-green-300' : ''}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="PC">Pieces</SelectItem>
-                          <SelectItem value="KG">Kilograms</SelectItem>
-                          <SelectItem value="L">Liters</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>
-                        Unit Price
-                        {autoFilledItemFields.get(index)?.has('unit_price') && (
-                          <span className="ml-2 text-xs text-green-600 font-normal">
-                            (Auto-filled from Product)
-                          </span>
-                        )}
-                      </Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        placeholder="0.00"
-                        value={item.unit_price}
-                        onChange={(e) => {
-                          updateItem(index, 'unit_price', e.target.value);
-                          // Remove from auto-filled fields when user manually changes it
-                          setAutoFilledItemFields(prev => {
-                            const updated = new Map(prev);
-                            const itemFields = updated.get(index) || new Set();
-                            itemFields.delete('unit_price');
-                            updated.set(index, itemFields);
-                            return updated;
-                          });
-                        }}
-                        className={autoFilledItemFields.get(index)?.has('unit_price') ? 'bg-green-50 border-green-300' : ''}
-                      />
-                    </div>
-                    <div>
-                      <Label>Line Total</Label>
-                      <div className="p-2 bg-gray-50 rounded text-sm font-semibold">
-                        ${((parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0)).toFixed(2)}
-                      </div>
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent className="max-h-72 overflow-y-auto min-w-[320px]">
+                      {productsLoading ? (
+                        <SelectItem value="loading" disabled>Loading materials...</SelectItem>
+                      ) : productsError ? (
+                        <SelectItem value="error" disabled>Error loading materials</SelectItem>
+                      ) : !Array.isArray(products) || products.length === 0 ? (
+                        <SelectItem value="no-products" disabled>No materials available</SelectItem>
+                      ) : (
+                        products.map((p: any) => (
+                          <SelectItem key={p.id} value={String(p.id)} className="py-2">
+                            <div className="flex flex-col space-y-0.5 w-full">
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium text-sm">{p.name}</span>
+                                <span className="text-xs text-gray-400 ml-2 font-mono">{p.sku}</span>
+                              </div>
+                              <span className="text-xs text-gray-500">{p.plant_name || p.product_plant_code || ''}{p.storage_location_name ? ` · ${p.storage_location_name}` : ''}</span>
+                            </div>
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Quantity */}
+                  <Input
+                    type="number"
+                    placeholder="0"
+                    value={item.quantity}
+                    onChange={(e) => updateItem(index, 'quantity', e.target.value)}
+                    className="h-8 text-xs"
+                  />
+
+                  {/* Unit */}
+                  <Select value={item.unit || 'PC'} onValueChange={(v) => updateItem(index, 'unit', v)}>
+                    <SelectTrigger className={`h-8 text-xs ${autoFilledItemFields.get(index)?.has('unit') ? 'bg-green-50 border-green-300' : ''}`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="PC">PC</SelectItem>
+                      <SelectItem value="KG">KG</SelectItem>
+                      <SelectItem value="L">L</SelectItem>
+                      <SelectItem value="EA">EA</SelectItem>
+                      <SelectItem value="M">M</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  {/* Unit Price */}
+                  <Input
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={item.unit_price}
+                    onChange={(e) => updateItem(index, 'unit_price', e.target.value)}
+                    className={`h-8 text-xs ${autoFilledItemFields.get(index)?.has('unit_price') ? 'bg-green-50 border-green-300' : ''}`}
+                  />
+
+                  {/* Plant */}
+                  <div className="flex items-center gap-1">
+                    <div className={`flex-1 h-8 flex items-center px-2 rounded border text-xs truncate ${autoFilledItemFields.get(index)?.has('plant_id') ? 'bg-green-50 border-green-300 text-green-800' : 'bg-gray-50 border-gray-200 text-gray-600'
+                      }`}>
+                      {item.plant_name || item.plant_code || <span className="text-gray-400">—</span>}
                     </div>
                   </div>
 
-                  {/* Real-time Inventory Status */}
-                  {item.material_id && inventoryStatus[item.material_id] && (
-                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-4 mb-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
-                          <Package className="w-4 h-4 text-green-600" />
-                        </div>
-                        <span className="text-sm font-semibold text-green-900">Real-time Inventory Status</span>
-                        {inventoryLoading && (
-                          <div className="w-4 h-4 border-2 border-green-300 border-t-green-600 rounded-full animate-spin"></div>
-                        )}
-                      </div>
-
-                      {(() => {
-                        const status = inventoryStatus[item.material_id];
-                        const requestedQty = parseFloat(item.quantity) || 0;
-                        const isSufficient = status.free_stock >= requestedQty;
-                        const stockStatus = status.stock_status;
-
-                        return (
-                          <div className="space-y-3">
-                            {/* Stock Status Badge */}
-                            <div className="flex items-center space-x-2">
-                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${stockStatus === 'AVAILABLE' ? 'bg-green-100 text-green-800' :
-                                stockStatus === 'LOW_STOCK' ? 'bg-yellow-100 text-yellow-800' :
-                                  'bg-red-100 text-red-800'
-                                }`}>
-                                {stockStatus === 'AVAILABLE' ? '✓ Available' :
-                                  stockStatus === 'LOW_STOCK' ? '⚠ Low Stock' :
-                                    '✗ Out of Stock'}
-                              </span>
-                              {isSufficient ? (
-                                <span className="text-xs text-green-600">Sufficient for order</span>
-                              ) : (
-                                <span className="text-xs text-red-600">Insufficient stock</span>
-                              )}
-                            </div>
-
-                            {/* Stock Details Grid */}
-                            <div className="grid grid-cols-2 gap-3">
-                              <div className="bg-white p-3 rounded border border-green-100">
-                                <div className="flex items-center space-x-2 mb-1">
-                                  <Package className="w-4 h-4 text-green-600" />
-                                  <span className="text-xs font-medium text-green-700 uppercase">Available Stock</span>
-                                </div>
-                                <p className="text-lg font-semibold text-green-900">{status.free_stock}</p>
-                                <p className="text-xs text-green-600">Free: {status.free_stock} units</p>
-                              </div>
-
-                              <div className="bg-white p-3 rounded border border-green-100">
-                                <div className="flex items-center space-x-2 mb-1">
-                                  <ShoppingCart className="w-4 h-4 text-green-600" />
-                                  <span className="text-xs font-medium text-green-700 uppercase">Requested</span>
-                                </div>
-                                <p className="text-lg font-semibold text-green-900">{requestedQty}</p>
-                                <p className="text-xs text-green-600">Order quantity</p>
-                              </div>
-                            </div>
-
-                            {/* Stock Utilization Bar */}
-                            <div className="bg-white p-3 rounded border border-green-100">
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs font-medium text-green-700 uppercase">Stock Utilization</span>
-                                <span className="text-xs text-green-600">{status.stock_utilization.toFixed(1)}%</span>
-                              </div>
-                              <div className="w-full bg-green-100 rounded-full h-2">
-                                <div
-                                  className="bg-green-500 h-2 rounded-full transition-all duration-300"
-                                  style={{ width: `${Math.min(status.stock_utilization, 100)}%` }}
-                                ></div>
-                              </div>
-                              <div className="flex justify-between text-xs text-green-600 mt-1">
-                                <span>Min: {status.min_stock}</span>
-                                <span>Max: {status.max_stock}</span>
-                              </div>
-                            </div>
-
-                            {/* After Order Stock */}
-                            {requestedQty > 0 && (
-                              <div className="bg-white p-3 rounded border border-green-100">
-                                <div className="flex items-center space-x-2 mb-1">
-                                  <TrendingDown className="w-4 h-4 text-green-600" />
-                                  <span className="text-xs font-medium text-green-700 uppercase">After Order</span>
-                                </div>
-                                <p className="text-lg font-semibold text-green-900">
-                                  {status.free_stock - requestedQty}
-                                </p>
-                                <p className="text-xs text-green-600">
-                                  {status.free_stock - requestedQty < status.min_stock ?
-                                    '⚠ Will be below minimum stock' :
-                                    '✓ Above minimum stock'}
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
+                  {/* Storage Location */}
+                  <div className="flex items-center gap-1">
+                    <div className={`flex-1 h-8 flex items-center px-2 rounded border text-xs truncate ${autoFilledItemFields.get(index)?.has('storage_location_id') ? 'bg-green-50 border-green-300 text-green-800' : 'bg-gray-50 border-gray-200 text-gray-600'
+                      }`}>
+                      {item.storage_location_name || item.storage_location_code || <span className="text-gray-400">—</span>}
                     </div>
-                  )}
+                  </div>
 
-                  {/* Plant and Storage Location Information */}
-                  {item.material_id && (item.plant_name || item.storage_location_name) && (
-                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                          <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                          </svg>
-                        </div>
-                        <span className="text-sm font-semibold text-blue-900">Product Location Information</span>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="bg-white rounded-lg p-3 border border-blue-100">
-                          <div className="flex items-center gap-2 mb-1">
-                            <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                            </svg>
-                            <span className="text-xs font-medium text-blue-700 uppercase tracking-wide">Plant</span>
-                          </div>
-                          <span className="text-sm font-semibold text-blue-900">
-                            {item.plant_name || item.plant_code || 'Not specified'}
-                          </span>
-                        </div>
-                        <div className="bg-white rounded-lg p-3 border border-blue-100">
-                          <div className="flex items-center gap-2 mb-1">
-                            <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                            </svg>
-                            <span className="text-xs font-medium text-blue-700 uppercase tracking-wide">Storage Location</span>
-                          </div>
-                          <span className="text-sm font-semibold text-blue-900">
-                            {item.storage_location_name || item.storage_location_code || 'Not specified'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  {/* Item Category — dropdown pre-filled by determination */}
+                  <Select
+                    value={item.item_category || '__none__'}
+                    onValueChange={(v) => updateItem(index, 'item_category', v === '__none__' ? '' : v)}
+                  >
+                    <SelectTrigger className={`h-8 text-xs ${item.item_category ? 'bg-blue-50 border-blue-300 text-blue-800' : ''}`}>
+                      <SelectValue placeholder="—" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— Not set —</SelectItem>
+                      <SelectItem value="TAN">TAN - Standard Item</SelectItem>
+                      <SelectItem value="TACP">TACP - Cash Sales</SelectItem>
+                      <SelectItem value="TAB">TAB - Individual PO</SelectItem>
+                      <SelectItem value="TANN">TANN - Free of Charge</SelectItem>
+                      <SelectItem value="KLN">KLN - Consignment</SelectItem>
+                      {item.item_category && !['TAN', 'TACP', 'TAB', 'TANN', 'KLN'].includes(item.item_category) && (
+                        <SelectItem value={item.item_category}>{item.item_category} (Auto)</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Line Total */}
+                  <div className="h-8 flex items-center px-2 bg-gray-50 border border-gray-200 rounded text-xs font-semibold text-gray-700">
+                    {((parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+
+                  {/* Remove */}
+                  <button
+                    onClick={() => {
+                      setOrderData(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
+                    }}
+                    className="h-8 w-8 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                    title="Remove item"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
                 </div>
               ))}
+
+              {orderData.items.length === 0 && (
+                <div className="text-center py-8 text-gray-400 border-2 border-dashed border-gray-200 rounded-lg">
+                  <svg className="w-8 h-8 mx-auto mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                  <p className="text-sm">No items added yet. Click <strong>Add Item</strong> to start.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Order Totals */}
+            {orderData.items.length > 0 && (
+              <div className="mt-3 flex justify-end">
+                <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 flex items-center gap-6 text-sm">
+                  <span className="text-gray-500">Subtotal:</span>
+                  <span className="font-semibold">
+                    {orderData.items.reduce((s, it) => s + ((parseFloat(it.quantity) || 0) * (parseFloat(it.unit_price) || 0)), 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Order Total with Credit Validation */}
+
+          {/* ═══════════════════════════════════════════════════════════════════
+               PRICING CONDITIONS  (SAP VA01-style — below Order Items)
+          ════════════════════════════════════════════════════════════════════ */}
+          {orderData.pricing_procedure && (
+            <div className="rounded-xl overflow-hidden border border-slate-200 shadow-sm">
+
+              {/* Panel Header */}
+              <div className="bg-gradient-to-r from-slate-700 to-slate-900 px-5 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-md bg-white/10 flex items-center justify-center">
+                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="text-white text-sm font-semibold tracking-wide">Pricing Conditions</div>
+                    <div className="text-slate-400 text-xs">
+                      Procedure: <span className="text-blue-300 font-mono font-semibold">{orderData.pricing_procedure}</span>
+                      {autoFilledFields.has('pricing_procedure') && (
+                        <span className="ml-2 bg-green-500/20 text-green-300 text-xs px-1.5 py-0.5 rounded">Auto-determined</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {(procedureStepsLoading || pricingPreviewLoading) && (
+                    <div className="flex items-center gap-1.5 text-slate-400 text-xs">
+                      <div className="w-3.5 h-3.5 border-2 border-slate-400 border-t-white rounded-full animate-spin" />
+                      Calculating...
+                    </div>
+                  )}
+                  <span className="text-slate-400 text-xs bg-slate-600/50 px-2 py-0.5 rounded-full">
+                    {(procedureSteps as any[]).length} conditions
+                  </span>
+                </div>
+              </div>
+
+              {/* Per-Item Tab Bar */}
+              {orderData.items.some((it: any) => it.material_id) && (
+                <div className="bg-slate-800 border-b border-slate-700 px-4 flex items-center gap-1 overflow-x-auto">
+                  {/* All Items tab */}
+                  <button
+                    onClick={() => setSelectedPricingItemIndex(null)}
+                    className={`flex-shrink-0 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${selectedPricingItemIndex === null
+                      ? 'border-blue-400 text-blue-300'
+                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                      }`}
+                  >
+                    All Items
+                    <span className="ml-1.5 bg-slate-600 text-slate-300 text-[10px] px-1.5 py-0.5 rounded-full">
+                      {orderData.items.filter((it: any) => it.material_id).length}
+                    </span>
+                  </button>
+
+                  {/* One tab per line item that has a material selected */}
+                  {orderData.items.map((it: any, idx: number) => {
+                    if (!it.material_id) return null;
+                    const label = it.material_description
+                      ? `${it.material_description.slice(0, 20)}${it.material_description.length > 20 ? '…' : ''}`
+                      : `Material ${it.material_id}`;
+                    const isFromCR = autoFilledItemFields.get(idx)?.has('unit_price_from_condition');
+                    return (
+                      <button
+                        key={idx}
+                        onClick={() => setSelectedPricingItemIndex(idx)}
+                        className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors ${selectedPricingItemIndex === idx
+                          ? 'border-blue-400 text-blue-300'
+                          : 'border-transparent text-slate-400 hover:text-slate-200'
+                          }`}
+                      >
+                        <span className="font-mono text-[10px] bg-slate-600 text-slate-300 px-1 rounded">
+                          {idx + 1}
+                        </span>
+                        {label}
+                        {isFromCR && (
+                          <span className="bg-blue-500/30 text-blue-300 text-[10px] px-1 rounded">CR</span>
+                        )}
+                        {it.unit_price && (
+                          <span className="text-slate-500 text-[10px]">
+                            ₹{parseFloat(it.unit_price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Scope indicator */}
+              {selectedPricingItemIndex !== null && orderData.items[selectedPricingItemIndex] && (
+                <div className="bg-blue-50 border-b border-blue-100 px-4 py-1.5 flex items-center gap-2">
+                  <span className="text-xs text-blue-700 font-medium">
+                    Showing conditions for Item {selectedPricingItemIndex + 1}:
+                  </span>
+                  <span className="text-xs text-blue-900 font-semibold">
+                    {orderData.items[selectedPricingItemIndex].material_description || `Material ${orderData.items[selectedPricingItemIndex].material_id}`}
+                  </span>
+                  <span className="text-xs text-blue-500">
+                    Qty: {orderData.items[selectedPricingItemIndex].quantity || 1} × ₹{parseFloat(orderData.items[selectedPricingItemIndex].unit_price || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </span>
+                  {autoFilledItemFields.get(selectedPricingItemIndex)?.has('unit_price_from_condition') && (
+                    <span className="bg-blue-200 text-blue-800 text-[10px] px-1.5 py-0.5 rounded font-semibold">Price from Condition Record (PR00)</span>
+                  )}
+                </div>
+              )}
+
+              {/* Conditions Table */}
+              {(procedureSteps as any[]).length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b-2 border-slate-200">
+                        <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider w-12">Step</th>
+                        <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider w-20">Cond. Type</th>
+                        <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Name / Description</th>
+                        <th className="px-3 py-2.5 text-center text-xs font-bold text-slate-500 uppercase tracking-wider w-12">From</th>
+                        <th className="px-3 py-2.5 text-center text-xs font-bold text-slate-500 uppercase tracking-wider w-12">To</th>
+                        <th className="px-3 py-2.5 text-center text-xs font-bold text-slate-500 uppercase tracking-wider w-14">Calc.</th>
+                        <th className="px-3 py-2.5 text-right text-xs font-bold text-slate-500 uppercase tracking-wider w-24">Configured Rate</th>
+                        <th className="px-3 py-2.5 text-right text-xs font-bold text-slate-500 uppercase tracking-wider w-28">
+                          <span className="flex items-center justify-end gap-1">
+                            Live Value
+                            {pricingPreviewLoading && (
+                              <span className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin inline-block" />
+                            )}
+                          </span>
+                        </th>
+                        <th className="px-3 py-2.5 text-left text-xs font-bold text-slate-500 uppercase tracking-wider w-28">Override</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(procedureSteps as any[]).map((step: any, idx: number) => {
+                        const previewCond = (pricingPreview?.conditions as any[] || []).find(
+                          (c: any) => c.conditionType === step.condition_type_code || c.step === step.step_number
+                        );
+                        const isManuallySet = !!manualPriceOverrides[step.condition_type_code];
+                        const isSubtotal = !!(step.is_subtotal || step.subtotal);
+                        const isTax = step.account_key === 'MWS' || !!step.is_tax;
+                        const isDiscount = step.condition_class === 'B' || (previewCond?.calculatedValue < 0);
+                        const hasValue = previewCond && previewCond.calculatedValue !== undefined && previewCond.calculatedValue !== null;
+
+                        // Determine row styling
+                        let rowClass = 'border-b border-slate-100 transition-colors hover:bg-slate-50';
+                        if (isSubtotal) rowClass = 'border-b-2 border-blue-200 bg-blue-50/60 hover:bg-blue-50';
+                        else if (isTax) rowClass = 'border-b border-slate-100 bg-orange-50/40 hover:bg-orange-50/60';
+                        else if (isDiscount) rowClass = 'border-b border-slate-100 bg-red-50/30 hover:bg-red-50/60';
+                        else if (idx % 2 === 1) rowClass = 'border-b border-slate-100 bg-slate-50/50 hover:bg-slate-100/50';
+
+                        // Condition type badge styling
+                        let badgeClass = 'bg-slate-100 text-slate-700';
+                        if (isTax) badgeClass = 'bg-orange-100 text-orange-800';
+                        else if (isSubtotal) badgeClass = 'bg-blue-100 text-blue-800';
+                        else if (isDiscount) badgeClass = 'bg-red-100 text-red-700';
+                        else if (step.condition_type_code?.startsWith('PR')) badgeClass = 'bg-green-100 text-green-800';
+                        else if (step.condition_type_code?.startsWith('K')) badgeClass = 'bg-purple-100 text-purple-700';
+                        else if (step.condition_type_code?.startsWith('FR') || step.condition_type_code?.startsWith('ZF')) badgeClass = 'bg-indigo-100 text-indigo-700';
+
+                        return (
+                          <tr key={step.id || idx} className={rowClass}>
+
+                            {/* Step # */}
+                            <td className="px-3 py-2">
+                              <span className={`font-mono text-xs ${isSubtotal ? 'font-bold text-blue-800' : 'text-slate-400'}`}>
+                                {step.step_number ?? '—'}
+                              </span>
+                            </td>
+
+                            {/* Condition Type */}
+                            <td className="px-3 py-2">
+                              {step.condition_type_code ? (
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded font-bold font-mono text-xs tracking-wide ${badgeClass}`}>
+                                  {step.condition_type_code}
+                                </span>
+                              ) : (
+                                <span className={`inline-flex items-center gap-1 text-xs font-semibold ${isSubtotal ? 'text-blue-600' : 'text-slate-400'}`}>
+                                  {isSubtotal ? (
+                                    <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold">Σ Subtotal</span>
+                                  ) : (
+                                    <span className="text-slate-300">—</span>
+                                  )}
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Description */}
+                            <td className="px-3 py-2">
+                              <div className="flex items-center gap-1.5">
+                                {isTax && <span className="text-orange-500 text-xs">⊕</span>}
+                                {isDiscount && !isTax && <span className="text-red-400 text-xs">⊖</span>}
+                                {isSubtotal && <span className="text-blue-500 text-xs">Σ</span>}
+                                <span className={`${isSubtotal ? 'font-semibold text-blue-800' : isTax ? 'text-orange-700' : 'text-slate-700'}`}>
+                                  {step.condition_name || step.condition_description || step.description || (isSubtotal ? 'Net Value Subtotal' : '—')}
+                                </span>
+                                {isManuallySet && (
+                                  <span className="bg-yellow-200 text-yellow-800 text-[10px] px-1 rounded font-medium">MANUAL</span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* From / To */}
+                            <td className="px-3 py-2 text-center">
+                              <span className="text-slate-400 font-mono text-xs">{step.from_step || '—'}</span>
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              <span className="text-slate-400 font-mono text-xs">{step.to_step || '—'}</span>
+                            </td>
+
+                            {/* Calc. Type */}
+                            <td className="px-3 py-2 text-center">
+                              <span className="text-slate-400 text-xs font-mono">{previewCond?.calculationType || '—'}</span>
+                            </td>
+
+                            {/* Configured Rate */}
+                            <td className="px-3 py-2 text-right">
+                              <span className="text-slate-600 font-mono text-xs">
+                                {previewCond?.rate != null && previewCond.rate !== 0 && !isSubtotal ? (
+                                  `${previewCond.rate}${previewCond.calculationType === '%' ? '%' : ''}`
+                                ) : '—'}
+                              </span>
+                            </td>
+
+                            {/* Live Calculated Value */}
+                            <td className="px-3 py-2 text-right">
+                              {hasValue ? (
+                                <span className={`font-semibold text-xs ${isSubtotal ? 'text-blue-700 text-sm' :
+                                  isTax ? 'text-orange-700' :
+                                    previewCond.calculatedValue < 0 ? 'text-red-600' :
+                                      'text-slate-800'
+                                  }`}>
+                                  {previewCond.calculatedValue < 0 ? '-' : ''}
+                                  {Math.abs(previewCond.calculatedValue).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300 text-xs">—</span>
+                              )}
+                            </td>
+
+                            {/* Manual Override Input */}
+                            <td className="px-3 py-2">
+                              {step.condition_type_code && !isSubtotal ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  placeholder={!step.manual_entry ? '' : isManuallySet ? '' : 'Override...'}
+                                  value={manualPriceOverrides[step.condition_type_code] || ''}
+                                  onChange={(e) => setManualRate(step.condition_type_code, e.target.value)}
+                                  disabled={!step.manual_entry}
+                                  title={!step.manual_entry ? 'Not allowed by pricing procedure configuration' : 'Enter manual condition rate'}
+                                  className={`w-full h-7 px-2 text-xs border rounded-md transition-all focus:outline-none focus:ring-2 focus:ring-blue-400 ${!step.manual_entry
+                                    ? 'bg-slate-100 border-transparent text-slate-400 cursor-not-allowed opacity-60'
+                                    : isManuallySet
+                                      ? 'bg-yellow-50 border-yellow-400 text-yellow-900 font-semibold'
+                                      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                                    }`}
+                                />
+                              ) : null}
+                            </td>
+
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : !procedureStepsLoading && (
+                <div className="px-6 py-6 text-center">
+                  <div className="text-slate-300 text-3xl mb-2">⊘</div>
+                  <p className="text-sm text-slate-400">No condition steps found for <span className="font-mono font-semibold text-slate-600">{orderData.pricing_procedure}</span>.</p>
+                  <p className="text-xs text-slate-400 mt-1">Go to Pricing Procedures master data to add condition steps.</p>
+                </div>
+              )}
+
+              {/* Live Pricing Preview Bar */}
+              <div className="border-t-2 border-slate-200 bg-gradient-to-r from-slate-50 to-slate-100 px-5 py-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Pricing Preview</span>
+                    {pricingPreviewLoading && (
+                      <div className="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                    )}
+                    {!hasItemsForPreview && (
+                      <span className="text-xs text-slate-400 italic">Add items with qty &amp; price to activate</span>
+                    )}
+                  </div>
+
+                  {pricingPreview && hasItemsForPreview ? (
+                    <div className="flex items-center gap-4">
+                      <div className="flex flex-col items-end">
+                        <span className="text-[10px] text-slate-500 uppercase tracking-wide">Gross Value</span>
+                        <span className="text-sm font-semibold text-slate-800">
+                          {(pricingPreview.subtotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div className="w-px h-8 bg-slate-300" />
+                      <div className="flex flex-col items-end">
+                        <span className="text-[10px] text-slate-500 uppercase tracking-wide">Discount</span>
+                        <span className="text-sm font-semibold text-red-600">
+                          {(pricingPreview.discountTotal || 0) > 0 ? '-' : ''}{(pricingPreview.discountTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div className="w-px h-8 bg-slate-300" />
+                      <div className="flex flex-col items-end">
+                        <span className="text-[10px] text-slate-500 uppercase tracking-wide">Net Value</span>
+                        <span className="text-sm font-semibold text-slate-800">
+                          {(pricingPreview.netTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div className="w-px h-8 bg-slate-300" />
+                      <div className="flex flex-col items-end">
+                        <span className="text-[10px] text-slate-500 uppercase tracking-wide">Tax</span>
+                        <span className="text-sm font-semibold text-orange-600">
+                          +{(pricingPreview.taxTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div className="w-px h-8 bg-slate-300" />
+                      <div className="flex flex-col items-end bg-white border border-green-200 rounded-lg px-3 py-1.5 align-right">
+                        <span className="text-[10px] text-slate-500 uppercase tracking-wide text-right w-full">Grand Total</span>
+                        <span className="text-base font-bold text-green-700">
+                          {(pricingPreview.grandTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
+                  ) : hasItemsForPreview ? (
+                    <span className="text-xs text-slate-400 italic">Calculating...</span>
+                  ) : null}
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* Order Summary */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-800">Order Summary</h3>
+              {customerCreditInfo.creditLimit > 0 && (() => {
+                const subtotal = pricingPreview?.grandTotal ?? orderData.items.reduce((s, it) => s + ((parseFloat(it.quantity) || 0) * (parseFloat(it.unit_price) || 0)), 0);
+                const exceedsCredit = subtotal > customerCreditInfo.availableCredit;
+                return (
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${exceedsCredit ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                    {exceedsCredit ? '⚠ Credit Exceeded' : '✓ Within Credit Limit'}
+                  </span>
+                );
+              })()}
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-500">Items: {orderData.items.filter(it => it.material_id).length}</span>
+              <div className="font-semibold text-lg text-emerald-800">
+                Total: {orderData.currency || 'USD'} {(pricingPreview?.grandTotal ?? orderData.items.reduce((s, it) => s + ((parseFloat(it.quantity) || 0) * (parseFloat(it.unit_price) || 0)), 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
             </div>
           </div>
 
-
-          {/* Order Total with Credit Validation */}
-          <div className={`p-4 rounded-lg border-2 ${(() => {
-            const subtotal = orderData.items.reduce((sum, item) =>
-              sum + ((parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0)), 0
-            );
-            const taxBreakdownOuter = (taxRules || []).map((rule: any) => subtotal * (rule.rate_percent / 100));
-            const taxAmountOuter = taxBreakdownOuter.reduce((s: number, a: number) => s + a, 0);
-            const shippingAmount = parseFloat(String(orderData.shipping_amount)) || 0;
-            const orderTotal = subtotal + taxAmountOuter + shippingAmount;
-            const exceedsCredit = customerCreditInfo.creditLimit > 0 && orderTotal > customerCreditInfo.availableCredit;
-            return exceedsCredit ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200';
-          })()}`}>
-            {(() => {
-              const subtotal = orderData.items.reduce((sum, item) =>
-                sum + ((parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0)), 0
-              );
-
-              // Calculate taxes based on customer's tax rules
-              const taxBreakdown = taxRules.map(rule => ({
-                rule_code: rule.rule_code,
-                title: rule.title,
-                rate_percent: rule.rate_percent,
-                amount: subtotal * (rule.rate_percent / 100)
-              }));
-
-              const totalTaxAmount = taxBreakdown.reduce((sum, tax) => sum + tax.amount, 0);
-              const taxAmount = totalTaxAmount > 0 ? totalTaxAmount : 0; // Use calculated tax or 0 if no rules
-
-              const shippingAmount = parseFloat(String(orderData.shipping_amount)) || 0;
-              const orderTotal = subtotal + taxAmount + shippingAmount;
-              const exceedsCredit = customerCreditInfo.creditLimit > 0 && orderTotal > customerCreditInfo.availableCredit;
-              const exceededBy = exceedsCredit ? orderTotal - customerCreditInfo.availableCredit : 0;
-              const creditUtilization = customerCreditInfo.creditLimit > 0 ? (orderTotal / customerCreditInfo.creditLimit) * 100 : 0;
-
-              return (
-                <div className="space-y-4">
-                  {/* Header */}
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-bold text-gray-900">Order Summary</h3>
-                    {customerCreditInfo.creditLimit > 0 && (
-                      <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${exceedsCredit ? 'bg-red-100 text-red-800' :
-                        creditUtilization > 80 ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-green-100 text-green-800'
-                        }`}>
-                        {exceedsCredit ? '⚠ Credit Exceeded' : creditUtilization > 80 ? '⚠ High Usage' : '✓ Within Limit'}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Per-Item Line Breakdown */}
-                  {orderData.items.filter((item: any) => item.material_id).length > 0 && (
-                    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
-                      <div className="grid grid-cols-12 gap-1 px-3 py-2 bg-slate-100 text-xs font-semibold text-slate-600 uppercase tracking-wide">
-                        <span className="col-span-5">Item</span>
-                        <span className="col-span-2 text-center">Qty</span>
-                        <span className="col-span-2 text-right">Price</span>
-                        <span className="col-span-3 text-right">Total</span>
-                      </div>
-                      {orderData.items.map((item: any, idx: number) => {
-                        const qty = parseFloat(item.quantity) || 0;
-                        const price = parseFloat(item.unit_price) || 0;
-                        if (!item.material_id) return null;
-                        return (
-                          <div key={idx} className={`grid grid-cols-12 gap-1 px-3 py-2 text-sm border-t border-slate-100 ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
-                            <span className="col-span-5 text-slate-700 truncate" title={item.material_description || item.material_id}>
-                              {item.material_description || `Item ${idx + 1}`}
-                            </span>
-                            <span className="col-span-2 text-center text-slate-500">{qty} {item.unit || 'PC'}</span>
-                            <span className="col-span-2 text-right text-slate-500">${price.toFixed(2)}</span>
-                            <span className="col-span-3 text-right font-semibold text-slate-800">${(qty * price).toFixed(2)}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Totals */}
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between text-gray-700">
-                      <span>Subtotal</span>
-                      <span className="font-medium">${subtotal.toFixed(2)}</span>
-                    </div>
-
-                    {/* Tax Breakdown by Rule */}
-                    {taxBreakdown.length > 0 ? (
-                      <div className="bg-purple-50 p-3 rounded-lg border border-purple-200">
-                        <div className="flex justify-between items-center mb-1.5">
-                          <span className="text-purple-800 font-medium text-xs uppercase tracking-wide">Tax (Estimated)</span>
-                          <span className="font-semibold text-purple-900">${taxAmount.toFixed(2)}</span>
-                        </div>
-                        <div className="space-y-1">
-                          {taxBreakdown.map((tax, index) => (
-                            <div key={index} className="flex justify-between text-xs text-purple-700">
-                              <span><span className="font-semibold">{tax.rule_code}</span> — {tax.title} ({tax.rate_percent}%)</span>
-                              <span>${tax.amount.toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex justify-between text-slate-500">
-                        <span className="flex items-center gap-1">
-                          Tax
-                          <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">server-calculated</span>
-                        </span>
-                        <span>—</span>
-                      </div>
-                    )}
-
-                    {shippingAmount > 0 && (
-                      <div className="flex justify-between text-gray-700">
-                        <span>Shipping</span>
-                        <span className="font-medium">${shippingAmount.toFixed(2)}</span>
-                      </div>
-                    )}
-
-                    {customerCreditInfo.creditLimit > 0 && (
-                      <div className="flex justify-between pt-1 border-t border-slate-200 text-slate-600">
-                        <span>Available Credit</span>
-                        <span className="font-medium text-green-600">${customerCreditInfo.availableCredit.toFixed(2)}</span>
-                      </div>
-                    )}
-
-                    <div className="flex justify-between text-xl font-bold border-t-2 border-slate-300 pt-3 mt-1">
-                      <span className="text-slate-800">Estimated Total</span>
-                      <span className={exceedsCredit ? 'text-red-600' : 'text-blue-700'}>${orderTotal.toFixed(2)}</span>
-                    </div>
-
-                    <p className="text-xs text-slate-400 flex items-center gap-1">
-                      <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      Final amounts recalculated by pricing engine after submission.
-                    </p>
-                  </div>
-
-                  {/* Credit utilization */}
-                  {customerCreditInfo.creditLimit > 0 && (
-                    <div className={`p-3 rounded-lg ${exceedsCredit ? 'bg-red-100 border border-red-200' :
-                      creditUtilization > 80 ? 'bg-yellow-100 border border-yellow-200' :
-                        'bg-green-100 border border-green-200'
-                      }`}>
-                      <div className="flex items-center justify-between text-sm font-medium mb-1.5">
-                        <span>{exceedsCredit ? 'Credit Limit Exceeded' : 'Credit Utilization'}</span>
-                        <span>{exceedsCredit ? `-$${exceededBy.toFixed(2)}` : `${creditUtilization.toFixed(1)}%`}</span>
-                      </div>
-                      <div className="w-full bg-white rounded-full h-2 mb-1">
-                        <div
-                          className={`h-2 rounded-full transition-all ${exceedsCredit ? 'bg-red-500' : creditUtilization > 80 ? 'bg-yellow-500' : 'bg-green-500'}`}
-                          style={{ width: `${Math.min(creditUtilization, 100)}%` }}
-                        />
-                      </div>
-                      <p className={`text-xs ${exceedsCredit ? 'text-red-700' : creditUtilization > 80 ? 'text-yellow-700' : 'text-green-700'
-                        }`}>
-                        {exceedsCredit
-                          ? `Order exceeds available credit by $${exceededBy.toFixed(2)}.`
-                          : creditUtilization > 80
-                            ? 'High credit utilization. Consider reviewing the order amount.'
-                            : 'Order is within credit limit and can be processed.'}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* ── SAP-style Pricing Analysis ── */}
-                  {orderData.pricing_procedure && (
-                    <div className="mt-1 border border-blue-200 rounded-lg overflow-hidden">
-                      {/* Panel header */}
-                      <div className="flex items-center justify-between bg-blue-600 px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <svg className="w-4 h-4 text-blue-100" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                          </svg>
-                          <span className="text-sm font-bold text-white">Pricing Analysis</span>
-                        </div>
-                        <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded font-mono font-semibold">
-                          {orderData.pricing_procedure}
-                        </span>
-                      </div>
-
-                      {/* Procedure name */}
-                      {(() => {
-                        const pp = (pricingProcedures as any[]).find(
-                          (p: any) => p.procedure_code === orderData.pricing_procedure || String(p.id) === orderData.pricing_procedure
-                        );
-                        return pp ? (
-                          <div className="px-3 py-1.5 bg-blue-50 border-b border-blue-100 text-xs text-blue-800 flex items-center gap-1">
-                            <span className="font-medium">{pp.procedure_name || pp.description}</span>
-                            {pp.description && pp.procedure_name && (
-                              <span className="text-blue-500">— {pp.description}</span>
-                            )}
-                          </div>
-                        ) : null;
-                      })()}
-
-                      {/* Steps table */}
-                      {procedureStepsLoading ? (
-                        <div className="flex items-center gap-2 px-3 py-3 text-xs text-slate-500">
-                          <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500" />
-                          Loading procedure steps…
-                        </div>
-                      ) : (procedureSteps as any[]).length === 0 ? (
-                        <div className="px-3 py-3 text-xs text-slate-400 italic">
-                          No condition steps defined for this procedure.
-                        </div>
-                      ) : (
-                        <div className="overflow-x-auto">
-                          {/* Column headers */}
-                          <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide bg-slate-50 border-b border-slate-200 px-2 py-1.5"
-                            style={{ gridTemplateColumns: '32px 32px 60px 1fr 72px 80px 32px 44px' }}>
-                            <span>Step</span>
-                            <span>Ctr</span>
-                            <span>CType</span>
-                            <span>Description</span>
-                            <span className="text-right">Rate</span>
-                            <span className="text-right">Amount</span>
-                            <span className="text-center">Req</span>
-                            <span className="text-right">Acct</span>
-                          </div>
-                          {/* Loading indicator for pricing preview */}
-                          {pricingPreviewLoading && (
-                            <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 border-b border-amber-100 text-xs text-amber-600">
-                              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-amber-500" />
-                              Calculating prices…
-                            </div>
-                          )}
-                          {/* Rows */}
-                          {(procedureSteps as any[]).map((step: any, i: number) => {
-                            const isTax = step.condition_type_code?.includes('TAX') ||
-                              step.condition_type_code?.includes('VAT') ||
-                              step.condition_type_code?.includes('GST') ||
-                              step.condition_type_code?.includes('IGST') ||
-                              step.condition_type_code?.includes('CGST') ||
-                              step.condition_type_code?.includes('SGST') ||
-                              step.condition_type_code?.includes('MWST');
-                            const isPrice = step.condition_type_code?.startsWith('PR') || step.condition_type_code?.startsWith('PB');
-                            const isDiscount = step.condition_type_code?.startsWith('K') || step.condition_type_code?.startsWith('RB');
-                            const rowColor = isTax ? 'bg-purple-50' : isPrice ? 'bg-green-50' : isDiscount ? 'bg-orange-50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50';
-
-                            // Match with pricing preview condition by step number
-                            const previewCond = pricingPreview?.conditions?.find((c: any) => c.step === (step.step_number || step.counter));
-                            const rate = previewCond?.rate;
-                            const amount = previewCond?.calculatedValue;
-                            const calcType = previewCond?.calculationType;
-
-                            return (
-                              <div
-                                key={step.id || i}
-                                className={`grid text-xs border-b border-slate-100 px-2 py-1.5 hover:bg-blue-50 transition-colors ${rowColor}`}
-                                style={{ gridTemplateColumns: '32px 32px 60px 1fr 72px 80px 32px 44px' }}
-                              >
-                                <span className="text-slate-500 font-mono">{step.step_number || step.counter}</span>
-                                <span className="text-slate-400 font-mono">{step.counter}</span>
-                                <span className={`font-bold font-mono ${isTax ? 'text-purple-700' : isPrice ? 'text-green-700' : isDiscount ? 'text-orange-700' : 'text-blue-700'}`}>
-                                  {step.condition_type_code || '—'}
-                                </span>
-                                <span className="text-slate-700 truncate" title={step.condition_name || step.description}>
-                                  {step.condition_name || step.description || '—'}
-                                </span>
-                                {/* Rate */}
-                                <span className="text-right font-mono text-slate-600">
-                                  {rate != null && rate !== 0
-                                    ? (calcType === '%' ? `${rate.toFixed(1)}%` : `$${rate.toFixed(2)}`)
-                                    : <span className="text-slate-300">—</span>}
-                                </span>
-                                {/* Amount */}
-                                <span className={`text-right font-mono font-semibold ${amount < 0 ? 'text-red-600' : amount > 0 ? 'text-emerald-700' : 'text-slate-300'}`}>
-                                  {amount != null && amount !== 0
-                                    ? `${amount < 0 ? '-' : ''}$${Math.abs(amount).toFixed(2)}`
-                                    : '—'}
-                                </span>
-                                {/* Mandatory */}
-                                <span className="text-center">
-                                  {step.is_mandatory
-                                    ? <span className="text-red-600 font-bold" title="Mandatory">●</span>
-                                    : <span className="text-slate-300" title="Optional">○</span>}
-                                </span>
-                                <span className="text-right font-mono text-slate-500 text-[10px]">{step.account_key || '—'}</span>
-                              </div>
-                            );
-                          })}
-                          {/* Totals row from pricing preview */}
-                          {pricingPreview && pricingPreview.grandTotal != null && pricingPreview.grandTotal !== 0 && (
-                            <div className="grid text-xs font-bold border-t-2 border-blue-300 bg-blue-50 px-2 py-2"
-                              style={{ gridTemplateColumns: '32px 32px 60px 1fr 72px 80px 32px 44px' }}>
-                              <span></span><span></span><span></span>
-                              <span className="text-blue-900 uppercase tracking-wide">Grand Total</span>
-                              <span></span>
-                              <span className="text-right font-mono text-blue-900 text-sm">
-                                ${pricingPreview.grandTotal.toFixed(2)}
-                              </span>
-                              <span></span><span></span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Legend */}
-                      <div className="flex items-center gap-3 px-3 py-1.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-400">
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-green-300 inline-block" /> Price</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-orange-300 inline-block" /> Discount</span>
-                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-purple-300 inline-block" /> Tax</span>
-                        <span className="flex items-center gap-1"><span className="text-red-600">●</span> Mandatory</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-              );
-            })()}
-          </div>
-
-          <div className="flex justify-end gap-4">
+          {/* Footer Actions */}
+          <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSubmit} disabled={isLoading}>
-              {isLoading ? "Creating..." : "Create Order with Inventory Check"}
+            <Button onClick={handleSubmit} disabled={isLoading} className="min-w-[160px]">
+              {isLoading ? 'Creating...' : 'Create Sales Order'}
             </Button>
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </DialogContent >
+    </Dialog >
   );
 }
+
+
 
 // Enhanced Delivery Dialog with Schedule Lines at Component Level (Outside of CreateSalesOrderDialog)
 function EnhancedDeliveryDialogWrapper({ open, onOpenChange, salesOrder, scheduleLines, onCreateDelivery, isCreating }: {

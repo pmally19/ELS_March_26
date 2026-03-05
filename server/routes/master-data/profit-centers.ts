@@ -36,6 +36,9 @@ router.get("/", async (req: Request, res: Response) => {
         COALESCE(pc.active, true) AS active,
         pc.created_at,
         pc.updated_at,
+        pc."_tenantId" AS tenant_id,
+        pc.created_by,
+        pc.updated_by,
         -- Map for frontend compatibility (frontend expects code and name)
         pc.profit_center AS code,
         pc.description AS name,
@@ -80,6 +83,9 @@ router.get("/:id", async (req: Request, res: Response) => {
         COALESCE(pc.active, true) AS active,
         pc.created_at,
         pc.updated_at,
+        pc."_tenantId" AS tenant_id,
+        pc.created_by,
+        pc.updated_by,
         -- Map for frontend compatibility
         pc.profit_center AS code,
         pc.description AS name,
@@ -150,8 +156,11 @@ router.post("/", async (req: Request, res: Response) => {
         valid_to,
         active,
         created_at,
-        updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+        updated_at,
+        created_by,
+        updated_by,
+        "_tenantId"
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), $12, $13, $14)
       RETURNING *
     `, [
       finalProfitCenter,
@@ -164,7 +173,10 @@ router.post("/", async (req: Request, res: Response) => {
       finalResponsiblePerson,
       finalValidFrom,
       valid_to || null,
-      active !== undefined ? active : true
+      active !== undefined ? active : true,
+      (req as any).user?.id || 1,
+      (req as any).user?.id || 1,
+      (req as any).user?.tenantId || '001'
     ]);
 
     // Map response for frontend compatibility
@@ -232,6 +244,7 @@ router.put("/:id", async (req: Request, res: Response) => {
     addUpdate('valid_to', valid_to);
     addUpdate('company_code_id', company_code_id);
     addUpdate('active', active);
+    addUpdate('updated_by', (req as any).user?.id || 1);
 
     // Always update updated_at
     updates.push('updated_at = NOW()');

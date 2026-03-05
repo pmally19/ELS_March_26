@@ -10,7 +10,7 @@ router.get('/', async (req, res) => {
         const { is_active, category } = req.query;
 
         let query = 'SELECT * FROM movement_transaction_types';
-        const conditions = [];
+        const conditions = ['"_deletedAt" IS NULL'];
         const params = [];
         let paramIndex = 1;
 
@@ -48,7 +48,7 @@ router.get('/:id', async (req, res) => {
         const { id } = req.params;
 
         const result = await pool.query(
-            'SELECT * FROM movement_transaction_types WHERE id = $1',
+            'SELECT * FROM movement_transaction_types WHERE id = $1 AND "_deletedAt" IS NULL',
             [id]
         );
 
@@ -70,6 +70,8 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
     try {
         const pool = await ensureActivePool();
+        const userId = (req as any).user?.id || 1;
+        const tenantId = (req as any).user?.tenantId || '001';
         const {
             code, name, description, category, affects_inventory,
             direction, requires_reference, sort_order, is_active
@@ -84,8 +86,9 @@ router.post('/', async (req, res) => {
       INSERT INTO movement_transaction_types (
         code, name, description, category, affects_inventory,
         direction, requires_reference, sort_order, is_active,
+        created_by, updated_by, "_tenantId",
         created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
       RETURNING *
     `, [
             code.toUpperCase(),
@@ -96,7 +99,10 @@ router.post('/', async (req, res) => {
             direction || 'NEUTRAL',
             requires_reference || false,
             sort_order || 0,
-            is_active !== false
+            is_active !== false,
+            userId,
+            userId,
+            tenantId
         ]);
 
         res.status(201).json(result.rows[0]);
@@ -117,6 +123,7 @@ router.put('/:id', async (req, res) => {
     try {
         const pool = await ensureActivePool();
         const { id } = req.params;
+        const userId = (req as any).user?.id || 1;
         const {
             code, name, description, category, affects_inventory,
             direction, requires_reference, sort_order, is_active
@@ -126,8 +133,8 @@ router.put('/:id', async (req, res) => {
       UPDATE movement_transaction_types
       SET code = $1, name = $2, description = $3, category = $4,
           affects_inventory = $5, direction = $6, requires_reference = $7,
-          sort_order = $8, is_active = $9, updated_at = NOW()
-      WHERE id = $10
+          sort_order = $8, is_active = $9, updated_by = $10, updated_at = NOW()
+      WHERE id = $11 AND "_deletedAt" IS NULL
       RETURNING *
     `, [
             code.toUpperCase(),
@@ -139,6 +146,7 @@ router.put('/:id', async (req, res) => {
             requires_reference || false,
             sort_order || 0,
             is_active !== false,
+            userId,
             id
         ]);
 
@@ -164,6 +172,7 @@ router.delete('/:id', async (req, res) => {
     try {
         const pool = await ensureActivePool();
         const { id } = req.params;
+        const userId = (req as any).user?.id || 1;
 
         // Check if it's being used
         const usageCheck = await pool.query(
@@ -178,8 +187,8 @@ router.delete('/:id', async (req, res) => {
         }
 
         const result = await pool.query(
-            'DELETE FROM movement_transaction_types WHERE id = $1 RETURNING *',
-            [id]
+            'UPDATE movement_transaction_types SET "_deletedAt" = NOW(), updated_by = $1 WHERE id = $2 AND "_deletedAt" IS NULL RETURNING *',
+            [userId, id]
         );
 
         if (result.rows.length === 0) {

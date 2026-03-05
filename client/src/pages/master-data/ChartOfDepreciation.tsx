@@ -4,16 +4,22 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
-import { Plus, Search, RefreshCw, Edit2, Trash2, ArrowLeft, Calculator } from "lucide-react";
+import { Plus, Search, RefreshCw, Edit2, Trash2, ArrowLeft, Calculator, Eye, MoreHorizontal } from "lucide-react";
 import { Link } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
+import { Separator } from "@/components/ui/separator";
+
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
 
 interface ChartOfDepreciation {
   id: number;
@@ -38,6 +44,9 @@ interface ChartOfDepreciation {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  createdBy?: number;
+  updatedBy?: number;
+  tenantId?: string;
   companyCode?: string;
   companyName?: string;
   fiscalYearVariantCode?: string;
@@ -83,6 +92,10 @@ export default function ChartOfDepreciation() {
   const [searchTerm, setSearchTerm] = useState("");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [editingChart, setEditingChart] = useState<ChartOfDepreciation | null>(null);
+  const [viewingChart, setViewingChart] = useState<ChartOfDepreciation | null>(null);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [showAdminData, setShowAdminData] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [formData, setFormData] = useState<ChartOfDepreciationFormData>({
     code: "",
     name: "",
@@ -167,14 +180,14 @@ export default function ChartOfDepreciation() {
         const data = await response.json();
         return Array.isArray(data)
           ? data
-              .filter((c: any) => c.isActive !== false)
-              .map((c: any) => ({
-                id: c.id ?? c.code,
-                code: c.code,
-                name: c.name,
-                symbol: c.symbol,
-              }))
-              .sort((a: Currency, b: Currency) => a.code.localeCompare(b.code))
+            .filter((c: any) => c.isActive !== false)
+            .map((c: any) => ({
+              id: c.id ?? c.code,
+              code: c.code,
+              name: c.name,
+              symbol: c.symbol,
+            }))
+            .sort((a: Currency, b: Currency) => a.code.localeCompare(b.code))
           : [];
       } catch (error) {
         console.error("Error fetching currencies:", error);
@@ -193,13 +206,13 @@ export default function ChartOfDepreciation() {
         const data = await response.json();
         return Array.isArray(data)
           ? data
-              .filter((m: any) => m.is_active !== false)
-              .map((m: any) => ({
-                id: m.id,
-                code: m.code,
-                name: m.name,
-              }))
-              .sort((a: DepreciationMethodOption, b: DepreciationMethodOption) => a.code.localeCompare(b.code))
+            .filter((m: any) => m.is_active !== false)
+            .map((m: any) => ({
+              id: m.id,
+              code: m.code,
+              name: m.name,
+            }))
+            .sort((a: DepreciationMethodOption, b: DepreciationMethodOption) => a.code.localeCompare(b.code))
           : [];
       } catch (error) {
         console.error("Error fetching depreciation methods:", error);
@@ -244,6 +257,9 @@ export default function ChartOfDepreciation() {
           companyName: item.company_name,
           fiscalYearVariantCode: item.fiscal_year_variant_code,
           fiscalYearVariantName: item.fiscal_year_variant_name,
+          createdBy: item.created_by,
+          updatedBy: item.updated_by,
+          tenantId: item.tenant_id,
         })) : [];
       } catch (error) {
         console.error("Error fetching chart of depreciation:", error);
@@ -281,7 +297,7 @@ export default function ChartOfDepreciation() {
         if (!value || (typeof value === 'string' && value.trim() === "")) return null;
         return value;
       };
-      
+
       const payload = {
         code: data.code,
         name: data.name,
@@ -334,7 +350,7 @@ export default function ChartOfDepreciation() {
         if (!value || (typeof value === 'string' && value.trim() === "")) return null;
         return value;
       };
-      
+
       const payload: any = {};
       if (data.code !== undefined) payload.code = data.code;
       if (data.name !== undefined) payload.name = data.name;
@@ -355,7 +371,7 @@ export default function ChartOfDepreciation() {
       if (data.depreciationStartDate !== undefined) payload.depreciationStartDate = normalizeOptionalString(data.depreciationStartDate);
       if (data.depreciationEndDate !== undefined) payload.depreciationEndDate = normalizeOptionalString(data.depreciationEndDate);
       if (data.isActive !== undefined) payload.isActive = data.isActive;
-      
+
       const response = await apiRequest(`/api/master-data/chart-of-depreciation/${id}`, {
         method: "PUT",
         body: JSON.stringify(payload)
@@ -427,9 +443,16 @@ export default function ChartOfDepreciation() {
     setEditingChart(null);
   };
 
+  const openDetails = (chart: ChartOfDepreciation) => {
+    setViewingChart(chart);
+    setShowAdminData(false);
+    setIsDetailsOpen(true);
+  };
+
   const handleEdit = (chart: ChartOfDepreciation) => {
     setEditingChart(chart);
-    
+    setIsDetailsOpen(false);
+
     // Helper to format date for input field
     const formatDateForInput = (dateValue: string | Date | null | undefined): string => {
       if (!dateValue) return "";
@@ -445,7 +468,7 @@ export default function ChartOfDepreciation() {
         return "";
       }
     };
-    
+
     setFormData({
       code: chart.code,
       name: chart.name,
@@ -656,15 +679,15 @@ export default function ChartOfDepreciation() {
                       <SelectItem value="none">None</SelectItem>
                       {depreciationMethods.length > 0
                         ? depreciationMethods.map((m) => (
-                            <SelectItem key={m.id} value={m.code}>
-                              {m.code} {m.name ? `- ${m.name}` : ""}
-                            </SelectItem>
-                          ))
+                          <SelectItem key={m.id} value={m.code}>
+                            {m.code} {m.name ? `- ${m.name}` : ""}
+                          </SelectItem>
+                        ))
                         : codOptions.depreciationMethods.map((option) => (
-                            <SelectItem key={option} value={option}>
-                              {formatEnumLabel(option)}
-                            </SelectItem>
-                          ))}
+                          <SelectItem key={option} value={option}>
+                            {formatEnumLabel(option)}
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -868,15 +891,19 @@ export default function ChartOfDepreciation() {
               </TableHeader>
               <TableBody>
                 {filteredCharts.map((chart) => (
-                  <TableRow key={chart.id}>
+                  <TableRow
+                    key={chart.id}
+                    className="cursor-pointer hover:bg-gray-50"
+                    onClick={() => openDetails(chart)}
+                  >
                     <TableCell className="font-mono">{chart.code}</TableCell>
                     <TableCell>{chart.name}</TableCell>
                     <TableCell>
                       {chart.companyName ? `${chart.companyCode || ''} - ${chart.companyName}` : (chart.companyCode || "-")}
                     </TableCell>
                     <TableCell>
-                      {chart.fiscalYearVariantName 
-                        ? `${chart.fiscalYearVariantCode || ''} - ${chart.fiscalYearVariantName}` 
+                      {chart.fiscalYearVariantName
+                        ? `${chart.fiscalYearVariantCode || ''} - ${chart.fiscalYearVariantName}`
                         : (chart.fiscalYearVariantCode || "-")
                       }
                     </TableCell>
@@ -893,23 +920,26 @@ export default function ChartOfDepreciation() {
                         {chart.isActive ? "Active" : "Inactive"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="icon" onClick={() => handleEdit(chart)}>
-                          <Edit2 className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => {
-                            if (confirm("Are you sure you want to delete this chart of depreciation?")) {
-                              deleteMutation.mutate(chart.id);
-                            }
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
+                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => openDetails(chart)}>
+                            <Eye className="mr-2 h-4 w-4" /> View
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleEdit(chart)}>
+                            <Edit2 className="mr-2 h-4 w-4" /> Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-red-600"
+                            onClick={() => setDeletingId(chart.id)}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -918,6 +948,161 @@ export default function ChartOfDepreciation() {
           )}
         </CardContent>
       </Card>
+
+      {/* View Details Dialog */}
+      <Dialog open={isDetailsOpen} onOpenChange={(open) => { setIsDetailsOpen(open); if (!open) setShowAdminData(false); }}>
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Chart of Depreciation Details</DialogTitle>
+            <DialogDescription>
+              {viewingChart?.code} — {viewingChart?.name}
+            </DialogDescription>
+          </DialogHeader>
+          {viewingChart && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Code</p>
+                  <p className="text-sm font-semibold font-mono">{viewingChart.code}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Status</p>
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewingChart.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                    {viewingChart.isActive ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-sm font-medium text-gray-500">Name</p>
+                  <p className="text-sm">{viewingChart.name}</p>
+                </div>
+                {viewingChart.description && (
+                  <div className="col-span-2">
+                    <p className="text-sm font-medium text-gray-500">Description</p>
+                    <p className="text-sm">{viewingChart.description}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Company</p>
+                  <p className="text-sm">{viewingChart.companyCode} {viewingChart.companyName ? `— ${viewingChart.companyName}` : ''}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Currency</p>
+                  <p className="text-sm">{viewingChart.currency || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Country</p>
+                  <p className="text-sm">{viewingChart.country || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Fiscal Year Variant</p>
+                  <p className="text-sm">{viewingChart.fiscalYearVariantCode || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Depreciation Method</p>
+                  <p className="text-sm">{viewingChart.depreciationMethod?.replace(/_/g, ' ') || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Base Method</p>
+                  <p className="text-sm">{viewingChart.baseMethod?.replace(/_/g, ' ') || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Period Control</p>
+                  <p className="text-sm">{viewingChart.periodControl?.replace(/_/g, ' ') || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Depreciation Calculation</p>
+                  <p className="text-sm">{viewingChart.depreciationCalculation?.replace(/_/g, ' ') || '—'}</p>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-gray-500 mb-2">Depreciation Flags</p>
+                <div className="grid grid-cols-2 gap-1 text-xs">
+                  {[
+                    { label: 'Allow Manual', val: viewingChart.allowManualDepreciation },
+                    { label: 'Allow Accelerated', val: viewingChart.allowAcceleratedDepreciation },
+                    { label: 'Allow Special', val: viewingChart.allowSpecialDepreciation },
+                    { label: 'Require Dep. Key', val: viewingChart.requireDepreciationKey },
+                    { label: 'Allow Negative', val: viewingChart.allowNegativeDepreciation },
+                  ].map(({ label, val }) => (
+                    <div key={label} className="flex items-center justify-between py-0.5">
+                      <span className="text-gray-600">{label}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${val ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                        {val ? 'Yes' : 'No'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Administrative Data - collapsible */}
+              <div
+                className="cursor-pointer flex justify-between items-center select-none py-1"
+                onClick={() => setShowAdminData(!showAdminData)}
+              >
+                <p className="font-semibold text-sm text-gray-700">Administrative Data</p>
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ transform: showAdminData ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </div>
+              {showAdminData && (
+                <dl className="grid grid-cols-2 gap-3">
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Created By</dt>
+                    <dd className="text-sm text-gray-900">{viewingChart.createdBy ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Updated By</dt>
+                    <dd className="text-sm text-gray-900">{viewingChart.updatedBy ?? viewingChart.createdBy ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Created At</dt>
+                    <dd className="text-sm text-gray-900">{viewingChart.createdAt ? new Date(viewingChart.createdAt).toLocaleString() : '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Updated At</dt>
+                    <dd className="text-sm text-gray-900">{viewingChart.updatedAt ? new Date(viewingChart.updatedAt).toLocaleString() : '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Tenant ID</dt>
+                    <dd className="text-sm text-gray-900">{viewingChart.tenantId ?? '—'}</dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setIsDetailsOpen(false); if (viewingChart) handleEdit(viewingChart); }}>
+              <Edit2 className="h-4 w-4 mr-1" /> Edit
+            </Button>
+            <Button onClick={() => setIsDetailsOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={deletingId !== null} onOpenChange={() => setDeletingId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the chart of depreciation. This action cannot be undone if no assets reference it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deletingId && deleteMutation.mutate(deletingId)}
+              className="bg-red-600 hover:bg-red-700"
+            >Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -54,7 +54,7 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Plus, Search, Edit, Trash2, X, FileUp, Download, Factory, ArrowLeft, RefreshCw, PowerOff, Power, MoreHorizontal, Eye } from "lucide-react";
+import { Plus, Search, Edit, Trash2, X, FileUp, Download, Factory, ArrowLeft, RefreshCw, PowerOff, Power, MoreHorizontal, Eye, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 // Import the plant excel import component
@@ -90,6 +90,11 @@ type Plant = {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  // Audit trail fields
+  _tenantId?: string | null;
+  _createdBy?: number | null;
+  _updatedBy?: number | null;
+  _deletedAt?: string | null;
 };
 
 // Define the Company Code type for selection
@@ -158,6 +163,7 @@ export default function PlantPage() {
   const { toast } = useToast();
   const permissions = useAgentPermissions();
   const queryClient = useQueryClient();
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
 
   // Fetch plants using direct api call to handle JSON parsing correctly
   const [plants, setPlants] = useState<Plant[]>([]);
@@ -249,7 +255,11 @@ export default function PlantPage() {
           status: p.status || 'active',
           isActive: p.isActive !== undefined ? p.isActive : (p.is_active !== undefined ? p.is_active : true),
           createdAt: p.createdAt || p.created_at || null,
-          updatedAt: p.updatedAt || p.updated_at || null
+          updatedAt: p.updatedAt || p.updated_at || null,
+          _tenantId: p['_tenantId'] ?? null,
+          _createdBy: p['_createdBy'] ?? null,
+          _updatedBy: p['_updatedBy'] ?? null,
+          _deletedAt: p['_deletedAt'] ?? null,
         }))
         : [];
       setPlants(normalizedPlants);
@@ -1786,26 +1796,43 @@ export default function PlantPage() {
                 </div>
               )}
 
-              {/* Timestamps */}
+              {/* Administrative Data — collapsible (SAP ECC pattern) */}
               <div className="border-t pt-4">
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <Label className="text-gray-500">Created At</Label>
-                    <p className="text-gray-700">
-                      {viewingPlant.createdAt
-                        ? new Date(viewingPlant.createdAt).toLocaleString()
-                        : "-"}
-                    </p>
-                  </div>
-                  <div>
-                    <Label className="text-gray-500">Updated At</Label>
-                    <p className="text-gray-700">
-                      {viewingPlant.updatedAt
-                        ? new Date(viewingPlant.updatedAt).toLocaleString()
-                        : "-"}
-                    </p>
-                  </div>
-                </div>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-2"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                >
+                  {adminDataOpen
+                    ? <ChevronDown className="h-3 w-3" />
+                    : <ChevronRight className="h-3 w-3" />}
+                  <Info className="h-3 w-3" />
+                  Administrative Data
+                </button>
+                {adminDataOpen && (
+                  <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs text-gray-400">
+                    <div>
+                      <dt className="font-medium">Created At</dt>
+                      <dd>{viewingPlant.createdAt ? new Date(viewingPlant.createdAt).toLocaleString() : "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-medium">Updated At</dt>
+                      <dd>{viewingPlant.updatedAt ? new Date(viewingPlant.updatedAt).toLocaleString() : "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-medium">Created By (ID)</dt>
+                      <dd>{viewingPlant._createdBy ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-medium">Updated By (ID)</dt>
+                      <dd>{viewingPlant._updatedBy ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-medium">Tenant ID</dt>
+                      <dd>{viewingPlant._tenantId ?? "—"}</dd>
+                    </div>
+                  </dl>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 pt-4">

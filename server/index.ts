@@ -130,12 +130,7 @@ console.log = (...args) => {
   const simpleRealAIRoutes = await import('./routes/simple-real-ai.js');
   app.use('/api/simple-real-ai', simpleRealAIRoutes.default);
 
-  // Pricing-related routes (new SAP-compatible features)
-  const conditionRecordsRoutes = await import('./routes/condition-records');
-  app.use('/api/condition-records', conditionRecordsRoutes.default);
-
-  const pricingCalculationRoutes = await import('./routes/pricing-calculation');
-  app.use('/api/pricing', pricingCalculationRoutes.default);
+  // Pricing-related routes are now mounted in server/routes.ts to avoid 404 handler precedence issues
 
   // RBAC routes are handled in main routes.ts
   // app.use("/api/transactions", transactionRoutes);

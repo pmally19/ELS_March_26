@@ -48,7 +48,8 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { BookOpen, Plus, Search, Edit, Trash2, ArrowLeft, RefreshCw, MoreHorizontal } from "lucide-react";
+import { BookOpen, Plus, Search, Edit, Trash2, ArrowLeft, RefreshCw, MoreHorizontal, Eye } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,19 +59,22 @@ import {
 
 interface ChartOfAccounts {
   id: number;
-  chart_id: string; // Chart of Accounts ID
-  description: string; // Description
-  language?: string; // Default language
-  account_length?: number; // Length of G/L Account Number
-  controlling_integration?: boolean; // Controlling Integration
-  group_chart_id?: number; // Group Chart of Accounts
-  group_chart_id_code?: string; // Group Chart ID code for display
-  group_chart_description?: string; // Group Chart description for display
-  active: boolean; // Block Indicator (inverted: false = blocked)
-  manual_creation_allowed?: boolean; // Manual Creation Allowed
-  maintenance_language?: string; // Maintenance Language
+  chart_id: string;
+  description: string;
+  language?: string;
+  account_length?: number;
+  controlling_integration?: boolean;
+  group_chart_id?: number;
+  group_chart_id_code?: string;
+  group_chart_description?: string;
+  active: boolean;
+  manual_creation_allowed?: boolean;
+  maintenance_language?: string;
   created_at: string;
   updated_at: string;
+  created_by?: number;
+  updated_by?: number;
+  tenantId?: string;
 }
 
 // Validation Schema
@@ -90,6 +94,8 @@ export default function ChartOfAccountsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingChart, setEditingChart] = useState<ChartOfAccounts | null>(null);
+  const [viewingChart, setViewingChart] = useState<ChartOfAccounts | null>(null);
+  const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -254,6 +260,11 @@ export default function ChartOfAccountsPage() {
     }
   };
 
+  const handleViewDetails = (chart: ChartOfAccounts) => {
+    setViewingChart(chart);
+    setIsViewDialogOpen(true);
+  };
+
   const handleRefresh = () => {
     refetch();
     toast({ title: "Refreshed", description: "Data refreshed successfully" });
@@ -369,6 +380,10 @@ export default function ChartOfAccountsPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => handleViewDetails(chart)}>
+                              <Eye className="mr-2 h-4 w-4" />
+                              View Details
+                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleEdit(chart)}>
                               <Edit className="mr-2 h-4 w-4" />
                               Edit
@@ -618,6 +633,53 @@ export default function ChartOfAccountsPage() {
               </DialogFooter>
             </form>
           </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>Chart of Accounts — {viewingChart?.chart_id}</DialogTitle>
+            <DialogDescription>{viewingChart?.description}</DialogDescription>
+          </DialogHeader>
+          {viewingChart && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div><p className="text-sm font-medium text-gray-500">Chart ID</p><p className="text-sm font-semibold">{viewingChart.chart_id}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">Description</p><p className="text-sm">{viewingChart.description}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">Language</p><p className="text-sm">{viewingChart.language || '—'}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">GL Account Length</p><p className="text-sm">{viewingChart.account_length ?? '—'}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">Maintenance Language</p><p className="text-sm">{viewingChart.maintenance_language || '—'}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">Status</p><p className="text-sm">{viewingChart.active ? 'Active' : 'Blocked'}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">Controlling Integration</p><p className="text-sm">{viewingChart.controlling_integration ? 'Yes' : 'No'}</p></div>
+                <div><p className="text-sm font-medium text-gray-500">Manual Creation</p><p className="text-sm">{viewingChart.manual_creation_allowed ? 'Yes' : 'No'}</p></div>
+                {viewingChart.group_chart_id_code && (
+                  <div className="col-span-2"><p className="text-sm font-medium text-gray-500">Group Chart</p><p className="text-sm">{viewingChart.group_chart_id_code} — {viewingChart.group_chart_description}</p></div>
+                )}
+              </div>
+
+              <Separator />
+
+              <div
+                className="cursor-pointer flex justify-between items-center select-none"
+                onClick={(e) => {
+                  const next = (e.currentTarget as HTMLElement).nextElementSibling as HTMLElement;
+                  if (next) next.style.display = next.style.display === 'none' ? 'grid' : 'none';
+                }}
+              >
+                <p className="font-semibold text-sm text-gray-700">Administrative Data</p>
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+              </div>
+              <dl className="grid grid-cols-2 gap-3" style={{ display: 'none' }}>
+                <div><dt className="text-sm font-medium text-gray-500">Created By</dt><dd className="text-sm text-gray-900">{viewingChart.created_by ?? '—'}</dd></div>
+                <div><dt className="text-sm font-medium text-gray-500">Updated By</dt><dd className="text-sm text-gray-900">{viewingChart.updated_by ?? viewingChart.created_by ?? '—'}</dd></div>
+                <div><dt className="text-sm font-medium text-gray-500">Created At</dt><dd className="text-sm text-gray-900">{viewingChart.created_at ? new Date(viewingChart.created_at).toLocaleString() : '—'}</dd></div>
+                <div><dt className="text-sm font-medium text-gray-500">Updated At</dt><dd className="text-sm text-gray-900">{viewingChart.updated_at ? new Date(viewingChart.updated_at).toLocaleString() : '—'}</dd></div>
+                <div><dt className="text-sm font-medium text-gray-500">Tenant ID</dt><dd className="text-sm text-gray-900">{viewingChart.tenantId ?? '—'}</dd></div>
+              </dl>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

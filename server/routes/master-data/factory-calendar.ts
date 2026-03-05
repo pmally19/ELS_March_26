@@ -30,7 +30,12 @@ router.get('/factory-calendars', async (req, res) => {
         saturday_working,
         sunday_working,
         created_date,
-        status
+        status,
+        created_by,
+        updated_by,
+        "_tenantId",
+        created_at,
+        updated_at
       FROM factory_calendars
       WHERE status = 'ACTIVE'
       ORDER BY calendar_code
@@ -52,6 +57,11 @@ router.get('/factory-calendars', async (req, res) => {
             sundayWorking: row.sunday_working === 'Y',
             createdDate: row.created_date,
             status: row.status,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
         })));
     } catch (error) {
         console.error('Error fetching factory calendars:', error);
@@ -79,7 +89,12 @@ router.get('/factory-calendars/:id', async (req, res) => {
         saturday_working,
         sunday_working,
         created_date,
-        status
+        status,
+        created_by,
+        updated_by,
+        "_tenantId",
+        created_at,
+        updated_at
       FROM factory_calendars
       WHERE calendar_id = $1
     `, [id]);
@@ -105,6 +120,11 @@ router.get('/factory-calendars/:id', async (req, res) => {
             sundayWorking: row.sunday_working === 'Y',
             createdDate: row.created_date,
             status: row.status,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
         });
     } catch (error) {
         console.error('Error fetching factory calendar:', error);
@@ -137,6 +157,9 @@ router.post('/factory-calendars', async (req, res) => {
             });
         }
 
+        const userId = (req as any).user?.id || 1;
+        const tenantId = (req as any).user?.tenantId || '001';
+
         const result = await pool.query(`
       INSERT INTO factory_calendars (
         calendar_id,
@@ -151,8 +174,13 @@ router.post('/factory-calendars', async (req, res) => {
         daily_hours,
         saturday_working,
         sunday_working,
-        status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'ACTIVE')
+        status,
+        created_by,
+        updated_by,
+        "_tenantId",
+        created_at,
+        updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'ACTIVE', $13, $14, $15, NOW(), NOW())
       RETURNING *
     `, [
             calendarId,
@@ -167,6 +195,9 @@ router.post('/factory-calendars', async (req, res) => {
             dailyHours || null,
             saturdayWorking ? 'Y' : 'N',
             sundayWorking ? 'Y' : 'N',
+            userId,
+            userId,
+            tenantId,
         ]);
 
         const row = result.rows[0];
@@ -186,6 +217,11 @@ router.post('/factory-calendars', async (req, res) => {
             sundayWorking: row.sunday_working === 'Y',
             createdDate: row.created_date,
             status: row.status,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
         });
     } catch (error) {
         console.error('Error creating factory calendar:', error);
@@ -216,6 +252,8 @@ router.put('/factory-calendars/:id', async (req, res) => {
             status,
         } = req.body;
 
+        const userId = (req as any).user?.id || 1;
+
         const result = await pool.query(`
       UPDATE factory_calendars
       SET 
@@ -230,8 +268,10 @@ router.put('/factory-calendars/:id', async (req, res) => {
         daily_hours = $9,
         saturday_working = $10,
         sunday_working = $11,
-        status = COALESCE($12, status)
-      WHERE calendar_id = $13
+        status = COALESCE($12, status),
+        updated_by = $13,
+        updated_at = NOW()
+      WHERE calendar_id = $14
       RETURNING *
     `, [
             calendarCode,
@@ -246,6 +286,7 @@ router.put('/factory-calendars/:id', async (req, res) => {
             saturdayWorking ? 'Y' : 'N',
             sundayWorking ? 'Y' : 'N',
             status,
+            userId,
             id,
         ]);
 
@@ -270,6 +311,11 @@ router.put('/factory-calendars/:id', async (req, res) => {
             sundayWorking: row.sunday_working === 'Y',
             createdDate: row.created_date,
             status: row.status,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
         });
     } catch (error) {
         console.error('Error updating factory calendar:', error);

@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -43,7 +44,14 @@ const fiscalYearVariantSchema = z.object({
   active: z.boolean().default(true)
 });
 
-type FiscalYearVariant = z.infer<typeof fiscalYearVariantSchema> & { id: number };
+type FiscalYearVariant = z.infer<typeof fiscalYearVariantSchema> & {
+  id: number;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: number;
+  updated_by?: number;
+  tenant_id?: string;
+};
 
 export default function FiscalYearVariant() {
   const [, setLocation] = useLocation();
@@ -54,6 +62,9 @@ export default function FiscalYearVariant() {
   const { toast } = useToast();
   const permissions = useAgentPermissions();
   const queryClient = useQueryClient();
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [viewingVariant, setViewingVariant] = useState<FiscalYearVariant | null>(null);
+  const [showAdminData, setShowAdminData] = useState(false);
 
   const { data: variants = [], isLoading, refetch } = useQuery<FiscalYearVariant[]>({
     queryKey: ["/api/master-data/fiscal-year-variants"],
@@ -584,6 +595,14 @@ export default function FiscalYearVariant() {
                           <Button
                             variant="outline"
                             size="sm"
+                            onClick={() => { setViewingVariant(variant); setIsDetailsOpen(true); }}
+                            title="View Details"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => handleEdit(variant)}
                             disabled={deleteMutation.isPending}
                           >
@@ -717,6 +736,103 @@ export default function FiscalYearVariant() {
               );
             })()}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={isDetailsOpen} onOpenChange={(open) => { setIsDetailsOpen(open); if (!open) setShowAdminData(false); }}>
+        <DialogContent className="sm:max-w-[560px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Fiscal Year Variant Details</DialogTitle>
+            <DialogDescription>
+              View complete information for {viewingVariant?.variant_id}
+            </DialogDescription>
+          </DialogHeader>
+          {viewingVariant && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Variant ID</p>
+                  <p className="text-sm font-semibold">{viewingVariant.variant_id}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Status</p>
+                  <span className={`px-2 py-1 rounded-full text-xs ${viewingVariant.active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                    }`}>
+                    {viewingVariant.active ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-sm font-medium text-gray-500">Description</p>
+                  <p className="text-sm">{viewingVariant.description}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Posting Periods</p>
+                  <p className="text-sm">{viewingVariant.posting_periods}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Special Periods</p>
+                  <p className="text-sm">{viewingVariant.special_periods}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Year Shift</p>
+                  <p className="text-sm">{viewingVariant.year_shift}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Fiscal Calendar ID</p>
+                  <p className="text-sm">{viewingVariant.fiscal_calendar_id ?? '—'}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Created</p>
+                  <p className="text-sm">{viewingVariant.created_at ? new Date(viewingVariant.created_at).toLocaleString() : 'N/A'}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Last Updated</p>
+                  <p className="text-sm">{viewingVariant.updated_at ? new Date(viewingVariant.updated_at).toLocaleString() : 'N/A'}</p>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Administrative Data - collapsible */}
+              <div
+                className="cursor-pointer flex justify-between items-center select-none py-1"
+                onClick={() => setShowAdminData(!showAdminData)}
+              >
+                <p className="font-semibold text-sm text-gray-700">Administrative Data</p>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ transform: showAdminData ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+                >
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </div>
+              {showAdminData && (
+                <dl className="grid grid-cols-2 gap-3">
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Created By</dt>
+                    <dd className="text-sm text-gray-900">{viewingVariant.created_by ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Updated By</dt>
+                    <dd className="text-sm text-gray-900">{viewingVariant.updated_by ?? viewingVariant.created_by ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Tenant ID</dt>
+                    <dd className="text-sm text-gray-900">{viewingVariant.tenant_id ?? '—'}</dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setIsDetailsOpen(false); if (viewingVariant) handleEdit(viewingVariant); }}>
+              <Edit className="h-4 w-4 mr-1" /> Edit
+            </Button>
+            <Button onClick={() => setIsDetailsOpen(false)}>Close</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

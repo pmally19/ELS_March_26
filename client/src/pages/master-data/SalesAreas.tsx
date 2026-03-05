@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
-import { Plus, Search, RefreshCw, Edit2, Trash2, ArrowLeft, MoreHorizontal, Eye, Building, Globe, MapPin } from "lucide-react";
+import { Plus, Search, RefreshCw, Edit2, Trash2, ArrowLeft, MoreHorizontal, Eye, Building, Globe, MapPin, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest } from "@/lib/queryClient";
 import {
@@ -34,6 +34,11 @@ interface SalesArea {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  // Audit trail fields
+  _tenantId?: string | null;
+  _createdBy?: number | null;
+  _updatedBy?: number | null;
+  _deletedAt?: string | null;
 }
 
 interface SalesAreaFormData {
@@ -66,6 +71,8 @@ export default function SalesAreas() {
   const [editingSalesArea, setEditingSalesArea] = useState<SalesArea | null>(null);
   const [viewingSalesArea, setViewingSalesArea] = useState<SalesArea | null>(null);
   const [isViewDetailsOpen, setIsViewDetailsOpen] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
+  const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [formData, setFormData] = useState<SalesAreaFormData>({
     sales_org_code: "",
     distribution_channel_code: "",
@@ -76,7 +83,6 @@ export default function SalesAreas() {
 
   // Assignment Tab State
   const [selectedSalesAreaIdForAssignment, setSelectedSalesAreaIdForAssignment] = useState<string>("");
-  const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [selectedOfficeToAssign, setSelectedOfficeToAssign] = useState<string>("");
 
   const queryClient = useQueryClient();
@@ -918,6 +924,26 @@ export default function SalesAreas() {
                           </dd>
                         </div>
                       </dl>
+
+                      {/* Collapsible Administrative Data */}
+                      <div className="border-t mt-3 pt-3">
+                        <button
+                          type="button"
+                          className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+                          onClick={() => setAdminDataOpen(o => !o)}
+                        >
+                          {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                          <Info className="h-3 w-3" />
+                          Administrative Data
+                        </button>
+                        {adminDataOpen && (
+                          <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                            <div><dt className="font-medium inline">Created By (ID): </dt><dd className="inline">{viewingSalesArea._createdBy ?? "—"}</dd></div>
+                            <div><dt className="font-medium inline">Updated By (ID): </dt><dd className="inline">{viewingSalesArea._updatedBy ?? "—"}</dd></div>
+                            <div><dt className="font-medium inline">Tenant ID: </dt><dd className="inline">{viewingSalesArea._tenantId ?? "—"}</dd></div>
+                          </dl>
+                        )}
+                      </div>
                     </CardContent>
                   </Card>
                 </div>

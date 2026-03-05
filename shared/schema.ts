@@ -347,6 +347,10 @@ export const taxCodes = pgTable("tax_codes", {
   description: text("description"),
   taxRate: decimal("tax_rate", { precision: 5, scale: 2 }).notNull(),
   isActive: boolean("is_active").default(true),
+  tenantId: varchar("_tenantId", { length: 3 }).default("001"),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+  deletedAt: timestamp("_deletedAt", { withTimezone: true }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   taxType: varchar("tax_type", { length: 20 }),
@@ -524,6 +528,10 @@ export const customers = pgTable("erp_customers", {
   userId: integer("user_id").references(() => users.id),
   createdAt: timestamp("created_at"),
   updatedAt: timestamp("updated_at"),
+
+  // Master Data Audit Trail
+  _tenantId: varchar("_tenantId", { length: 3 }).default('001'),
+  _deletedAt: timestamp("_deletedAt", { withTimezone: true }),
 });
 
 export const customerRelations = relations(customers, ({ one, many }) => ({
@@ -955,6 +963,9 @@ export const fiscalYearVariants = pgTable("fiscal_year_variants", {
   active: boolean("active").default(true),
   created_at: timestamp("created_at").defaultNow(),
   updated_at: timestamp("updated_at").defaultNow(),
+  created_by: integer("created_by"),
+  updated_by: integer("updated_by"),
+  tenant_id: varchar("_tenantId", { length: 3 }).default("001"),
 });
 
 // GL Accounts schema - Section-wise fields
@@ -1128,6 +1139,10 @@ export const regions = pgTable("regions", {
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  tenantId: varchar("_tenantId", { length: 3 }).default("001"),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+  deletedAt: timestamp("_deletedAt", { withTimezone: true })
 });
 
 export const insertRegionSchema = createInsertSchema(regions).omit({
@@ -1750,6 +1765,10 @@ export const industrySectors = pgTable("industry_sectors", {
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  _tenantId: varchar("_tenantId", { length: 3 }).default("001"),
+  _deletedAt: timestamp("_deletedAt", { withTimezone: true }),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
 });
 
 // Distribution Channels - Referenced in Customer Master
@@ -2672,7 +2691,13 @@ export const paymentTerms = pgTable("payment_terms", {
   paymentDays: integer("payment_due_days").notNull(),
   discountDays1: integer("cash_discount_days").default(0),
   discountPercent1: decimal("cash_discount_percent", { precision: 5, scale: 2 }).default("0.00"),
+  isActive: boolean("is_active").default(true),
+  tenantId: varchar("_tenantId", { length: 3 }).default("001"),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+  deletedAt: timestamp("_deletedAt", { withTimezone: true }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // Incoterms - International trade terms
@@ -2701,10 +2726,12 @@ export const priceLists = pgTable("price_lists", {
   validTo: date("valid_to"),
   priceListType: varchar("price_list_type", { length: 20 }).notNull().default("standard"),
   isActive: boolean("is_active").notNull().default(true),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  tenantId: varchar("_tenantId", { length: 3 }).default("001"),
   createdBy: integer("created_by"),
   updatedBy: integer("updated_by"),
+  deletedAt: timestamp("_deletedAt", { withTimezone: true }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Discount Groups - Customer discount categories
@@ -2824,6 +2851,10 @@ export const movementTypes = pgTable("movement_types", {
   glAccountCredit: varchar("gl_account_credit", { length: 20 }),
   transactionKey: varchar("transaction_key", { length: 3 }), // Transaction Key (e.g. BSX, GBB)
   isActive: boolean("is_active").notNull().default(true),
+  tenantId: varchar("_tenantId", { length: 3 }).default("001"),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+  deletedAt: timestamp("_deletedAt", { withTimezone: true }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -3237,7 +3268,6 @@ export const deliveryItems = pgTable("delivery_items", {
   batchNumber: varchar("batch_number", { length: 20 }),
   serialNumber: varchar("serial_number", { length: 30 }),
   storageLocation: varchar("storage_location", { length: 10 }),
-  movementType: varchar("movement_type", { length: 10 }),
   goodsIssueQuantity: decimal("goods_issue_quantity", { precision: 15, scale: 3 }).default("0.000"),
   itemStatus: varchar("item_status", { length: 20 }).notNull().default("planned"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -4439,9 +4469,12 @@ export const routingMaster = pgTable("routing_master", {
   validFrom: date("valid_from"),
   validTo: date("valid_to"),
   isActive: boolean("is_active").default(true),
-  createdBy: integer("created_by"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+  _tenantId: varchar("_tenantId", { length: 3 }).default("001"),
+  _deletedAt: timestamp("_deletedAt", { withTimezone: true }),
 });
 
 // Routing Operations (Individual Steps)

@@ -56,6 +56,10 @@ interface MaterialAccountAssignmentGroup {
     isActive: boolean;
     createdAt: string;
     updatedAt: string;
+    createdBy?: number;
+    updatedBy?: number;
+    tenantId?: string;
+    deletedAt?: string | null;
 }
 
 // UI Components
@@ -76,6 +80,8 @@ import {
 import { Download, RefreshCw, MoreHorizontal, Globe } from "lucide-react";
 
 export default function MaterialAccountAssignmentGroups() {
+    const [adminDataOpen, setAdminDataOpen] = useState(false);
+
     const { toast } = useToast();
     const [searchTerm, setSearchTerm] = useState("");
     const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -497,7 +503,64 @@ export default function MaterialAccountAssignmentGroups() {
                                     <p>{viewingItem.description || "-"}</p>
                                 </div>
                             </div>
-                            <DialogFooter>
+
+                            {/* ── Administrative Data (SAP ECC style) ────────────────── */}
+                            <div className="border rounded-md overflow-hidden mt-4">
+                                <button
+                                    type="button"
+                                    onClick={() => setAdminDataOpen(o => !o)}
+                                    className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                                >
+                                    <span className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                                        <Info className="h-3.5 w-3.5" />
+                                        Administrative Data
+                                    </span>
+                                    {adminDataOpen
+                                        ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                                        : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                                </button>
+
+                                {adminDataOpen && (
+                                    <dl className="px-4 py-3 space-y-2 bg-white">
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Created on</dt>
+                                            <dd className="text-xs text-gray-500">
+                                                {viewingItem.createdAt
+                                                    ? new Date(viewingItem.createdAt).toLocaleString()
+                                                    : '—'}
+                                            </dd>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Created by (User ID)</dt>
+                                            <dd className="text-xs text-gray-500">
+                                                {viewingItem.createdBy ?? '—'}
+                                            </dd>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Last changed on</dt>
+                                            <dd className="text-xs text-gray-500">
+                                                {viewingItem.updatedAt
+                                                    ? new Date(viewingItem.updatedAt).toLocaleString()
+                                                    : '—'}
+                                            </dd>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Last changed by (User ID)</dt>
+                                            <dd className="text-xs text-gray-500">
+                                                {viewingItem.updatedBy ?? '—'}
+                                            </dd>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <dt className="text-xs text-gray-400">Tenant ID</dt>
+                                            <dd className="text-xs text-gray-500">
+                                                {viewingItem.tenantId ?? '—'}
+                                            </dd>
+                                        </div>
+                                    </dl>
+                                )}
+                            </div>
+
+                            <DialogFooter className="mt-4">
                                 <Button variant="outline" onClick={() => setIsDetailsOpen(false)}>Close</Button>
                                 <Button onClick={() => {
                                     setIsDetailsOpen(false);

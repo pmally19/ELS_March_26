@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
-import { Plus, Search, RefreshCw, Edit2, Trash2, ArrowLeft, MoreHorizontal, Eye } from "lucide-react";
+import { Plus, Search, RefreshCw, Edit2, Trash2, ArrowLeft, MoreHorizontal, Eye, Globe, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import {
   DropdownMenu,
@@ -27,6 +27,11 @@ interface Division {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  // Audit trail fields
+  _tenantId?: string | null;
+  _createdBy?: number | null;
+  _updatedBy?: number | null;
+  _deletedAt?: string | null;
 }
 
 interface DivisionFormData {
@@ -42,6 +47,7 @@ export default function Divisions() {
   const [editingDivision, setEditingDivision] = useState<Division | null>(null);
   const [viewingDivision, setViewingDivision] = useState<Division | null>(null);
   const [isViewDetailsOpen, setIsViewDetailsOpen] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
   const [formData, setFormData] = useState<DivisionFormData>({
     code: "",
     name: "",
@@ -292,8 +298,8 @@ export default function Divisions() {
                         <TableCell className="text-center">
                           <span
                             className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${division.isActive
-                                ? "bg-green-100 text-green-800"
-                                : "bg-gray-100 text-gray-800"
+                              ? "bg-green-100 text-green-800"
+                              : "bg-gray-100 text-gray-800"
                               }`}
                           >
                             {division.isActive ? "Active" : "Inactive"}
@@ -450,8 +456,8 @@ export default function Divisions() {
                   <div className="mt-1">
                     <span
                       className={`inline-flex items-center px-2 py-1 rounded text-sm font-medium ${viewingDivision.isActive
-                          ? "bg-green-100 text-green-800"
-                          : "bg-gray-100 text-gray-800"
+                        ? "bg-green-100 text-green-800"
+                        : "bg-gray-100 text-gray-800"
                         }`}
                     >
                       {viewingDivision.isActive ? "Active" : "Inactive"}
@@ -473,7 +479,11 @@ export default function Divisions() {
               )}
 
               <div className="border-t pt-4">
-                <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <Globe className="h-4 w-4 text-gray-500" />
+                  <h4 className="text-sm font-semibold text-gray-900">System Details</h4>
+                </div>
+                <div className="grid grid-cols-2 gap-4 text-sm mb-4">
                   <div>
                     <Label className="text-gray-500">Created At</Label>
                     <p className="text-gray-700">
@@ -490,6 +500,26 @@ export default function Divisions() {
                         : "-"}
                     </p>
                   </div>
+                </div>
+
+                {/* Collapsible Administrative Data */}
+                <div className="border-t pt-3">
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+                    onClick={() => setAdminDataOpen(o => !o)}
+                  >
+                    {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                    <Info className="h-3 w-3" />
+                    Administrative Data
+                  </button>
+                  {adminDataOpen && (
+                    <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                      <div><dt className="font-medium inline">Created By (ID): </dt><dd className="inline">{viewingDivision._createdBy ?? "—"}</dd></div>
+                      <div><dt className="font-medium inline">Updated By (ID): </dt><dd className="inline">{viewingDivision._updatedBy ?? "—"}</dd></div>
+                      <div><dt className="font-medium inline">Tenant ID: </dt><dd className="inline">{viewingDivision._tenantId ?? "—"}</dd></div>
+                    </dl>
+                  )}
                 </div>
               </div>
 

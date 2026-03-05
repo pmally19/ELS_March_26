@@ -101,9 +101,13 @@ router.get('/', async (req, res) => {
         cost_center,
         is_active,
         created_at,
-        updated_at
+        updated_at,
+        "_tenantId" as "_tenantId",
+        "_deletedAt" as "_deletedAt",
+        created_by as "createdBy",
+        updated_by as "updatedBy"
       FROM materials 
-      WHERE is_active = true
+      WHERE is_active = true AND "_deletedAt" IS NULL
       ORDER BY code
     `);
 
@@ -148,9 +152,14 @@ router.get('/finished-products', async (req, res) => {
         division,
         is_active,
         created_at,
-        updated_at
+        updated_at,
+        "_tenantId" as "_tenantId",
+        "_deletedAt" as "_deletedAt",
+        created_by as "createdBy",
+        updated_by as "updatedBy"
       FROM materials 
       WHERE is_active = true 
+        AND "_deletedAt" IS NULL
         AND type IN ('FERT', 'FINISHED_GOOD', 'FER')
       ORDER BY code
     `);
@@ -187,6 +196,7 @@ router.get('/top-selling', async (req, res) => {
       LEFT JOIN sales_order_items soi ON m.id = soi.material_id
       LEFT JOIN sales_orders so ON soi.sales_order_id = so.id
       WHERE m.is_active = true
+        AND m."_deletedAt" IS NULL
         AND (so.status IS NULL OR so.status NOT IN ('Cancelled', 'Rejected'))
       GROUP BY m.id, m.code, m.name, m.type, m.base_uom, m.base_unit_price
       ORDER BY total_sold DESC, total_revenue DESC
@@ -253,9 +263,13 @@ router.get('/:id', async (req, res) => {
         cost_center,
         is_active,
         created_at,
-        updated_at
+        updated_at,
+        "_tenantId" as "_tenantId",
+        "_deletedAt" as "_deletedAt",
+        created_by as "createdBy",
+        updated_by as "updatedBy"
       FROM materials 
-      WHERE id = $1 AND is_active = true
+      WHERE id = $1 AND is_active = true AND "_deletedAt" IS NULL
     `, [id]);
 
     if (result.rows.length === 0) {
@@ -297,6 +311,9 @@ router.post('/', async (req: any, res: any) => {
 
 
   const client = await pool.connect();
+  const userId = (req as any).user?.id || 1;
+  const tenantId = (req as any).user?.tenantId || '001';
+
   try {
     // Debug: Log raw request body
     console.log('📥 CREATE Material - Request Body Keys:', Object.keys(req.body));
@@ -610,7 +627,7 @@ router.post('/', async (req: any, res: any) => {
         item_category_group, material_group, material_assignment_group_code, loading_group, price_control, sales_organization, distribution_channel, division,
         purchasing_group, purchase_organization, production_storage_location,
         plant_code, profit_center, cost_center, tax_classification_code,
-        is_active, created_at, updated_at
+        is_active, created_at, updated_at, "_tenantId", created_by, updated_by
       )
       VALUES (
         ${data.code}, 
@@ -656,7 +673,10 @@ router.post('/', async (req: any, res: any) => {
         ${(data as any).taxClassificationCode || transformedBody.taxClassificationCode || null},
         ${data.isActive !== undefined ? data.isActive : true}, 
         NOW(), 
-        NOW()
+        NOW(),
+        ${tenantId},
+        ${userId},
+        ${userId}
       )
       RETURNING id, code, name, type, description, base_uom, base_unit_price, mrp_type, procurement_type, lot_size, reorder_point, safety_stock, min_stock, max_stock, lead_time, planned_delivery_time, production_time, mrp_controller, weight, gross_weight, net_weight, weight_unit, volume, volume_unit, valuation_class, industry_sector, material_group, material_assignment_group_code, price_control, sales_organization, distribution_channel, division, purchasing_group, purchase_organization, production_storage_location, plant_code, profit_center, cost_center, is_active, created_at, updated_at
     `);
@@ -747,6 +767,7 @@ router.post('/', async (req: any, res: any) => {
 const updateMaterialHandler = async (req: express.Request, res: express.Response) => {
   try {
     const { id } = req.params;
+    const userId = (req as any).user?.id || 1;
 
     // Transform snake_case to camelCase for validation
     // Handle all fields explicitly - no defaults, no hardcoded values
@@ -1133,8 +1154,9 @@ const updateMaterialHandler = async (req: express.Request, res: express.Response
     }
 
     updateParts.push(sql`updated_at = NOW()`);
+    updateParts.push(sql`updated_by = ${userId}`);
 
-    if (updateParts.length === 1) {
+    if (updateParts.length === 2 && updateParts[0].sql === 'updated_at = NOW()') {
       return res.status(400).json({ error: "No fields to update" });
     }
 
@@ -1182,8 +1204,14 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: "Material not found" });
     }
 
-    // Delete material
-    await db.execute(sql`DELETE FROM materials WHERE id = ${id}`);
+    const userId = (req as any).user?.id || 1;
+
+    // Soft delete material
+    await db.execute(sql`
+      UPDATE materials 
+      SET is_active = false, "_deletedAt" = NOW(), updated_by = ${userId}
+      WHERE id = ${id}
+    `);
 
     return res.status(200).json({ message: "Material deleted successfully" });
   } catch (error: any) {

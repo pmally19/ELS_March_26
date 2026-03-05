@@ -83,10 +83,18 @@ async function ensureMovementTypesColumns(pool: any) {
       console.log('✅ Added gl_account_determination column');
     }
 
-    // Add transaction_key column if it doesn't exist (kept for backward compat)
-    if (!availableColumns.includes('transaction_key')) {
-      await pool.query('ALTER TABLE movement_types ADD COLUMN transaction_key character varying(3)');
-      console.log('✅ Added transaction_key column');
+    // Add explicit transaction keys (Debit, Credit, PRD)
+    if (!availableColumns.includes('debit_transaction_key')) {
+      await pool.query('ALTER TABLE movement_types ADD COLUMN debit_transaction_key character varying(10)');
+      console.log('✅ Added debit_transaction_key column');
+    }
+    if (!availableColumns.includes('credit_transaction_key')) {
+      await pool.query('ALTER TABLE movement_types ADD COLUMN credit_transaction_key character varying(10)');
+      console.log('✅ Added credit_transaction_key column');
+    }
+    if (!availableColumns.includes('prd_transaction_key')) {
+      await pool.query('ALTER TABLE movement_types ADD COLUMN prd_transaction_key character varying(10)');
+      console.log('✅ Added prd_transaction_key column');
     }
 
     // Add company_code_id column if it doesn't exist
@@ -143,32 +151,44 @@ router.get('/movement-types', async (req, res) => {
     const query = `
       SELECT 
         mt.id,
-        COALESCE(mt.movement_type_code, mt.movement_code) as movement_type_code,
-        COALESCE(mt.description, mt.movement_name) as description,
-        COALESCE(mt.movement_class, mt.movement_category) as movement_class,
+        mt.movement_type_code,
+        mt.description,
+        mt.movement_class,
         COALESCE(mt.transaction_type, 'inventory') as transaction_type,
-        COALESCE(mt.inventory_direction, 
-          CASE 
-            WHEN mt.debit_credit_indicator = 'D' THEN 'increase'
-            WHEN mt.debit_credit_indicator = 'C' THEN 'decrease'
-            ELSE 'neutral'
-          END
-        ) as inventory_direction,
-        COALESCE(mt.special_stock_indicator, '') as special_stock_indicator,
-        COALESCE(mt.valuation_impact, mt.value_update, true) as valuation_impact,
-        COALESCE(mt.quantity_impact, mt.quantity_update, true) as quantity_impact,
-        COALESCE(mt.gl_account_determination, '') as gl_account_determination,
-        COALESCE(mt.transaction_key, '') as transaction_key,
+        COALESCE(mt.inventory_direction, 'neutral') as inventory_direction,
         COALESCE(mt.company_code_id, 1) as company_code_id,
-        COALESCE(mt.is_active, mt.active, true) as is_active,
+        COALESCE(mt.is_active, true) as is_active,
+        -- SAP T156 context fields
+        COALESCE(mt.reversal_movement_type, '') as reversal_movement_type,
+        COALESCE(mt.reference_document_required, 'NONE') as reference_document_required,
+        COALESCE(mt.account_assignment_mandatory, 'NONE') as account_assignment_mandatory,
+        COALESCE(mt.print_control, 'N') as print_control,
+        COALESCE(mt.reason_code_required, false) as reason_code_required,
+        COALESCE(mt.screen_layout_variant, '') as screen_layout_variant,
+        COALESCE(mt.create_fi_document, true) as create_fi_document,
+        COALESCE(mt.create_material_document, true) as create_material_document,
         mt.created_at,
         mt.updated_at,
+        mt.created_by,
+        mt.updated_by,
+        mt."_tenantId" as tenantId,
+        mt."_deletedAt" as deletedAt,
         COALESCE(
           ARRAY_AGG(mttk.transaction_key ORDER BY mttk.transaction_key) FILTER (WHERE mttk.transaction_key IS NOT NULL),
           ARRAY[]::varchar[]
-        ) as transaction_keys
+        ) as transaction_keys,
+        -- Posting rules (T156S) aggregated
+        (SELECT json_agg(pr ORDER BY pr.special_stock_ind, pr.movement_ind)
+         FROM movement_posting_rules pr WHERE pr.movement_type_id = mt.id AND pr.is_active = true
+        ) AS posting_rules,
+        -- Allowed transactions aggregated
+        (SELECT json_agg(at2.transaction_code ORDER BY at2.transaction_code)
+         FROM movement_type_allowed_transactions at2
+         WHERE at2.movement_type_id = mt.id AND at2.is_active = true
+        ) AS allowed_transactions
       FROM movement_types mt
       LEFT JOIN movement_type_transaction_keys mttk ON mt.id = mttk.movement_type_id
+      WHERE mt."_deletedAt" IS NULL
       GROUP BY mt.id
       ORDER BY mt.id
     `;
@@ -181,10 +201,13 @@ router.get('/movement-types', async (req, res) => {
   }
 });
 
-router.post('/movement-types', async (req, res) => {
+router.post('/movement-types', async (req: any, res) => {
   try {
     const pool = ensureActivePool();
     await ensureMovementTypesColumns(pool);
+
+    const tenantId = req.user?.tenantId || '001';
+    const userId = req.user?.id || 1;
 
     const {
       movementTypeCode,
@@ -192,12 +215,13 @@ router.post('/movement-types', async (req, res) => {
       movementClass,
       transactionType,
       inventoryDirection,
-      specialStockIndicator,
-      valuationImpact,
-      quantityImpact,
       glAccountDetermination,
       transactionKey,
+      debitTransactionKey,
+      creditTransactionKey,
+      prdTransactionKey,
       transactionKeys,   // NEW: array of transaction key codes
+      documentTypeId,
       companyCodeId
     } = req.body;
 
@@ -213,24 +237,22 @@ router.post('/movement-types', async (req, res) => {
     const query = `
       INSERT INTO movement_types (
         movement_type_code, description, movement_class, transaction_type,
-        inventory_direction, special_stock_indicator, valuation_impact,
-        quantity_impact, gl_account_determination, transaction_key, company_code_id, is_active,
-        movement_code, movement_name, movement_category, debit_credit_indicator,
-        quantity_update, value_update, reversal_allowed, active
+        inventory_direction, document_type_id, company_code_id, is_active,
+        "_tenantId", created_by, updated_by
       ) VALUES (
-        $1::varchar, $2::text, $3::varchar, $4::varchar, $5::varchar, $6::varchar, $7::boolean, $8::boolean, $9::varchar, $14::varchar, $10::integer, $11::boolean,
-        $1::varchar, $2::varchar, $3::varchar, $12::varchar, $8::boolean, $7::boolean, $13::boolean, $11::boolean
+        $1::varchar, $2::text, $3::varchar, $4::varchar, 
+        $5::varchar, $6::integer, $7::integer, $8::boolean,
+        $9::varchar, $10::integer, $11::integer
       ) 
       RETURNING *
     `;
 
     const records = await pool.query(query, [
       movementTypeCode, description, movementClass, transactionType || 'inventory',
-      inventoryDirection || 'neutral', specialStockIndicator || '',
-      valuationImpact !== undefined ? valuationImpact : true,
-      quantityImpact !== undefined ? quantityImpact : true,
-      glAccountDetermination || '', companyCodeId || 1, true,
-      debitCreditIndicator, false, transactionKey || null
+      inventoryDirection || 'neutral',
+      documentTypeId ? parseInt(documentTypeId) : null,
+      companyCodeId || 1, true,
+      tenantId, userId, userId
     ]);
 
     const newId = records.rows[0].id;
@@ -264,26 +286,37 @@ router.post('/movement-types', async (req, res) => {
   }
 });
 
-router.put('/movement-types/:id', async (req, res) => {
+router.put('/movement-types/:id', async (req: any, res) => {
   try {
     const pool = ensureActivePool();
     await ensureMovementTypesColumns(pool);
 
     const { id } = req.params;
+    const userId = req.user?.id || 1;
     const {
       movementTypeCode,
       description,
       movementClass,
       transactionType,
       inventoryDirection,
-      specialStockIndicator,
-      valuationImpact,
-      quantityImpact,
       glAccountDetermination,
       transactionKey,
-      transactionKeys,   // NEW: array of transaction key codes
+      debitTransactionKey,
+      creditTransactionKey,
+      prdTransactionKey,
+      transactionKeys,
       companyCodeId,
-      isActive
+      isActive,
+      // SAP T156 context fields
+      reversalMovementType,
+      referenceDocumentRequired,
+      accountAssignmentMandatory,
+      printControl,
+      reasonCodeRequired,
+      screenLayoutVariant,
+      createFiDocument,
+      createMaterialDocument,
+
     } = req.body;
 
     const debitCreditIndicator = inventoryDirection === 'increase' ? 'D' :
@@ -296,30 +329,33 @@ router.put('/movement-types/:id', async (req, res) => {
         movement_class = COALESCE($3, movement_class),
         transaction_type = COALESCE($4, transaction_type),
         inventory_direction = COALESCE($5, inventory_direction),
-        special_stock_indicator = COALESCE($6, special_stock_indicator),
-        valuation_impact = COALESCE($7, valuation_impact),
-        quantity_impact = COALESCE($8, quantity_impact),
-        gl_account_determination = COALESCE($9, gl_account_determination),
-        transaction_key = COALESCE($14, transaction_key),
-        company_code_id = COALESCE($10, company_code_id),
-        is_active = COALESCE($11, is_active),
-        movement_code = COALESCE($1, movement_code),
-        movement_name = COALESCE($2, movement_name),
-        movement_category = COALESCE($3, movement_category),
-        debit_credit_indicator = COALESCE($12, debit_credit_indicator),
-        quantity_update = COALESCE($8, quantity_update),
-        value_update = COALESCE($7, value_update),
-        active = COALESCE($11, active),
-        updated_at = NOW()
-      WHERE id = $13 
+        company_code_id = COALESCE($6, company_code_id),
+        is_active = COALESCE($7, is_active),
+        updated_at = NOW(),
+        updated_by = $8,
+        -- SAP T156 context fields
+        reversal_movement_type       = COALESCE($9, reversal_movement_type),
+        reference_document_required  = COALESCE($10, reference_document_required),
+        account_assignment_mandatory = COALESCE($11, account_assignment_mandatory),
+        print_control                = COALESCE($12, print_control),
+        reason_code_required         = COALESCE($13, reason_code_required),
+        screen_layout_variant        = COALESCE($14, screen_layout_variant),
+        create_fi_document           = COALESCE($15, create_fi_document),
+        create_material_document     = COALESCE($16, create_material_document)
+      WHERE id = $17  AND "_deletedAt" IS NULL
       RETURNING *
     `;
 
     const records = await pool.query(query, [
       movementTypeCode, description, movementClass, transactionType,
-      inventoryDirection, specialStockIndicator, valuationImpact,
-      quantityImpact, glAccountDetermination, companyCodeId, isActive,
-      debitCreditIndicator, id, transactionKey || null
+      inventoryDirection, companyCodeId, isActive,
+      userId,
+      // SAP T156 context fields ($9–$16)
+      reversalMovementType ?? null,
+      referenceDocumentRequired ?? null, accountAssignmentMandatory ?? null,
+      printControl ?? null, reasonCodeRequired ?? null, screenLayoutVariant ?? null,
+      createFiDocument ?? null, createMaterialDocument ?? null,
+      id // $17
     ]);
 
     if (records.rows.length === 0) {
@@ -354,12 +390,13 @@ router.put('/movement-types/:id', async (req, res) => {
   }
 });
 
-router.delete('/movement-types/:id', async (req, res) => {
+router.delete('/movement-types/:id', async (req: any, res) => {
   try {
     const pool = ensureActivePool();
     const { id } = req.params;
+    const userId = req.user?.id || 1;
 
-    const checkQuery = 'SELECT id FROM movement_types WHERE id = $1';
+    const checkQuery = 'SELECT id FROM movement_types WHERE id = $1 AND "_deletedAt" IS NULL';
     const checkResult = await pool.query(checkQuery, [id]);
 
     if (checkResult.rows.length === 0) {
@@ -388,8 +425,8 @@ router.delete('/movement-types/:id', async (req, res) => {
     // Remove transaction keys from junction table first (CASCADE handles it, but explicit is safer)
     await pool.query('DELETE FROM movement_type_transaction_keys WHERE movement_type_id = $1', [id]);
 
-    const deleteQuery = 'DELETE FROM movement_types WHERE id = $1 RETURNING id, movement_type_code, description';
-    const deleteResult = await pool.query(deleteQuery, [id]);
+    const deleteQuery = 'UPDATE movement_types SET "_deletedAt" = NOW(), updated_by = $1, updated_at = NOW() WHERE id = $2 AND "_deletedAt" IS NULL RETURNING id, movement_type_code, description';
+    const deleteResult = await pool.query(deleteQuery, [userId, id]);
 
     res.json({
       message: 'Movement type deleted successfully',
@@ -412,23 +449,227 @@ router.delete('/movement-types/:id', async (req, res) => {
   }
 });
 
+// ─── Global Posting Rules (all movement types) ────────────────────────────────
+router.get('/posting-rules', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const result = await pool.query(`
+      SELECT pr.*, mt.movement_type_code
+      FROM movement_posting_rules pr
+      JOIN movement_types mt ON mt.id = pr.movement_type_id
+      WHERE pr.is_active = true
+      ORDER BY mt.movement_type_code, pr.special_stock_ind, pr.movement_ind
+    `);
+    res.json(result.rows);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to fetch posting rules', error: error.message });
+  }
+});
+
+// ─── SAP T156S: Posting Rules (per movement type) ────────────────────────────
+router.get('/movement-types/:id/posting-rules', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const result = await pool.query(
+      'SELECT * FROM movement_posting_rules WHERE movement_type_id=$1 AND is_active=true ORDER BY special_stock_ind, movement_ind',
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to fetch posting rules', error: error.message });
+  }
+});
+
+router.post('/movement-types/:id/posting-rules', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { special_stock_ind = '', movement_ind = '', value_string, quantity_update = true, value_update = true, consumption_posting = '' } = req.body;
+    if (!value_string) return res.status(400).json({ message: 'value_string is required' });
+    const result = await pool.query(`
+      INSERT INTO movement_posting_rules (movement_type_id, special_stock_ind, movement_ind, value_string, quantity_update, value_update, consumption_posting)
+      VALUES ($1,$2,$3,$4,$5,$6,$7)
+      ON CONFLICT (movement_type_id, special_stock_ind, movement_ind) DO UPDATE
+        SET value_string=$4, quantity_update=$5, value_update=$6, consumption_posting=$7, updated_at=NOW()
+      RETURNING *
+    `, [req.params.id, special_stock_ind, movement_ind, value_string, quantity_update, value_update, consumption_posting]);
+    res.status(201).json(result.rows[0]);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to save posting rule', error: error.message });
+  }
+});
+
+router.delete('/movement-types/:id/posting-rules/:ruleId', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    await pool.query('DELETE FROM movement_posting_rules WHERE id=$1 AND movement_type_id=$2', [req.params.ruleId, req.params.id]);
+    res.json({ message: 'Posting rule deleted' });
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to delete posting rule', error: error.message });
+  }
+});
+
+// ─── Allowed Transactions (per movement type) ─────────────────────────────────
+router.get('/movement-types/:id/allowed-transactions', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const result = await pool.query(
+      'SELECT * FROM movement_type_allowed_transactions WHERE movement_type_id=$1 AND is_active=true ORDER BY transaction_code',
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to fetch allowed transactions', error: error.message });
+  }
+});
+
+router.post('/movement-types/:id/allowed-transactions', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { transaction_code, description } = req.body;
+    if (!transaction_code) return res.status(400).json({ message: 'transaction_code is required' });
+    const result = await pool.query(
+      'INSERT INTO movement_type_allowed_transactions (movement_type_id, transaction_code, description) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING RETURNING *',
+      [req.params.id, transaction_code, description || null]
+    );
+    res.status(201).json(result.rows[0] || { message: 'already exists' });
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to add allowed transaction', error: error.message });
+  }
+});
+
+router.delete('/movement-types/:id/allowed-transactions/:txnId', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    await pool.query('DELETE FROM movement_type_allowed_transactions WHERE id=$1 AND movement_type_id=$2', [req.params.txnId, req.params.id]);
+    res.json({ message: 'Removed' });
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to remove allowed transaction', error: error.message });
+  }
+});
+
+// ─── Value Strings (OBYC) ─────────────────────────────────────────────────────
+router.get('/value-strings', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { value_string } = req.query;
+    let query = 'SELECT * FROM movement_type_value_strings WHERE is_active=true';
+    const params: any[] = [];
+    if (value_string) { query += ' AND value_string=$1'; params.push(value_string); }
+    query += ' ORDER BY value_string, sort_order';
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to fetch value strings', error: error.message });
+  }
+});
+
+router.post('/value-strings', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { value_string, transaction_key, debit_credit = 'D', account_modifier = '', description = '', sort_order = 10 } = req.body;
+    if (!value_string || !transaction_key) {
+      return res.status(400).json({ message: 'value_string and transaction_key are required' });
+    }
+    const result = await pool.query(`
+      INSERT INTO movement_type_value_strings (value_string, transaction_key, debit_credit, account_modifier, description, sort_order)
+      VALUES ($1,$2,$3,$4,$5,$6)
+      RETURNING *
+    `, [value_string, transaction_key, debit_credit, account_modifier, description, sort_order]);
+    res.status(201).json(result.rows[0]);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to create value string', error: error.message });
+  }
+});
+
+router.delete('/value-strings/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    await pool.query('UPDATE movement_type_value_strings SET is_active=false WHERE id=$1', [req.params.id]);
+    res.json({ message: 'Value string deactivated' });
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to delete value string', error: error.message });
+  }
+});
+
+// ─── T156S Determination Engine ───────────────────────────────────────────────
+// POST /api/master-data-crud/determine-posting
+// Body: { movement_type_code, special_stock_ind?, movement_ind? }
+// Returns: value_string + transaction_keys (for GR/GI posting logic)
+router.post('/determine-posting', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { movement_type_code, special_stock_ind = '', movement_ind = '' } = req.body;
+    if (!movement_type_code) return res.status(400).json({ message: 'movement_type_code is required' });
+
+    // Find movement type
+    const mtResult = await pool.query(
+      `SELECT id, movement_type_code, movement_class FROM movement_types WHERE movement_type_code=$1 AND is_active=true LIMIT 1`,
+      [movement_type_code]
+    );
+    if (mtResult.rows.length === 0) return res.status(404).json({ message: `Movement type ${movement_type_code} not found` });
+    const mt = mtResult.rows[0];
+
+    // Find posting rule: exact match first, then fallback to wildcards
+    const ruleResult = await pool.query(`
+      SELECT * FROM movement_posting_rules
+      WHERE movement_type_id = $1
+        AND (
+          (special_stock_ind = $2 AND movement_ind = $3)
+          OR (special_stock_ind = ''  AND movement_ind = $3)
+          OR (special_stock_ind = $2  AND movement_ind = '')
+          OR (special_stock_ind = ''  AND movement_ind = '')
+        )
+        AND is_active = true
+      ORDER BY
+        CASE WHEN special_stock_ind=$2 AND movement_ind=$3 THEN 0
+             WHEN special_stock_ind=$2 AND movement_ind='' THEN 1
+             WHEN special_stock_ind='' AND movement_ind=$3 THEN 2
+             ELSE 3 END
+      LIMIT 1
+    `, [mt.id, special_stock_ind, movement_ind]);
+
+    if (ruleResult.rows.length === 0) {
+      return res.status(404).json({ message: `No posting rule for ${movement_type_code} (stock='${special_stock_ind}', ind='${movement_ind}')` });
+    }
+    const rule = ruleResult.rows[0];
+
+    // Get transaction keys for the determined value string
+    const keysResult = await pool.query(
+      'SELECT * FROM movement_type_value_strings WHERE value_string=$1 AND is_active=true ORDER BY sort_order, debit_credit',
+      [rule.value_string]
+    );
+
+    res.json({
+      movement_type_code,
+      movement_class: mt.movement_class,
+      posting_rule: rule,
+      value_string: rule.value_string,
+      transaction_keys: keysResult.rows,
+    });
+  } catch (error: any) {
+    console.error('Determination engine error:', error);
+    res.status(500).json({ message: 'Determination failed', error: error.message });
+  }
+});
+
 // Deactivate movement type endpoint
-router.put('/movement-types/:id/deactivate', async (req, res) => {
+router.put('/movement-types/:id/deactivate', async (req: any, res) => {
   try {
     const pool = ensureActivePool();
     const { id } = req.params;
+    const userId = req.user?.id || 1;
 
     // Ensure columns exist before updating
     await ensureMovementTypesColumns(pool);
 
     const query = `
       UPDATE movement_types 
-      SET is_active = false, active = false, updated_at = NOW()
-      WHERE id = $1
+      SET is_active = false, active = false, updated_at = NOW(), updated_by = $2
+      WHERE id = $1 AND "_deletedAt" IS NULL
       RETURNING id, movement_type_code, description, is_active
     `;
 
-    const result = await pool.query(query, [id]);
+    const result = await pool.query(query, [id, userId]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Movement type not found' });
@@ -648,8 +889,16 @@ router.get('/payment-terms', async (req, res) => {
         description,
         payment_due_days,
         cash_discount_days,
-        cash_discount_percent
+        cash_discount_percent,
+        created_at,
+        updated_at,
+        created_by,
+        updated_by,
+        "_tenantId",
+        "_deletedAt",
+        is_active
       FROM payment_terms
+      WHERE "_deletedAt" IS NULL
       ORDER BY id
     `);
     const records = (result.rows || []).map((r: any) => ({
@@ -663,9 +912,13 @@ router.get('/payment-terms', async (req, res) => {
       discountPercent2: 0,
       baselineDate: 'document_date',
       companyCodeId: 1,
-      isActive: true,
-      createdAt: '',
-      updatedAt: ''
+      isActive: r.is_active !== undefined ? r.is_active : true,
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
+      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+      createdBy: r.created_by,
+      updatedBy: r.updated_by,
+      tenantId: r._tenantId,
+      deletedAt: r._deletedAt
     }));
     res.json({ records });
   } catch (error) {
@@ -674,10 +927,12 @@ router.get('/payment-terms', async (req, res) => {
   }
 });
 
-router.post('/payment-terms', async (req, res) => {
+router.post('/payment-terms', async (req: any, res) => {
   try {
     const pool = ensureActivePool();
-    let { paymentTermCode, description, dueDays, discountDays1, discountPercent1 } = req.body || {};
+    let { paymentTermCode, description, dueDays, discountDays1, discountPercent1, isActive } = req.body || {};
+    const tenantId = req.user?.tenantId || '001';
+    const userId = req.user?.id || 1;
     console.log('[POST /payment-terms] incoming body:', req.body);
 
     // Basic validation and coercion
@@ -699,12 +954,12 @@ router.post('/payment-terms', async (req, res) => {
 
     const query = `
       INSERT INTO payment_terms (
-        payment_term_key, description, payment_due_days, cash_discount_days, cash_discount_percent, created_at
+        payment_term_key, description, payment_due_days, cash_discount_days, cash_discount_percent, is_active, "_tenantId", created_by, updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *
     `;
-    const result = await pool.query(query, [paymentTermCode, description, dueDaysNum, discountDays1Num, discountPercent1Num]);
+    const result = await pool.query(query, [paymentTermCode, description, dueDaysNum, discountDays1Num, discountPercent1Num, isActive !== undefined ? isActive : true, tenantId, userId, userId]);
     console.log('[POST /payment-terms] insert result rowCount:', result.rowCount);
     const r = result.rows?.[0];
     if (!r) {
@@ -717,7 +972,14 @@ router.post('/payment-terms', async (req, res) => {
       description: r.description || '',
       dueDays: Number(r.payment_due_days) || 0,
       discountDays1: Number(r.cash_discount_days) || 0,
-      discountPercent1: Number(r.cash_discount_percent) || 0
+      discountPercent1: Number(r.cash_discount_percent) || 0,
+      isActive: r.is_active !== undefined ? r.is_active : true,
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
+      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+      createdBy: r.created_by,
+      updatedBy: r.updated_by,
+      tenantId: r._tenantId,
+      deletedAt: r._deletedAt
     });
   } catch (error: any) {
     console.error('Error creating payment term:', error);
@@ -734,11 +996,12 @@ router.post('/payment-terms', async (req, res) => {
   }
 });
 
-router.put('/payment-terms/:id', async (req, res) => {
+router.put('/payment-terms/:id', async (req: any, res) => {
   try {
     const pool = ensureActivePool();
     const { id } = req.params;
-    let { paymentTermCode, description, dueDays, discountDays1, discountPercent1 } = req.body || {};
+    let { paymentTermCode, description, dueDays, discountDays1, discountPercent1, isActive } = req.body || {};
+    const userId = req.user?.id || 1;
 
     // Coerce optional updates while preserving existing when null/undefined
     const codeCoerced = paymentTermCode == null ? null : (paymentTermCode || '').toString().trim().toUpperCase().slice(0, 4);
@@ -753,10 +1016,13 @@ router.put('/payment-terms/:id', async (req, res) => {
         description = COALESCE($2, description),
         payment_due_days = COALESCE($3, payment_due_days),
         cash_discount_days = COALESCE($4, cash_discount_days),
-        cash_discount_percent = COALESCE($5, cash_discount_percent)
-      WHERE id = $6
+        cash_discount_percent = COALESCE($5, cash_discount_percent),
+        is_active = COALESCE($6, is_active),
+        updated_at = NOW(),
+        updated_by = $7
+      WHERE id = $8 AND "_deletedAt" IS NULL
       RETURNING *
-    `, [codeCoerced, descCoerced, dueDaysNum, discountDays1Num, discountPercent1Num, id]);
+    `, [codeCoerced, descCoerced, dueDaysNum, discountDays1Num, discountPercent1Num, isActive, userId, id]);
     if (result.rows.length === 0) return res.status(404).json({ message: 'Payment term not found' });
     const r = result.rows[0];
     res.json({
@@ -765,7 +1031,14 @@ router.put('/payment-terms/:id', async (req, res) => {
       description: r.description || '',
       dueDays: Number(r.payment_due_days) || 0,
       discountDays1: Number(r.cash_discount_days) || 0,
-      discountPercent1: Number(r.cash_discount_percent) || 0
+      discountPercent1: Number(r.cash_discount_percent) || 0,
+      isActive: r.is_active !== undefined ? r.is_active : true,
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
+      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+      createdBy: r.created_by,
+      updatedBy: r.updated_by,
+      tenantId: r._tenantId,
+      deletedAt: r._deletedAt
     });
   } catch (error: any) {
     console.error('Error updating payment term:', error);
@@ -779,11 +1052,12 @@ router.put('/payment-terms/:id', async (req, res) => {
   }
 });
 
-router.delete('/payment-terms/:id', async (req, res) => {
+router.delete('/payment-terms/:id', async (req: any, res) => {
   try {
     const pool = ensureActivePool();
     const { id } = req.params;
-    const result = await pool.query('DELETE FROM payment_terms WHERE id = $1 RETURNING id', [id]);
+    const userId = req.user?.id || 1;
+    const result = await pool.query('UPDATE payment_terms SET "_deletedAt" = NOW(), updated_by = $1, updated_at = NOW() WHERE id = $2 AND "_deletedAt" IS NULL RETURNING id', [userId, id]);
     if (result.rows.length === 0) return res.status(404).json({ message: 'Payment term not found' });
     res.json({ message: 'Payment term deleted successfully' });
   } catch (error) {
@@ -1042,8 +1316,8 @@ router.put('/account-types/:id/deactivate', async (req, res) => {
 router.get('/number-ranges', async (req, res) => {
   try {
     const pool = ensureActivePool();
-    const records = await pool.query('SELECT * FROM number_ranges ORDER BY id');
-    res.json({ records });
+    const result = await pool.query('SELECT * FROM number_ranges ORDER BY id');
+    res.json({ records: result.rows });   // ← was returning QueryResult object, now returns rows array
   } catch (error) {
     console.error('Error fetching number ranges:', error);
     res.status(500).json({ message: 'Failed to fetch number ranges' });
@@ -1061,12 +1335,371 @@ router.post('/number-ranges', async (req, res) => {
       RETURNING *
     `;
 
-    const records = await pool.query(query, [numberRangeCode, description, numberRangeObject, fiscalYear, rangeFrom, rangeTo, currentNumber, externalNumbering, bufferSize, warningPercentage, companyCodeId]);
-    res.status(201).json(records.rows[0]);
+    const result = await pool.query(query, [numberRangeCode, description, numberRangeObject, fiscalYear, rangeFrom, rangeTo, currentNumber || rangeFrom, externalNumbering ?? false, bufferSize ?? 100, warningPercentage ?? 90, companyCodeId ?? 0]);
+    res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating number range:', error);
     res.status(500).json({ message: 'Failed to create number range' });
   }
+});
+
+router.put('/number-ranges/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { id } = req.params;
+    const { numberRangeCode, description, numberRangeObject, fiscalYear, rangeFrom, rangeTo, currentNumber, externalNumbering, bufferSize, warningPercentage, companyCodeId, isActive } = req.body;
+
+    const result = await pool.query(`
+      UPDATE number_ranges SET
+        number_range_code   = COALESCE($1, number_range_code),
+        description         = COALESCE($2, description),
+        number_range_object = COALESCE($3, number_range_object),
+        fiscal_year         = COALESCE($4, fiscal_year),
+        range_from          = COALESCE($5, range_from),
+        range_to            = COALESCE($6, range_to),
+        current_number      = COALESCE($7, current_number),
+        external_numbering  = COALESCE($8, external_numbering),
+        buffer_size         = COALESCE($9, buffer_size),
+        warning_percentage   = COALESCE($10, warning_percentage),
+        company_code_id     = COALESCE($11, company_code_id),
+        is_active           = COALESCE($12, is_active),
+        updated_at          = NOW()
+      WHERE id = $13
+      RETURNING *
+    `, [numberRangeCode, description, numberRangeObject, fiscalYear, rangeFrom, rangeTo, currentNumber, externalNumbering, bufferSize, warningPercentage, companyCodeId, isActive, id]);
+
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Number range not found' });
+    res.json(result.rows[0]);
+  } catch (error: any) {
+    console.error('Error updating number range:', error);
+    res.status(500).json({ message: 'Failed to update number range', detail: error.message });
+  }
+});
+
+router.delete('/number-ranges/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { id } = req.params;
+    const result = await pool.query('DELETE FROM number_ranges WHERE id = $1 RETURNING id', [id]);
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Number range not found' });
+    res.json({ message: 'Number range deleted successfully', id: parseInt(id) });
+  } catch (error: any) {
+    console.error('Error deleting number range:', error);
+    res.status(500).json({ message: 'Failed to delete number range', detail: error.message });
+  }
+});
+
+
+// ─── Reference Tables (for all dropdown data — zero hardcoded) ────────────────
+
+// Mount full CRUD for movement classes (existing dedicated router)
+router.use('/movement-classes', movementClassesRoutes);
+
+// GET /api/master-data-crud/transaction-keys
+router.get('/transaction-keys', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const result = await pool.query(
+      `SELECT id, code, name, description, is_active FROM transaction_keys ORDER BY code`
+    );
+    res.json(result.rows);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to fetch transaction keys', error: error.message });
+  }
+});
+
+// GET /api/master-data-crud/movement-indicators
+router.get('/movement-indicators', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const result = await pool.query(
+      `SELECT id, code, name, description, is_active, sort_order FROM mt_movement_indicators ORDER BY sort_order`
+    );
+    res.json(result.rows);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to fetch movement indicators', error: error.message });
+  }
+});
+
+// GET /api/master-data-crud/special-stock-types
+router.get('/special-stock-types', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const result = await pool.query(
+      `SELECT id, code, name, description, is_active, sort_order FROM mt_special_stock_types ORDER BY sort_order`
+    );
+    res.json(result.rows);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to fetch special stock types', error: error.message });
+  }
+});
+
+// GET /api/master-data-crud/consumption-postings
+router.get('/consumption-postings', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const result = await pool.query(
+      `SELECT id, code, name, description, is_active, sort_order FROM mt_consumption_postings ORDER BY sort_order`
+    );
+    res.json(result.rows);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to fetch consumption postings', error: error.message });
+  }
+});
+
+// GET /api/master-data-crud/account-modifiers
+router.get('/account-modifiers', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const result = await pool.query(
+      `SELECT id, code, name, description, is_active, sort_order FROM mt_account_modifiers ORDER BY sort_order`
+    );
+    res.json(result.rows);
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to fetch account modifiers', error: error.message });
+  }
+});
+
+// GET /api/master-data-crud/inventory-directions
+router.get('/inventory-directions', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const result = await pool.query(
+      `SELECT DISTINCT inventory_direction AS code FROM movement_types WHERE inventory_direction IS NOT NULL AND inventory_direction <> '' ORDER BY code`
+    );
+    // Return friendly labels along with DB values
+    const labels: Record<string, string> = { increase: 'Increase (+)', decrease: 'Decrease (-)', neutral: 'Neutral' };
+    res.json(result.rows.map((r: any) => ({ code: r.code, name: labels[r.code] || r.code })));
+  } catch (error: any) {
+    res.status(500).json({ message: 'Failed to fetch inventory directions', error: error.message });
+  }
+});
+
+// ─── Full CRUD helpers for simple reference tables ────────────────────────────
+// Pattern: GET (already above), POST, PUT/:id, DELETE/:id
+
+// ─── Movement Indicators ──────────────────────────────────────────────────────
+router.post('/movement-indicators', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { code, name, description, sort_order = 10 } = req.body;
+    if (!code || !name) return res.status(400).json({ message: 'code and name are required' });
+    const r = await pool.query(
+      `INSERT INTO mt_movement_indicators (code, name, description, sort_order) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [code.toUpperCase(), name, description || null, sort_order]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (e: any) {
+    res.status(e.code === '23505' ? 400 : 500).json({ message: e.code === '23505' ? 'Code already exists' : 'Failed to create', error: e.message });
+  }
+});
+router.put('/movement-indicators/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { code, name, description, sort_order, is_active } = req.body;
+    const r = await pool.query(
+      `UPDATE mt_movement_indicators SET code=$1, name=$2, description=$3, sort_order=$4, is_active=$5 WHERE id=$6 RETURNING *`,
+      [code, name, description || null, sort_order ?? 10, is_active ?? true, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ message: 'Not found' });
+    res.json(r.rows[0]);
+  } catch (e: any) { res.status(500).json({ message: 'Failed to update', error: e.message }); }
+});
+router.delete('/movement-indicators/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    await pool.query(`UPDATE mt_movement_indicators SET is_active=false WHERE id=$1`, [req.params.id]);
+    res.json({ message: 'Deactivated' });
+  } catch (e: any) { res.status(500).json({ message: 'Failed to delete', error: e.message }); }
+});
+
+// ─── Special Stock Types ──────────────────────────────────────────────────────
+router.post('/special-stock-types', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { code, name, description, sort_order = 10 } = req.body;
+    if (!code || !name) return res.status(400).json({ message: 'code and name are required' });
+    const r = await pool.query(
+      `INSERT INTO mt_special_stock_types (code, name, description, sort_order) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [code.toUpperCase(), name, description || null, sort_order]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (e: any) {
+    res.status(e.code === '23505' ? 400 : 500).json({ message: e.code === '23505' ? 'Code already exists' : 'Failed to create', error: e.message });
+  }
+});
+router.put('/special-stock-types/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { code, name, description, sort_order, is_active } = req.body;
+    const r = await pool.query(
+      `UPDATE mt_special_stock_types SET code=$1, name=$2, description=$3, sort_order=$4, is_active=$5 WHERE id=$6 RETURNING *`,
+      [code, name, description || null, sort_order ?? 10, is_active ?? true, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ message: 'Not found' });
+    res.json(r.rows[0]);
+  } catch (e: any) { res.status(500).json({ message: 'Failed to update', error: e.message }); }
+});
+router.delete('/special-stock-types/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    await pool.query(`UPDATE mt_special_stock_types SET is_active=false WHERE id=$1`, [req.params.id]);
+    res.json({ message: 'Deactivated' });
+  } catch (e: any) { res.status(500).json({ message: 'Failed to delete', error: e.message }); }
+});
+
+// ─── Consumption Postings ─────────────────────────────────────────────────────
+router.post('/consumption-postings', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { code, name, description, sort_order = 10 } = req.body;
+    if (!code || !name) return res.status(400).json({ message: 'code and name are required' });
+    const r = await pool.query(
+      `INSERT INTO mt_consumption_postings (code, name, description, sort_order) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [code.toUpperCase(), name, description || null, sort_order]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (e: any) {
+    res.status(e.code === '23505' ? 400 : 500).json({ message: e.code === '23505' ? 'Code already exists' : 'Failed to create', error: e.message });
+  }
+});
+router.put('/consumption-postings/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { code, name, description, sort_order, is_active } = req.body;
+    const r = await pool.query(
+      `UPDATE mt_consumption_postings SET code=$1, name=$2, description=$3, sort_order=$4, is_active=$5 WHERE id=$6 RETURNING *`,
+      [code, name, description || null, sort_order ?? 10, is_active ?? true, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ message: 'Not found' });
+    res.json(r.rows[0]);
+  } catch (e: any) { res.status(500).json({ message: 'Failed to update', error: e.message }); }
+});
+router.delete('/consumption-postings/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    await pool.query(`UPDATE mt_consumption_postings SET is_active=false WHERE id=$1`, [req.params.id]);
+    res.json({ message: 'Deactivated' });
+  } catch (e: any) { res.status(500).json({ message: 'Failed to delete', error: e.message }); }
+});
+
+// ─── Account Modifiers ────────────────────────────────────────────────────────
+router.post('/account-modifiers', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { code, name, description, sort_order = 10 } = req.body;
+    if (!code || !name) return res.status(400).json({ message: 'code and name are required' });
+    const r = await pool.query(
+      `INSERT INTO mt_account_modifiers (code, name, description, sort_order) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [code.toUpperCase(), name, description || null, sort_order]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (e: any) {
+    res.status(e.code === '23505' ? 400 : 500).json({ message: e.code === '23505' ? 'Code already exists' : 'Failed to create', error: e.message });
+  }
+});
+router.put('/account-modifiers/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { code, name, description, sort_order, is_active } = req.body;
+    const r = await pool.query(
+      `UPDATE mt_account_modifiers SET code=$1, name=$2, description=$3, sort_order=$4, is_active=$5 WHERE id=$6 RETURNING *`,
+      [code, name, description || null, sort_order ?? 10, is_active ?? true, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ message: 'Not found' });
+    res.json(r.rows[0]);
+  } catch (e: any) { res.status(500).json({ message: 'Failed to update', error: e.message }); }
+});
+router.delete('/account-modifiers/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    await pool.query(`UPDATE mt_account_modifiers SET is_active=false WHERE id=$1`, [req.params.id]);
+    res.json({ message: 'Deactivated' });
+  } catch (e: any) { res.status(500).json({ message: 'Failed to delete', error: e.message }); }
+});
+
+// ─── Reference Documents ──────────────────────────────────────────────────────
+router.get('/reference-documents', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const result = await pool.query('SELECT * FROM mt_reference_documents ORDER BY sort_order ASC, code ASC');
+    res.json(result.rows);
+  } catch (e: any) { res.status(500).json({ message: 'Failed to fetch', error: e.message }); }
+});
+router.post('/reference-documents', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { code, name, description, sort_order = 10 } = req.body;
+    if (!code || !name) return res.status(400).json({ message: 'code and name are required' });
+    const r = await pool.query(
+      `INSERT INTO mt_reference_documents (code, name, description, sort_order) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [code.toUpperCase(), name, description || null, sort_order]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (e: any) {
+    res.status(e.code === '23505' ? 400 : 500).json({ message: e.code === '23505' ? 'Code already exists' : 'Failed to create', error: e.message });
+  }
+});
+router.put('/reference-documents/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { code, name, description, sort_order, is_active } = req.body;
+    const r = await pool.query(
+      `UPDATE mt_reference_documents SET code=$1, name=$2, description=$3, sort_order=$4, is_active=$5 WHERE id=$6 RETURNING *`,
+      [code, name, description || null, sort_order ?? 10, is_active ?? true, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ message: 'Not found' });
+    res.json(r.rows[0]);
+  } catch (e: any) { res.status(500).json({ message: 'Failed to update', error: e.message }); }
+});
+router.delete('/reference-documents/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    await pool.query(`UPDATE mt_reference_documents SET is_active=false WHERE id=$1`, [req.params.id]);
+    res.json({ message: 'Deactivated' });
+  } catch (e: any) { res.status(500).json({ message: 'Failed to delete', error: e.message }); }
+});
+
+// ─── Account Assignments ──────────────────────────────────────────────────────
+router.get('/account-assignments', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const result = await pool.query('SELECT * FROM mt_account_assignments ORDER BY sort_order ASC, code ASC');
+    res.json(result.rows);
+  } catch (e: any) { res.status(500).json({ message: 'Failed to fetch', error: e.message }); }
+});
+router.post('/account-assignments', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { code, name, description, sort_order = 10 } = req.body;
+    if (!code || !name) return res.status(400).json({ message: 'code and name are required' });
+    const r = await pool.query(
+      `INSERT INTO mt_account_assignments (code, name, description, sort_order) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [code.toUpperCase(), name, description || null, sort_order]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (e: any) {
+    res.status(e.code === '23505' ? 400 : 500).json({ message: e.code === '23505' ? 'Code already exists' : 'Failed to create', error: e.message });
+  }
+});
+router.put('/account-assignments/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    const { code, name, description, sort_order, is_active } = req.body;
+    const r = await pool.query(
+      `UPDATE mt_account_assignments SET code=$1, name=$2, description=$3, sort_order=$4, is_active=$5 WHERE id=$6 RETURNING *`,
+      [code, name, description || null, sort_order ?? 10, is_active ?? true, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ message: 'Not found' });
+    res.json(r.rows[0]);
+  } catch (e: any) { res.status(500).json({ message: 'Failed to update', error: e.message }); }
+});
+router.delete('/account-assignments/:id', async (req, res) => {
+  try {
+    const pool = ensureActivePool();
+    await pool.query(`UPDATE mt_account_assignments SET is_active=false WHERE id=$1`, [req.params.id]);
+    res.json({ message: 'Deactivated' });
+  } catch (e: any) { res.status(500).json({ message: 'Failed to delete', error: e.message }); }
 });
 
 export default router;

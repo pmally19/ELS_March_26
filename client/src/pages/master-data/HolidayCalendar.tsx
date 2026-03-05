@@ -52,7 +52,8 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Plus, Search, Edit, Download, ArrowLeft, RefreshCw, MoreHorizontal, Calendar as CalendarIcon, Trash2 } from "lucide-react";
+import { Plus, Search, Edit, Download, ArrowLeft, RefreshCw, MoreHorizontal, Calendar as CalendarIcon, Trash2, Eye } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { useAgentPermissions } from "@/hooks/useAgentPermissions";
@@ -70,6 +71,9 @@ type HolidayCalendar = {
     status?: string;
     createdAt?: string;
     updatedAt?: string;
+    createdBy?: number;
+    updatedBy?: number;
+    tenantId?: string;
 };
 
 // Public Holiday type
@@ -112,6 +116,7 @@ export default function HolidayCalendar() {
     const [activeTab, setActiveTab] = useState("basic");
     const [viewingCalendarDetails, setViewingCalendarDetails] = useState<HolidayCalendar | null>(null);
     const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+    const [showAdminData, setShowAdminData] = useState(false);
 
     // Public holidays management state
     const [managingHolidaysFor, setManagingHolidaysFor] = useState<HolidayCalendar | null>(null);
@@ -656,6 +661,10 @@ export default function HolidayCalendar() {
                                                             </Button>
                                                         </DropdownMenuTrigger>
                                                         <DropdownMenuContent align="end">
+                                                            <DropdownMenuItem onClick={() => openDetails(calendar)}>
+                                                                <Eye className="mr-2 h-4 w-4" />
+                                                                View
+                                                            </DropdownMenuItem>
                                                             <DropdownMenuItem onClick={() => handleEdit(calendar)}>
                                                                 <Edit className="mr-2 h-4 w-4" />
                                                                 Edit
@@ -875,8 +884,8 @@ export default function HolidayCalendar() {
             </Dialog>
 
             {/* Details Dialog - View Only */}
-            <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
-                <DialogContent className="sm:max-w-[600px]">
+            <Dialog open={isDetailsOpen} onOpenChange={(open) => { setIsDetailsOpen(open); if (!open) setShowAdminData(false); }}>
+                <DialogContent className="sm:max-w-[560px] max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Holiday Calendar Details</DialogTitle>
                         <DialogDescription>
@@ -885,10 +894,10 @@ export default function HolidayCalendar() {
                     </DialogHeader>
                     {viewingCalendarDetails && (
                         <div className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Holiday Calendar ID</p>
-                                    <p className="text-sm">{viewingCalendarDetails.holidayCalendarId}</p>
+                                    <p className="text-sm font-semibold">{viewingCalendarDetails.holidayCalendarId}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Calendar Code</p>
@@ -900,35 +909,76 @@ export default function HolidayCalendar() {
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Country Code</p>
-                                    <p className="text-sm">{viewingCalendarDetails.countryCode || "N/A"}</p>
+                                    <p className="text-sm">{viewingCalendarDetails.countryCode || 'N/A'}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Region</p>
-                                    <p className="text-sm">{viewingCalendarDetails.region || "N/A"}</p>
+                                    <p className="text-sm">{viewingCalendarDetails.region || 'N/A'}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Valid From</p>
-                                    <p className="text-sm">{viewingCalendarDetails.validFrom || "N/A"}</p>
+                                    <p className="text-sm">{viewingCalendarDetails.validFrom || 'N/A'}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Valid To</p>
-                                    <p className="text-sm">{viewingCalendarDetails.validTo || "N/A"}</p>
+                                    <p className="text-sm">{viewingCalendarDetails.validTo || 'N/A'}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Status</p>
-                                    <span
-                                        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewingCalendarDetails.status === "ACTIVE"
-                                            ? "bg-green-100 text-green-800"
-                                            : "bg-gray-100 text-gray-800"
-                                            }`}
-                                    >
-                                        {viewingCalendarDetails.status || "ACTIVE"}
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewingCalendarDetails.status === 'ACTIVE' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                                        }`}>
+                                        {viewingCalendarDetails.status || 'ACTIVE'}
                                     </span>
                                 </div>
+                                <div>
+                                    <p className="text-sm font-medium text-gray-500">Created</p>
+                                    <p className="text-sm">{viewingCalendarDetails.createdAt ? new Date(viewingCalendarDetails.createdAt).toLocaleString() : 'N/A'}</p>
+                                </div>
+                                <div>
+                                    <p className="text-sm font-medium text-gray-500">Last Updated</p>
+                                    <p className="text-sm">{viewingCalendarDetails.updatedAt ? new Date(viewingCalendarDetails.updatedAt).toLocaleString() : 'N/A'}</p>
+                                </div>
                             </div>
+
+                            <Separator />
+
+                            {/* Administrative Data - collapsible */}
+                            <div
+                                className="cursor-pointer flex justify-between items-center select-none py-1"
+                                onClick={() => setShowAdminData(!showAdminData)}
+                            >
+                                <p className="font-semibold text-sm text-gray-700">Administrative Data</p>
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                                    viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                                    style={{ transform: showAdminData ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+                                >
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </div>
+                            {showAdminData && (
+                                <dl className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <dt className="text-sm font-medium text-gray-500">Created By</dt>
+                                        <dd className="text-sm text-gray-900">{viewingCalendarDetails.createdBy ?? '—'}</dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-sm font-medium text-gray-500">Updated By</dt>
+                                        <dd className="text-sm text-gray-900">{viewingCalendarDetails.updatedBy ?? viewingCalendarDetails.createdBy ?? '—'}</dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-sm font-medium text-gray-500">Tenant ID</dt>
+                                        <dd className="text-sm text-gray-900">{viewingCalendarDetails.tenantId ?? '—'}</dd>
+                                    </div>
+                                </dl>
+                            )}
                         </div>
                     )}
                     <DialogFooter>
+                        <Button variant="outline" onClick={() => { setIsDetailsOpen(false); if (viewingCalendarDetails) handleEdit(viewingCalendarDetails); }}>
+                            <Edit className="h-4 w-4 mr-1" /> Edit
+                        </Button>
                         <Button onClick={() => setIsDetailsOpen(false)}>Close</Button>
                     </DialogFooter>
                 </DialogContent>

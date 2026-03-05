@@ -37,7 +37,7 @@ export default function Products() {
   const queryClient = useQueryClient();
 
   const { data: products, isLoading: isLoadingProducts } = useQuery({
-    queryKey: ['/api/products'],
+    queryKey: ['/api/inventory/products'],
   });
 
   // Use material categories for filtering and display
@@ -248,10 +248,10 @@ export default function Products() {
                       <td className="py-3 px-4 text-gray-500">{product.sku || product.materialCode || product.code || 'N/A'}</td>
                       <td className="py-3 px-4 text-gray-500">{getCategoryName(product.categoryId)}</td>
                       <td className="py-3 px-4 font-medium">${Number(product.price || product.basePrice || 0).toFixed(2)}</td>
-                      <td className="py-3 px-4 text-gray-500">{product.stock || 0}</td>
+                      <td className="py-3 px-4 text-gray-500">{(product.stock ?? product.current_stock) || 0}</td>
                       <td className="py-3 px-4">
-                        <Badge className={getStockStatusClass(product.stock || 0, product.minStock || 0)}>
-                          {getStockStatusText(product.stock || 0, product.minStock || 0)}
+                        <Badge className={getStockStatusClass((product.stock ?? product.current_stock) || 0, product.minStock || 0)}>
+                          {getStockStatusText((product.stock ?? product.current_stock) || 0, product.minStock || 0)}
                         </Badge>
                       </td>
                       <td className="py-3 px-4">

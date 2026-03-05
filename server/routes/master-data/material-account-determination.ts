@@ -24,6 +24,9 @@ router.get('/', async (req, res) => {
         mad.gl_account_id,
         gl.account_number,
         gl.account_name,
+        mad.account_modifier_id,
+        am.code as account_modifier_code,
+        am.name as account_modifier_name,
         mad.description,
         mad.is_active,
         mad.created_at,
@@ -34,6 +37,7 @@ router.get('/', async (req, res) => {
       LEFT JOIN valuation_classes vc ON mad.valuation_class_id = vc.id
       LEFT JOIN transaction_keys tk ON mad.transaction_key_id = tk.id
       LEFT JOIN gl_accounts gl ON mad.gl_account_id = gl.id
+      LEFT JOIN mt_account_modifiers am ON mad.account_modifier_id = am.id
       ORDER BY mad.id DESC
     `);
 
@@ -60,13 +64,16 @@ router.get('/:id', async (req, res) => {
         tk.code as transaction_key_code,
         tk.description as transaction_key_description,
         gl.account_number,
-        gl.account_name
+        gl.account_name,
+        am.code as account_modifier_code,
+        am.name as account_modifier_name
       FROM material_account_determination mad
       LEFT JOIN chart_of_accounts coa ON mad.chart_of_accounts_id = coa.id
       LEFT JOIN valuation_grouping_codes vgc ON mad.valuation_grouping_code_id = vgc.id
       LEFT JOIN valuation_classes vc ON mad.valuation_class_id = vc.id
       LEFT JOIN transaction_keys tk ON mad.transaction_key_id = tk.id
       LEFT JOIN gl_accounts gl ON mad.gl_account_id = gl.id
+      LEFT JOIN mt_account_modifiers am ON mad.account_modifier_id = am.id
       WHERE mad.id = $1
     `, [id]);
 
@@ -86,7 +93,7 @@ router.get('/dropdowns/all', async (req, res) => {
     try {
         const { chart_of_accounts_id } = req.query;
 
-        const [coaResult, vgcResult, vcResult, tkResult, glResult] = await Promise.all([
+        const [coaResult, vgcResult, vcResult, tkResult, glResult, amResult] = await Promise.all([
             // Chart of Accounts
             pool.query('SELECT id, code, name FROM chart_of_accounts WHERE active = true ORDER BY code'),
 
@@ -118,7 +125,10 @@ router.get('/dropdowns/all', async (req, res) => {
             WHERE is_active = true 
             ORDER BY account_number 
             LIMIT 100
-          `)
+          `),
+
+            // Account Modifiers
+            pool.query('SELECT id, code, name, description FROM mt_account_modifiers WHERE is_active = true ORDER BY sort_order, code')
         ]);
 
         res.json({
@@ -126,7 +136,8 @@ router.get('/dropdowns/all', async (req, res) => {
             valuationGroupingCodes: vgcResult.rows,
             valuationClasses: vcResult.rows,
             transactionKeys: tkResult.rows,
-            glAccounts: glResult.rows
+            glAccounts: glResult.rows,
+            accountModifiers: amResult.rows
         });
     } catch (error: any) {
         console.error('Error fetching dropdown data:', error);
@@ -161,6 +172,7 @@ router.post('/', async (req, res) => {
             valuation_class_id,
             transaction_key_id,
             gl_account_id,
+            account_modifier_id,
             description
         } = req.body;
 
@@ -179,8 +191,9 @@ router.post('/', async (req, res) => {
         valuation_class_id,
         transaction_key_id,
         gl_account_id,
+        account_modifier_id,
         description
-      ) VALUES ($1, $2, $3, $4, $5, $6)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
     `, [
             chart_of_accounts_id,
@@ -188,6 +201,7 @@ router.post('/', async (req, res) => {
             valuation_class_id,
             transaction_key_id,
             gl_account_id,
+            account_modifier_id || null,
             description || null
         ]);
 
@@ -212,6 +226,7 @@ router.put('/:id', async (req, res) => {
             valuation_class_id,
             transaction_key_id,
             gl_account_id,
+            account_modifier_id,
             description,
             is_active
         } = req.body;
@@ -224,10 +239,11 @@ router.put('/:id', async (req, res) => {
         valuation_class_id = COALESCE($3, valuation_class_id),
         transaction_key_id = COALESCE($4, transaction_key_id),
         gl_account_id = COALESCE($5, gl_account_id),
-        description = $6,
-        is_active = COALESCE($7, is_active),
+        account_modifier_id = $6,
+        description = $7,
+        is_active = COALESCE($8, is_active),
         updated_at = NOW()
-      WHERE id = $8
+      WHERE id = $9
       RETURNING *
     `, [
             chart_of_accounts_id,
@@ -235,6 +251,7 @@ router.put('/:id', async (req, res) => {
             valuation_class_id,
             transaction_key_id,
             gl_account_id,
+            account_modifier_id || null,
             description,
             is_active,
             id

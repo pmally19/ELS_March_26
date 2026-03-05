@@ -34,8 +34,13 @@ router.get('/', async (req, res) => {
         manual_price_allowed,
         is_active,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by,
+        "_deletedAt",
+        "_tenantId" as tenant_id
       FROM document_pricing_procedures
+      WHERE "_deletedAt" IS NULL
       ORDER BY procedure_code ASC
     `);
 
@@ -64,9 +69,13 @@ router.get('/:id', async (req, res) => {
         manual_price_allowed,
         is_active,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by,
+        "_deletedAt",
+        "_tenantId" as tenant_id
       FROM document_pricing_procedures
-      WHERE id = $1
+      WHERE id = $1 AND "_deletedAt" IS NULL
     `, [id]);
 
         if (result.rows.length === 0) {
@@ -103,7 +112,7 @@ router.post('/', async (req, res) => {
         // Check if procedure code already exists
         const existingResult = await pool.query(`
       SELECT id FROM document_pricing_procedures 
-      WHERE procedure_code = $1
+      WHERE procedure_code = $1 AND "_deletedAt" IS NULL
     `, [procedureCode]);
 
         if (existingResult.rows.length > 0) {
@@ -123,9 +132,12 @@ router.post('/', async (req, res) => {
         manual_price_allowed,
         is_active,
         created_at,
-        updated_at
+        updated_at,
+        created_by,
+        updated_by,
+        "_tenantId"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
       RETURNING *
     `, [
             procedureCode,
@@ -133,7 +145,10 @@ router.post('/', async (req, res) => {
             data.description || null,
             data.pricing_control,
             data.manual_price_allowed,
-            data.is_active
+            data.is_active,
+            (req as any).user?.id || 1,
+            (req as any).user?.id || 1,
+            (req as any).user?.tenantId || '001'
         ]);
 
         return res.status(201).json(insertResult.rows[0]);
@@ -166,8 +181,8 @@ router.put('/:id', async (req, res) => {
 
         // Check if pricing procedure exists
         const existingResult = await pool.query(`
-      SELECT id FROM document_pricing_procedures WHERE id = $1
-    `, [id]);
+      SELECT id FROM document_pricing_procedures WHERE id = $1 AND "_deletedAt" IS NULL
+            `, [id]);
 
         if (existingResult.rows.length === 0) {
             return res.status(404).json({ error: "Pricing procedure not found" });
@@ -178,12 +193,13 @@ router.put('/:id', async (req, res) => {
       UPDATE document_pricing_procedures 
       SET 
         procedure_name = $1,
-        description = $2,
-        pricing_control = $3,
-        manual_price_allowed = $4,
-        is_active = $5,
-        updated_at = NOW()
-      WHERE id = $6
+            description = $2,
+            pricing_control = $3,
+            manual_price_allowed = $4,
+            is_active = $5,
+            updated_at = NOW(),
+            updated_by = $6
+      WHERE id = $7
       RETURNING *
     `, [
             data.procedure_name,
@@ -191,6 +207,7 @@ router.put('/:id', async (req, res) => {
             data.pricing_control,
             data.manual_price_allowed,
             data.is_active,
+            (req as any).user?.id || 1,
             id
         ]);
 
@@ -209,19 +226,24 @@ router.delete('/:id', async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Check if pricing procedure exists
+        // Check if pricing procedure exists and is not already deleted
         const existingResult = await pool.query(`
-      SELECT id FROM document_pricing_procedures WHERE id = $1
+      SELECT id FROM document_pricing_procedures WHERE id = $1 AND "_deletedAt" IS NULL
     `, [id]);
 
         if (existingResult.rows.length === 0) {
-            return res.status(404).json({ error: "Pricing procedure not found" });
+            return res.status(404).json({ error: "Pricing procedure not found or already deleted" });
         }
 
-        // Delete the pricing procedure
+        // Soft delete the pricing procedure
         await pool.query(`
-      DELETE FROM document_pricing_procedures WHERE id = $1
-    `, [id]);
+      UPDATE document_pricing_procedures 
+      SET 
+        is_active = false,
+        "_deletedAt" = NOW(),
+        updated_by = $2
+      WHERE id = $1
+    `, [id, (req as any).user?.id || 1]);
 
         return res.status(200).json({
             message: "Pricing procedure deleted successfully"

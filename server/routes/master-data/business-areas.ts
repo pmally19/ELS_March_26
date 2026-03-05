@@ -18,10 +18,13 @@ async function ensureTable() {
       parent_business_area_code VARCHAR(10),
       is_active BOOLEAN DEFAULT true NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      "_tenantId" CHAR(3) DEFAULT '001',
+      created_by INTEGER,
+      updated_by INTEGER
     )
   `);
-  
+
   // Add foreign key constraint if it doesn't exist
   await pool.query(`
     DO $$ 
@@ -37,7 +40,7 @@ async function ensureTable() {
       END IF;
     END $$;
   `);
-  
+
   // Rename consolidation_business_area to parent_business_area_code if it exists
   await pool.query(`
     DO $$ 
@@ -71,12 +74,12 @@ router.get("/", async (req: Request, res: Response) => {
   try {
     await ensureTable();
     const set = await getColumnSet();
-    
+
     // Check which column name exists for parent business area
     const hasConsolidation = set.has('consolidation_business_area');
     const hasParent = set.has('parent_business_area_code');
     const parentColumn = hasParent ? 'parent_business_area_code' : (hasConsolidation ? 'consolidation_business_area' : null);
-    
+
     const selId = set.has('id') ? 'ba.id' : 'ROW_NUMBER() OVER ()';
     const selCode = set.has('code') ? 'ba.code' : `''`;
     const selDesc = set.has('description') ? 'ba.description' : `''`;
@@ -85,6 +88,9 @@ router.get("/", async (req: Request, res: Response) => {
     const selActive = set.has('is_active') ? 'ba.is_active' : (set.has('active') ? 'ba.active' : 'true');
     const selCreated = set.has('created_at') ? 'ba.created_at' : 'NOW()';
     const selUpdated = set.has('updated_at') ? 'ba.updated_at' : (set.has('created_at') ? 'ba.created_at' : 'NOW()');
+    const selCreatedBy = set.has('created_by') ? 'ba.created_by' : 'NULL';
+    const selUpdatedBy = set.has('updated_by') ? 'ba.updated_by' : 'NULL';
+    const selTenantId = set.has('_tenantId') ? 'ba."_tenantId"' : 'NULL';
 
     const sql = `
       SELECT ${selId} AS id,
@@ -96,7 +102,10 @@ router.get("/", async (req: Request, res: Response) => {
              cc.name AS company_name,
              ${selActive} AS is_active,
              ${selCreated} AS created_at,
-             ${selUpdated} AS updated_at
+             ${selUpdated} AS updated_at,
+             ${selCreatedBy} AS created_by,
+             ${selUpdatedBy} AS updated_by,
+             ${selTenantId} AS tenant_id
       FROM public.business_areas ba
       LEFT JOIN company_codes cc ON ba.company_code_id = cc.id
       ORDER BY ba.code`;
@@ -124,7 +133,7 @@ router.post("/", async (req: Request, res: Response) => {
     // Validate required fields
     const finalCode = (code || '').toString().trim();
     const finalDescription = (description || '').toString().trim();
-    
+
     if (!finalCode || !finalDescription) {
       return res.status(400).json({ message: 'Code and description are required' });
     }
@@ -168,7 +177,7 @@ router.post("/", async (req: Request, res: Response) => {
     pushField('code', finalCode);
     pushField('description', finalDescription);
     pushField('company_code_id', company_code_id);
-    
+
     // Handle parent business area code (support both old and new field names)
     const parentCode = parent_business_area_code || consolidation_business_area;
     if (set.has('parent_business_area_code')) {
@@ -176,7 +185,7 @@ router.post("/", async (req: Request, res: Response) => {
     } else if (set.has('consolidation_business_area')) {
       pushField('consolidation_business_area', parentCode);
     }
-    
+
     // Handle both is_active and active for compatibility
     if (set.has('is_active')) {
       pushField('is_active', is_active !== undefined ? is_active : active);
@@ -184,15 +193,20 @@ router.post("/", async (req: Request, res: Response) => {
       pushField('active', active !== undefined ? active : is_active);
     }
 
-    // Add timestamps
+    // Add timestamps and audit fields
     if (set.has('created_at')) { fields.push('created_at'); values.push('NOW()'); }
     if (set.has('updated_at')) { fields.push('updated_at'); values.push('NOW()'); }
 
+    // Inject audit fields directly bypassing pushField which checks for actual existence slightly differently
+    if (set.has('created_by')) { fields.push('created_by'); values.push(`'${(req as any).user?.id || 1}'`); }
+    if (set.has('updated_by')) { fields.push('updated_by'); values.push(`'${(req as any).user?.id || 1}'`); }
+    if (set.has('_tenantId')) { fields.push('\"_tenantId\"'); values.push(`'${(req as any).user?.tenantId || '001'}'`); }
+
     if (fields.length === 0) return res.status(500).json({ message: 'No insertable columns' });
-    
+
     const sql = `INSERT INTO business_areas (${fields.join(',')}) VALUES (${values.join(',')}) RETURNING *`;
     const result = await pool.query(sql, params);
-    
+
     // Fetch with company code details
     const fullResult = await pool.query(`
       SELECT ba.*, cc.code AS company_code, cc.name AS company_name
@@ -200,7 +214,7 @@ router.post("/", async (req: Request, res: Response) => {
       LEFT JOIN company_codes cc ON ba.company_code_id = cc.id
       WHERE ba.id = $1
     `, [result.rows[0].id]);
-    
+
     return res.status(201).json(fullResult.rows[0]);
   } catch (error: any) {
     console.error('Error creating business area:', error);
@@ -266,7 +280,7 @@ router.put("/:id", async (req: Request, res: Response) => {
     add('code', code);
     add('description', description);
     add('company_code_id', company_code_id);
-    
+
     // Handle parent business area code (support both old and new field names)
     const parentCode = parent_business_area_code || consolidation_business_area;
     if (set.has('parent_business_area_code')) {
@@ -274,7 +288,7 @@ router.put("/:id", async (req: Request, res: Response) => {
     } else if (set.has('consolidation_business_area')) {
       add('consolidation_business_area', parentCode);
     }
-    
+
     // Handle both is_active and active for compatibility
     if (set.has('is_active')) {
       if (is_active !== undefined) add('is_active', is_active);
@@ -284,9 +298,10 @@ router.put("/:id", async (req: Request, res: Response) => {
       else if (is_active !== undefined) add('active', is_active);
     }
 
-    // Add timestamp
+    // Add timestamp and audit fields
     if (set.has('updated_at')) updates.push('updated_at = NOW()');
-    
+    if (set.has('updated_by')) updates.push(`updated_by = '${(req as any).user?.id || 1}'`);
+
     if (updates.length === 0) return res.status(200).json({ message: 'No changes to apply' });
 
     const numericId = Number(id);
@@ -297,7 +312,7 @@ router.put("/:id", async (req: Request, res: Response) => {
     params.push(numericId);
     const result = await pool.query(`UPDATE business_areas SET ${updates.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
     if (result.rows.length === 0) return res.status(404).json({ message: 'Not found' });
-    
+
     // Fetch with company code details
     const fullResult = await pool.query(`
       SELECT ba.*, cc.code AS company_code, cc.name AS company_name
@@ -305,7 +320,7 @@ router.put("/:id", async (req: Request, res: Response) => {
       LEFT JOIN company_codes cc ON ba.company_code_id = cc.id
       WHERE ba.id = $1
     `, [numericId]);
-    
+
     return res.json(fullResult.rows[0]);
   } catch (error: any) {
     console.error('Error updating business area:', error);
@@ -324,19 +339,19 @@ router.delete("/:id", async (req: Request, res: Response) => {
     // Ensure table exists before attempting delete
     await ensureTable();
     const { id } = req.params;
-    
+
     // First check if the record exists
     const checkResult = await pool.query(`SELECT id FROM business_areas WHERE id = $1`, [id]);
     if (checkResult.rows.length === 0) {
       return res.status(404).json({ message: 'Business area not found' });
     }
-    
+
     // Perform hard delete
     const result = await pool.query(`DELETE FROM business_areas WHERE id = $1 RETURNING id`, [id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Not found' });
     }
-    
+
     return res.json({ message: 'Business area deleted successfully' });
   } catch (error: any) {
     console.error('Error deleting business area:', error);

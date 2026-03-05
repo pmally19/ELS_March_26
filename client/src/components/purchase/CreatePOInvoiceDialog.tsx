@@ -45,7 +45,6 @@ import { apiRequest } from "@/lib/queryClient";
 const formSchema = z.object({
   purchase_order_id: z.string().min(1, "Purchase Order is required"),
   goods_receipt_id: z.string().optional(),
-  invoice_number: z.string().optional(),
   invoice_date: z.date(),
   due_date: z.date().optional(),
   currency: z.string().optional(),
@@ -71,7 +70,7 @@ interface PurchaseOrder {
 interface GoodsReceipt {
   id: number;
   receipt_number?: string;
-  purchase_order_id: number;
+  po_number?: string;
   material_code?: string;
   quantity?: number;
   unit_price?: number;
@@ -93,6 +92,7 @@ interface POItem {
 
 export function CreatePOInvoiceDialog({ open, onOpenChange }: CreatePOInvoiceDialogProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [documentTypeId, setDocumentTypeId] = useState<string>("");
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -110,6 +110,21 @@ export function CreatePOInvoiceDialog({ open, onOpenChange }: CreatePOInvoiceDia
     }
     return 'USD'; // Formatting fallback only
   };
+
+  // Fetch document types
+  const { data: documentTypes = [], isLoading: dtLoading } = useQuery<any[]>({
+    queryKey: ["/api/master-data/document-types"],
+    queryFn: async () => {
+      try {
+        const res = await fetch("/api/master-data/document-types");
+        if (!res.ok) return [];
+        const data = await res.json();
+        return Array.isArray(data) ? data : [];
+      } catch {
+        return [];
+      }
+    }
+  });
 
   // Fetch purchase orders
   const { data: purchaseOrders = [], isLoading: poLoading } = useQuery<PurchaseOrder[]>({
@@ -146,10 +161,9 @@ export function CreatePOInvoiceDialog({ open, onOpenChange }: CreatePOInvoiceDia
     defaultValues: {
       purchase_order_id: "",
       goods_receipt_id: undefined,
-      invoice_number: "",
       invoice_date: new Date(),
       due_date: initialDueDate,
-      currency: "",  // No hardcoded default, will be set from PO
+      currency: "",
       notes: "",
     },
   });
@@ -177,9 +191,9 @@ export function CreatePOInvoiceDialog({ open, onOpenChange }: CreatePOInvoiceDia
   );
 
   // Filter goods receipts by selected PO
-  const filteredGoodsReceipts = form.watch("purchase_order_id")
+  const filteredGoodsReceipts = selectedPO
     ? goodsReceipts.filter(
-      (gr) => String(gr.purchase_order_id) === form.watch("purchase_order_id")
+      (gr) => gr.po_number === selectedPO.order_number
     )
     : [];
 
@@ -190,6 +204,21 @@ export function CreatePOInvoiceDialog({ open, onOpenChange }: CreatePOInvoiceDia
       form.setValue("currency", validCurrency);
     }
   }, [selectedPO, form]);
+
+  // Auto-select goods receipt if available for the selected PO
+  useEffect(() => {
+    const currentGrId = form.getValues("goods_receipt_id");
+    if (filteredGoodsReceipts.length > 0) {
+      // If there's no GR selected, or the currently selected GR doesn't belong to this PO, auto-select the first one
+      const isCurrentGrValid = filteredGoodsReceipts.some(gr => String(gr.id) === currentGrId);
+      if (!currentGrId || !isCurrentGrValid) {
+        form.setValue("goods_receipt_id", String(filteredGoodsReceipts[0].id));
+      }
+    } else if (currentGrId) {
+      // Clear the selection if no GRs are available for this PO
+      form.setValue("goods_receipt_id", undefined);
+    }
+  }, [filteredGoodsReceipts, form]);
 
   // Calculate invoice totals from PO items
   const calculateTotals = () => {
@@ -259,10 +288,8 @@ export function CreatePOInvoiceDialog({ open, onOpenChange }: CreatePOInvoiceDia
         return;
       }
 
-      // Generate invoice number if not provided
-      let invoiceNumber = data.invoice_number && data.invoice_number.trim() !== ""
-        ? data.invoice_number.trim()
-        : `VINV-PO-${selectedPO.order_number}-${Date.now()}`;
+      // Auto-generate invoice number
+      const invoiceNumber = `VINV-PO-${selectedPO.order_number}-${Date.now()}`;
 
       const payload = {
         vendor_id: selectedPO.vendor_id,
@@ -275,6 +302,7 @@ export function CreatePOInvoiceDialog({ open, onOpenChange }: CreatePOInvoiceDia
         currency: getValidCurrency(data.currency),
         notes: data.notes || undefined,
         perform_validation: true,
+        document_type_id: documentTypeId ? parseInt(documentTypeId) : undefined,
       };
 
       const response = await apiRequest("/api/ap/invoices", {
@@ -282,7 +310,7 @@ export function CreatePOInvoiceDialog({ open, onOpenChange }: CreatePOInvoiceDia
         headers: {
           "Content-Type": "application/json",
         },
-        body: payload,
+        body: JSON.stringify(payload),
       });
       const result = await response.json();
 
@@ -327,6 +355,24 @@ export function CreatePOInvoiceDialog({ open, onOpenChange }: CreatePOInvoiceDia
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+            {/* Document Type selector - SAP FI: Document Type determines number range */}
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <label className="text-sm font-medium mb-1 block">Document Type</label>
+                <Select value={documentTypeId} onValueChange={setDocumentTypeId} disabled={dtLoading}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="KR (Auto-determined if empty)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {documentTypes.map((dt: any) => (
+                      <SelectItem key={dt.id} value={String(dt.id)}>
+                        {dt.document_type_code} - {dt.description}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             {/* Header Information */}
             <div className="grid grid-cols-2 gap-4">
               <FormField
@@ -388,20 +434,6 @@ export function CreatePOInvoiceDialog({ open, onOpenChange }: CreatePOInvoiceDia
                         )}
                       </SelectContent>
                     </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="invoice_number"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Invoice Number (Optional)</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Auto-generated if empty" {...field} />
-                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}

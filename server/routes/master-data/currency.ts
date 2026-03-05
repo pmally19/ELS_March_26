@@ -51,9 +51,9 @@ export async function getCurrencies(req: Request, res: Response) {
 
     const sel: string[] = [];
     sel.push('id');
-    sel.push(`${cset.has('code') ? 'code' : (cset.has('currency_code') ? 'currency_code' : "''") } AS code`);
-    sel.push(`${cset.has('name') ? 'name' : (cset.has('currency_name') ? 'currency_name' : "''") } AS name`);
-    sel.push(`${cset.has('symbol') ? 'symbol' : (cset.has('currency_symbol') ? 'currency_symbol' : "''") } AS symbol`);
+    sel.push(`${cset.has('code') ? 'code' : (cset.has('currency_code') ? 'currency_code' : "''")} AS code`);
+    sel.push(`${cset.has('name') ? 'name' : (cset.has('currency_name') ? 'currency_name' : "''")} AS name`);
+    sel.push(`${cset.has('symbol') ? 'symbol' : (cset.has('currency_symbol') ? 'currency_symbol' : "''")} AS symbol`);
     const decimalExpr = cset.has('decimal_places')
       ? `COALESCE(NULLIF(decimal_places, '')::text, '2')`
       : (cset.has('decimalPlaces') ? `COALESCE(NULLIF("decimalPlaces", '')::text, '2')` : `'2'`);
@@ -67,6 +67,9 @@ export async function getCurrencies(req: Request, res: Response) {
     sel.push(cset.has('notes') ? 'notes' : 'NULL as notes');
     sel.push(cset.has('created_at') ? 'created_at' : 'NULL::timestamp as created_at');
     sel.push(cset.has('updated_at') ? 'updated_at' : 'NULL::timestamp as updated_at');
+    sel.push(cset.has('created_by') ? 'created_by' : 'NULL::integer as created_by');
+    sel.push(cset.has('updated_by') ? 'updated_by' : 'NULL::integer as updated_by');
+    sel.push(cset.has('_tenantId') ? '"_tenantId"' : "'001' as \"_tenantId\"");
 
     const result = await pool.query(`
       SELECT 
@@ -88,6 +91,9 @@ export async function getCurrencies(req: Request, res: Response) {
       notes: row.notes ?? undefined,
       created_at: row.created_at,
       updated_at: row.updated_at,
+      createdBy: row.created_by,
+      updatedBy: row.updated_by,
+      tenantId: row['_tenantId'],
     }));
     return res.status(200).json(mapped);
   } catch (error: any) {
@@ -150,11 +156,11 @@ export async function createCurrency(req: Request, res: Response) {
       console.warn('[Currency] ensure table failed (continuing):', (ensureErr as any)?.message || ensureErr);
     }
     const validation = currencySchema.safeParse(req.body);
-    
+
     if (!validation.success) {
-      return res.status(400).json({ 
-        error: "Validation error", 
-        message: validation.error.errors.map(e => e.message).join(", ") 
+      return res.status(400).json({
+        error: "Validation error",
+        message: validation.error.errors.map(e => e.message).join(", ")
       });
     }
 
@@ -187,11 +193,15 @@ export async function createCurrency(req: Request, res: Response) {
     const insertSql = `
       INSERT INTO public.currencies (
         ${col.code}, ${col.name}, ${col.symbol}, ${col.decimalPlaces}, ${col.conversionRate},
-        ${col.baseCurrency}, ${col.isActive}, ${col.notes}, ${col.createdAt}, ${col.updatedAt}
+        ${col.baseCurrency}, ${col.isActive}, ${col.notes}, ${col.createdAt}, ${col.updatedAt},
+        created_by, updated_by, "_tenantId"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), $9, $10, $11)
       RETURNING *
     `;
+
+    const userId = (req as any).user?.id || 1;
+    const tenantId = (req as any).user?.tenantId || '001';
 
     const insertResult = await pool.query(insertSql, [
       data.code,
@@ -202,8 +212,11 @@ export async function createCurrency(req: Request, res: Response) {
       data.baseCurrency,
       data.isActive,
       data.notes || null,
+      userId,
+      userId,
+      tenantId,
     ]);
-    
+
     if (insertResult.rows && insertResult.rows.length > 0) {
       const row: any = insertResult.rows[0];
       console.log('[Currency] Inserted row:', row);
@@ -283,6 +296,9 @@ export async function createCurrency(req: Request, res: Response) {
         notes: row.notes ?? undefined,
         created_at: row.created_at,
         updated_at: row.updated_at,
+        createdBy: row.created_by,
+        updatedBy: row.updated_by,
+        tenantId: row['_tenantId'],
       });
     } else {
       return res.status(500).json({ error: "Failed to create currency" });
@@ -303,11 +319,11 @@ export async function updateCurrency(req: Request, res: Response) {
     }
 
     const validation = currencySchema.safeParse(req.body);
-    
+
     if (!validation.success) {
-      return res.status(400).json({ 
-        error: "Validation error", 
-        message: validation.error.errors.map(e => e.message).join(", ") 
+      return res.status(400).json({
+        error: "Validation error",
+        message: validation.error.errors.map(e => e.message).join(", ")
       });
     }
 
@@ -315,7 +331,7 @@ export async function updateCurrency(req: Request, res: Response) {
 
     // Check if currency exists
     const existingResult = await pool.query(`SELECT * FROM public.currencies WHERE id = $1`, [id]);
-    
+
     if (existingResult.rows.length === 0) {
       return res.status(404).json({ error: "Currency not found" });
     }
@@ -342,10 +358,12 @@ export async function updateCurrency(req: Request, res: Response) {
       SET ${col.code} = $1, ${col.name} = $2, ${col.symbol} = $3,
           ${col.decimalPlaces} = $4, ${col.conversionRate} = $5,
           ${col.baseCurrency} = $6, ${col.isActive} = $7,
-          ${col.notes} = $8, ${col.updatedAt} = NOW()
-      WHERE id = $9
+          ${col.notes} = $8, updated_by = $9, ${col.updatedAt} = NOW()
+      WHERE id = $10
       RETURNING *
     `;
+
+    const userId = (req as any).user?.id || 1;
 
     const updateResult = await pool.query(updateSql, [
       data.code,
@@ -356,6 +374,7 @@ export async function updateCurrency(req: Request, res: Response) {
       data.baseCurrency,
       data.isActive,
       data.notes || null,
+      userId,
       id
     ]);
 
@@ -407,6 +426,9 @@ export async function updateCurrency(req: Request, res: Response) {
       notes: row.notes ?? undefined,
       created_at: row.created_at,
       updated_at: row.updated_at,
+      createdBy: row.created_by,
+      updatedBy: row.updated_by,
+      tenantId: row['_tenantId'],
     });
   } catch (error: any) {
     console.error("Error updating currency:", error);
@@ -425,7 +447,7 @@ export async function deleteCurrency(req: Request, res: Response) {
 
     // Check if currency exists
     const existingResult = await pool.query(`SELECT * FROM public.currencies WHERE id = $1`, [id]);
-    
+
     if (existingResult.rows.length === 0) {
       return res.status(404).json({ error: "Currency not found" });
     }
@@ -460,7 +482,7 @@ export async function bulkImportCurrencies(req: Request, res: Response) {
   try {
     const pool = ensureActivePool();
     const currencies = req.body;
-    
+
     if (!Array.isArray(currencies)) {
       return res.status(400).json({ error: "Expected an array of currencies" });
     }
@@ -492,7 +514,7 @@ export async function bulkImportCurrencies(req: Request, res: Response) {
     for (const currencyData of currencies) {
       try {
         const validation = currencySchema.safeParse(currencyData);
-        
+
         if (!validation.success) {
           results.failed++;
           results.errors.push(`${currencyData.code}: Validation failed - ${validation.error.errors.map(e => e.message).join(", ")}`);
@@ -503,7 +525,7 @@ export async function bulkImportCurrencies(req: Request, res: Response) {
 
         // Check if currency code already exists
         const existingResult = await pool.query(`SELECT id FROM public.currencies WHERE ${col.code} = $1`, [data.code]);
-        
+
         if (existingResult.rows.length > 0) {
           results.failed++;
           results.errors.push(`${data.code}: Currency code already exists`);
@@ -525,7 +547,7 @@ export async function bulkImportCurrencies(req: Request, res: Response) {
           data.isActive,
           data.notes || null,
         ]);
-        
+
         results.success++;
       } catch (error: any) {
         results.failed++;

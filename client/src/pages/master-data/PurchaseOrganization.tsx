@@ -19,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialog } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { PlusCircle, Edit, Trash2, Search, ArrowLeft, MoreHorizontal, Building2 } from "lucide-react";
+import { PlusCircle, Edit, Trash2, Search, ArrowLeft, MoreHorizontal, Building2, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { SearchRefreshBar } from "@/components/ui/search-refresh-bar";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -59,6 +59,13 @@ interface PurchaseOrganization {
   companyCode?: CompanyCode;
   plants?: number[]; // IDs of assigned plants
   notes?: string;
+  // Audit trail fields
+  _tenantId?: string | null;
+  _createdBy?: number | null;
+  _updatedBy?: number | null;
+  _deletedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 }
 
 // Validation Schema
@@ -112,6 +119,7 @@ export default function PurchaseOrganization() {
   const [editingPurchaseOrg, setEditingPurchaseOrg] = useState<PurchaseOrganization | null>(null);
   const [deletingPurchaseOrg, setDeletingPurchaseOrg] = useState<PurchaseOrganization | null>(null);
   const [viewDetailsOrg, setViewDetailsOrg] = useState<PurchaseOrganization | null>(null);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   // Forms
@@ -660,6 +668,36 @@ export default function PurchaseOrganization() {
                     })
                   ) : <p className="text-sm text-muted-foreground">No plants assigned</p>}
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Created At</h4>
+                  <p>{viewDetailsOrg.createdAt ? new Date(viewDetailsOrg.createdAt).toLocaleString() : "—"}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Updated At</h4>
+                  <p>{viewDetailsOrg.updatedAt ? new Date(viewDetailsOrg.updatedAt).toLocaleString() : "—"}</p>
+                </div>
+              </div>
+
+              {/* Collapsible Administrative Data */}
+              <div className="border-t pt-3">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                >
+                  {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  <Info className="h-3 w-3" />
+                  Administrative Data
+                </button>
+                {adminDataOpen && (
+                  <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                    <div><dt className="font-medium inline">Created By (ID): </dt><dd className="inline">{viewDetailsOrg._createdBy ?? "—"}</dd></div>
+                    <div><dt className="font-medium inline">Updated By (ID): </dt><dd className="inline">{viewDetailsOrg._updatedBy ?? "—"}</dd></div>
+                    <div><dt className="font-medium inline">Tenant ID: </dt><dd className="inline">{viewDetailsOrg._tenantId ?? "—"}</dd></div>
+                  </dl>
+                )}
               </div>
             </div>
           )}

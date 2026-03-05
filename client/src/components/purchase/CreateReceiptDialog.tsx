@@ -49,6 +49,19 @@ export default function CreateReceiptDialog({ isOpen, onClose }: CreateReceiptDi
   const [billOfLadingFile, setBillOfLadingFile] = useState<File | null>(null);
   const [inspectionReportFile, setInspectionReportFile] = useState<File | null>(null);
   const [movementType, setMovementType] = useState<string>("101");
+  const [documentTypeId, setDocumentTypeId] = useState<string>("");
+
+  // Fetch document types
+  const { data: documentTypes = [], isLoading: isLoadingDocTypes } = useQuery<any[]>({
+    queryKey: ['/api/master-data/document-types'],
+    queryFn: async () => {
+      const response = await fetch('/api/master-data/document-types');
+      if (!response.ok) return [];
+      const data = await response.json();
+      return Array.isArray(data) ? data : [];
+    },
+    enabled: isOpen,
+  });
 
   // Fetch movement types
   const { data: movementTypes = [], isLoading: isLoadingMovementTypes } = useQuery<any[]>({
@@ -132,6 +145,7 @@ export default function CreateReceiptDialog({ isOpen, onClose }: CreateReceiptDi
       delivery_note?: string;
       bill_of_lading?: string;
       movement_type?: string;
+      document_type_id?: number;
     }) => {
       const response = await fetch('/api/purchase/copy-po-to-goods-receipt', {
         method: 'POST',
@@ -258,6 +272,7 @@ export default function CreateReceiptDialog({ isOpen, onClose }: CreateReceiptDi
     setBillOfLadingFile(null);
     setInspectionReportFile(null);
     setMovementType("101");
+    setDocumentTypeId("");
     onClose();
   };
 
@@ -285,6 +300,7 @@ export default function CreateReceiptDialog({ isOpen, onClose }: CreateReceiptDi
       delivery_note: deliveryNote || undefined,
       bill_of_lading: billOfLading || undefined,
       movement_type: movementType || undefined,
+      document_type_id: documentTypeId ? parseInt(documentTypeId) : undefined,
     });
   };
 
@@ -378,6 +394,29 @@ export default function CreateReceiptDialog({ isOpen, onClose }: CreateReceiptDi
               </div>
             </div>
           )}
+
+          <div className="space-y-2">
+            <Label htmlFor="document-type">Document Type</Label>
+            <Select value={documentTypeId} onValueChange={setDocumentTypeId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Auto-determined from Movement Type if empty" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none" disabled className="hidden">Select Document Type...</SelectItem>
+                {isLoadingDocTypes ? (
+                  <SelectItem value="loading" disabled>Loading document types...</SelectItem>
+                ) : documentTypes.length > 0 ? (
+                  documentTypes.map((dt: any) => (
+                    <SelectItem key={dt.id} value={dt.id.toString()}>
+                      {dt.document_type_code} - {dt.description}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <SelectItem value="empty" disabled>No document types found</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+          </div>
 
           <div className="space-y-2">
             <Label htmlFor="movement-type">Movement Type *</Label>

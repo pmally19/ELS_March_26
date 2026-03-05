@@ -96,12 +96,18 @@ router.post("/divisions", async (req: Request, res: Response) => {
 router.post("/sales-offices", async (req: Request, res: Response) => {
   try {
     const { code, name, description, region, country } = req.body;
+    const userId = (req as any).user?.id || 1;
+    const tenantId = (req as any).user?.tenantId || '001';
+
     const office = await salesDistributionService.createSalesOffice({
       code,
       name,
       description,
       region,
-      country
+      country,
+      _tenantId: tenantId,
+      createdBy: userId,
+      updatedBy: userId
     });
     res.status(201).json(office);
   } catch (error) {
@@ -123,7 +129,11 @@ router.get("/sales-offices", async (req: Request, res: Response) => {
 router.put("/sales-offices/:id", async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
-    const updated = await salesDistributionService.updateSalesOffice(id, req.body);
+    const userId = (req as any).user?.id || 1;
+    const updated = await salesDistributionService.updateSalesOffice(id, {
+      ...req.body,
+      updatedBy: userId
+    });
     res.json(updated);
   } catch (error) {
     console.error("Error updating sales office:", error);
@@ -134,7 +144,8 @@ router.put("/sales-offices/:id", async (req: Request, res: Response) => {
 router.delete("/sales-offices/:id", async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
-    await salesDistributionService.deleteSalesOffice(id);
+    const userId = (req as any).user?.id || 1;
+    await salesDistributionService.deleteSalesOffice(id, userId);
     res.status(204).send();
   } catch (error) {
     console.error("Error deleting sales office:", error);
@@ -352,6 +363,22 @@ router.post("/item-categories", async (req: Request, res: Response) => {
   }
 });
 
+// Item Categories List (for dropdowns in Copy Control etc.)
+router.get("/item-categories-list", async (_req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `SELECT code, name, item_type, delivery_relevant, billing_relevant, pricing_relevant
+       FROM sd_item_categories
+       WHERE "_deletedAt" IS NULL
+       ORDER BY code`
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error fetching item categories list:", error);
+    res.status(500).json({ message: "Failed to fetch item categories" });
+  }
+});
+
 // Pricing Configuration Routes
 
 // Condition Types
@@ -469,7 +496,6 @@ router.post("/shipping-conditions/seed-basic", async (_req: Request, res: Respon
     const seeds = [
       {
         conditionCode: 'STND',
-        conditionCode: 'STND',
         manualShippingPointAllowed: true,
         countryOfDeparture: 'US',
         transportationGroup: '0001',
@@ -479,7 +505,6 @@ router.post("/shipping-conditions/seed-basic", async (_req: Request, res: Respon
       },
       {
         conditionCode: 'EXPR',
-        conditionCode: 'EXPR',
         manualShippingPointAllowed: true,
         countryOfDeparture: 'US',
         transportationGroup: '0002',
@@ -488,7 +513,6 @@ router.post("/shipping-conditions/seed-basic", async (_req: Request, res: Respon
         isActive: true,
       },
       {
-        conditionCode: 'PICK',
         conditionCode: 'PICK',
         manualShippingPointAllowed: true,
         countryOfDeparture: 'US',
@@ -561,6 +585,58 @@ router.get("/number-ranges/:objectCode/:rangeNumber/next", async (req: Request, 
 });
 
 // Copy Control Routes
+
+router.get("/copy-control-headers", async (_req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM sd_copy_control_headers ORDER BY source_doc_type, target_doc_type`
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error fetching copy control headers:", error);
+    res.status(500).json({ message: "Failed to fetch copy control headers" });
+  }
+});
+
+router.delete("/copy-control-headers/:id", async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    await pool.query(`DELETE FROM sd_copy_control_headers WHERE id = $1`, [id]);
+    res.status(204).send();
+  } catch (error) {
+    console.error("Error deleting copy control header:", error);
+    res.status(500).json({ message: "Failed to delete copy control header" });
+  }
+});
+
+router.get("/copy-control-items", async (req: Request, res: Response) => {
+  try {
+    const { sourceDocType, targetDocType } = req.query;
+    let query = `SELECT * FROM sd_copy_control_items`;
+    const params: any[] = [];
+    if (sourceDocType && targetDocType) {
+      query += ` WHERE source_doc_type = $1 AND target_doc_type = $2`;
+      params.push(sourceDocType, targetDocType);
+    }
+    query += ` ORDER BY source_doc_type, target_doc_type, source_item_category`;
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error fetching copy control items:", error);
+    res.status(500).json({ message: "Failed to fetch copy control items" });
+  }
+});
+
+router.delete("/copy-control-items/:id", async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    await pool.query(`DELETE FROM sd_copy_control_items WHERE id = $1`, [id]);
+    res.status(204).send();
+  } catch (error) {
+    console.error("Error deleting copy control item:", error);
+    res.status(500).json({ message: "Failed to delete copy control item" });
+  }
+});
 
 router.post("/copy-control-headers", async (req: Request, res: Response) => {
   try {

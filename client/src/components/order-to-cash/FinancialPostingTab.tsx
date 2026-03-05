@@ -88,23 +88,23 @@ export default function FinancialPostingTab() {
     try {
       console.log('🔍 Fetching GL details for billing ID:', billingId);
       const response = await apiRequest(`/api/order-to-cash/financial-posting/gl-details/${billingId}`);
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
       }
-      
+
       const data = await response.json();
       console.log('✅ GL details response:', data);
-      
+
       if (!data.success) {
         throw new Error(data.error || 'Failed to load GL details');
       }
-      
+
       if (!data.data) {
         throw new Error('Invalid response format from server');
       }
-      
+
       setSelectedBilling(data.data);
       setShowGlDetails(true);
     } catch (error: any) {
@@ -131,11 +131,20 @@ export default function FinancialPostingTab() {
     }
   };
 
-  const formatCurrency = (amount: number | string) => {
-    return `$${parseFloat(String(amount || 0)).toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
+  const formatCurrency = (amount: number | string, currency?: string) => {
+    const num = parseFloat(String(amount || 0));
+    const curr = (currency || 'INR').toUpperCase();
+    try {
+      return new Intl.NumberFormat('en-IN', {
+        style: 'currency',
+        currency: curr,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(num);
+    } catch {
+      // Fallback if currency code is invalid
+      return `${curr} ${num.toFixed(2)}`;
+    }
   };
 
   return (
@@ -480,7 +489,7 @@ export default function FinancialPostingTab() {
                                   </Badge>
                                 </TableCell>
                                 <TableCell className="text-right font-semibold">
-                                  {formatCurrency(entry.amount || 0)}
+                                  {formatCurrency(entry.amount || 0, selectedBilling?.currency || entry.currency)}
                                 </TableCell>
                                 <TableCell>{entry.description || entry.document_number || '-'}</TableCell>
                                 <TableCell>

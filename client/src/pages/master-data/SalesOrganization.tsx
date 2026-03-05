@@ -20,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialog } from "@/components/ui/alert-dialog";
-import { PlusCircle, Edit, Trash2, Building, RefreshCw, Globe, ArrowLeft, MoreHorizontal, Eye, Download, FileUp, Search, Plus, MapPin, DollarSign, Phone, Mail } from "lucide-react";
+import { PlusCircle, Edit, Trash2, Building, RefreshCw, Globe, ArrowLeft, MoreHorizontal, Eye, Download, FileUp, Search, Plus, MapPin, DollarSign, Phone, Mail, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
 
@@ -60,6 +60,13 @@ interface SalesOrganization {
   isActive: boolean;
   notes?: string;
   companyCode?: CompanyCode;
+  // Audit trail fields
+  createdAt?: string;
+  updatedAt?: string;
+  _tenantId?: string | null;
+  _createdBy?: number | null;
+  _updatedBy?: number | null;
+  _deletedAt?: string | null;
 }
 
 // Validation schema for the form
@@ -199,6 +206,7 @@ export default function SalesOrganization() {
   const [viewingSalesOrg, setViewingSalesOrg] = useState<SalesOrganization | null>(null);
   const [isViewDetailsOpen, setIsViewDetailsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
 
 
   // Track selected company code for region filtering
@@ -1221,6 +1229,30 @@ export default function SalesOrganization() {
                       </dl>
                     </CardContent>
                   </Card>
+
+                  {/* Administrative Data — collapsible */}
+                  <div className="border rounded-md p-3">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+                      onClick={() => setAdminDataOpen(o => !o)}
+                    >
+                      {adminDataOpen
+                        ? <ChevronDown className="h-3 w-3" />
+                        : <ChevronRight className="h-3 w-3" />}
+                      <Info className="h-3 w-3" />
+                      Administrative Data
+                    </button>
+                    {adminDataOpen && (
+                      <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-400">
+                        <div><dt className="font-medium">Created At</dt><dd>{viewingSalesOrg.createdAt ? new Date(viewingSalesOrg.createdAt).toLocaleString() : "—"}</dd></div>
+                        <div><dt className="font-medium">Updated At</dt><dd>{viewingSalesOrg.updatedAt ? new Date(viewingSalesOrg.updatedAt).toLocaleString() : "—"}</dd></div>
+                        <div><dt className="font-medium">Created By (ID)</dt><dd>{viewingSalesOrg._createdBy ?? "—"}</dd></div>
+                        <div><dt className="font-medium">Updated By (ID)</dt><dd>{viewingSalesOrg._updatedBy ?? "—"}</dd></div>
+                        <div><dt className="font-medium">Tenant ID</dt><dd>{viewingSalesOrg._tenantId ?? "—"}</dd></div>
+                      </dl>
+                    )}
+                  </div>
                 </div>
               </div>
             </>

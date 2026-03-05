@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Edit, Trash2, Search, CreditCard, Settings, ArrowLeft } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Plus, Edit, Trash2, Search, CreditCard, Settings, ArrowLeft, Info, ChevronDown, ChevronRight, AlertCircle, Eye } from 'lucide-react';
 
 interface PaymentTerm {
   id: number;
@@ -13,6 +14,10 @@ interface PaymentTerm {
   discountPercent1: number; // maps to cash_discount_percent
   createdAt?: string;
   updatedAt?: string;
+  createdBy?: number;
+  updatedBy?: number;
+  tenantId?: string;
+  deletedAt?: string | null;
 }
 
 export default function PaymentTerms() {
@@ -22,6 +27,9 @@ export default function PaymentTerms() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [viewingPaymentTerm, setViewingPaymentTerm] = useState<PaymentTerm | null>(null);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
   const [formData, setFormData] = useState({
     paymentTermCode: '',
     description: '',
@@ -60,10 +68,10 @@ export default function PaymentTerms() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const url = editingId 
+      const url = editingId
         ? `/api/master-data-crud/payment-terms/${editingId}`
         : '/api/master-data-crud/payment-terms';
-      
+
       const response = await fetch(url, {
         method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -114,6 +122,12 @@ export default function PaymentTerms() {
     }
   };
 
+  const openDetails = (paymentTerm: PaymentTerm) => {
+    setViewingPaymentTerm(paymentTerm);
+    setIsDetailsOpen(true);
+    setAdminDataOpen(false);
+  };
+
   const resetForm = () => {
     setFormData({
       paymentTermCode: '',
@@ -156,8 +170,8 @@ export default function PaymentTerms() {
       )}
       {/* Header */}
       <div className="flex items-center gap-4 mb-6">
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           size="sm"
           onClick={() => window.history.back()}
           className="flex items-center gap-2"
@@ -283,6 +297,114 @@ export default function PaymentTerms() {
         </Card>
       )}
 
+      {/* Details Dialog - View Only */}
+      <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Payment Term Details</DialogTitle>
+            <DialogDescription>
+              View complete information for this payment term
+            </DialogDescription>
+          </DialogHeader>
+          {viewingPaymentTerm && (
+            <div className="space-y-6">
+              {/* Basic Information */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold border-b pb-2">Basic Information</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Code</p>
+                    <p className="font-medium">{viewingPaymentTerm.paymentTermCode}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-sm text-muted-foreground">Description</p>
+                    <p className="font-medium">{viewingPaymentTerm.description}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Discount Structure */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold border-b pb-2">Terms Structure</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Due Days</p>
+                    <p className="font-medium">{viewingPaymentTerm.dueDays} days</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Discount 1</p>
+                    <p className="font-medium">
+                      {viewingPaymentTerm.discountDays1 > 0
+                        ? `${viewingPaymentTerm.discountPercent1}% in ${viewingPaymentTerm.discountDays1} days`
+                        : '—'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Administrative Data (SAP ECC style) ────────────────── */}
+              <div className="border rounded-md overflow-hidden bg-white mt-4">
+                <button
+                  type="button"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                >
+                  <span className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <Info className="h-3.5 w-3.5" />
+                    Administrative Data
+                  </span>
+                  {adminDataOpen
+                    ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                    : <ChevronRight className="h-4 w-4 text-gray-400" />}
+                </button>
+
+                {adminDataOpen && (
+                  <dl className="px-4 py-3 space-y-2 bg-white">
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingPaymentTerm.createdAt ? new Date(viewingPaymentTerm.createdAt).toLocaleString() : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Created by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">{viewingPaymentTerm.createdBy ?? '—'}</dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed on</dt>
+                      <dd className="text-xs text-gray-500">
+                        {viewingPaymentTerm.updatedAt ? new Date(viewingPaymentTerm.updatedAt).toLocaleString() : '—'}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <dt className="text-xs text-gray-400">Last changed by (User ID)</dt>
+                      <dd className="text-xs text-gray-500">{viewingPaymentTerm.updatedBy ?? '—'}</dd>
+                    </div>
+                    <div className="flex justify-between items-center pt-2 mt-2 border-t border-gray-100">
+                      <dt className="text-xs text-gray-400">Tenant / Client</dt>
+                      <dd className="text-xs text-gray-500 font-mono bg-gray-50 px-1.5 py-0.5 rounded">
+                        {viewingPaymentTerm.tenantId || '001'}
+                      </dd>
+                    </div>
+                    {viewingPaymentTerm.deletedAt && (
+                      <div className="flex justify-between items-center pt-2 mt-2 border-t border-red-50">
+                        <dt className="text-xs text-red-400 flex items-center gap-1.5">
+                          <AlertCircle className="h-3.5 w-3.5" />
+                          Deletion Flag
+                        </dt>
+                        <dd className="text-xs text-red-500 font-medium">
+                          Yes (Soft Deleted on {new Date(viewingPaymentTerm.deletedAt).toLocaleDateString()})
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Payment Terms Table */}
       <Card>
         <CardHeader>
@@ -297,36 +419,44 @@ export default function PaymentTerms() {
                   <th className="border border-gray-300 px-4 py-2 text-left">Description</th>
                   <th className="border border-gray-300 px-4 py-2 text-left">Due Days</th>
                   <th className="border border-gray-300 px-4 py-2 text-left">Discount 1</th>
-                  
+
                   <th className="border border-gray-300 px-4 py-2 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredPaymentTerms.map((paymentTerm) => (
-                  <tr key={paymentTerm.id} className="hover:bg-gray-50">
+                  <tr key={paymentTerm.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => openDetails(paymentTerm)}>
                     <td className="border border-gray-300 px-4 py-2 font-mono">{paymentTerm.paymentTermCode}</td>
                     <td className="border border-gray-300 px-4 py-2">{paymentTerm.description}</td>
                     <td className="border border-gray-300 px-4 py-2">{paymentTerm.dueDays} days</td>
                     <td className="border border-gray-300 px-4 py-2">
-                      {paymentTerm.discountDays1 > 0 
+                      {paymentTerm.discountDays1 > 0
                         ? `${paymentTerm.discountPercent1}% in ${paymentTerm.discountDays1} days`
                         : '-'
                       }
                     </td>
-                    
-                    <td className="border border-gray-300 px-4 py-2">
+
+                    <td className="border border-gray-300 px-4 py-2" onClick={(e) => e.stopPropagation()}>
                       <div className="flex gap-2">
                         <Button
                           size="sm"
+                          variant="ghost"
+                          title="View Details"
+                          onClick={(e) => { e.stopPropagation(); openDetails(paymentTerm); }}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
                           variant="outline"
-                          onClick={() => handleEdit(paymentTerm)}
+                          onClick={(e) => { e.stopPropagation(); handleEdit(paymentTerm); }}
                         >
                           <Edit className="h-4 w-4" />
                         </Button>
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => handleDelete(paymentTerm.id)}
+                          onClick={(e) => { e.stopPropagation(); handleDelete(paymentTerm.id); }}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

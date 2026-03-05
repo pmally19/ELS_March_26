@@ -60,6 +60,8 @@ export const materials = pgTable("materials", {
   tags: text("tags").array(),
   companyCodeId: integer("company_code_id"), // reference to company_codes table
   plantId: integer("plant_id"), // reference to plants table
+  _tenantId: text("_tenantId").default("001"),
+  _deletedAt: timestamp("_deletedAt", { withTimezone: true }),
 });
 
 // Material Master alias table (same structure, distinct table name)
@@ -108,37 +110,37 @@ export const customers = pgTable("customers", {
   notes: text("notes"),
   tags: text("tags").array(),
   companyCodeId: integer("company_code_id"), // reference to company_codes table
-  
+
   // === CRITICAL FINANCIAL FIELDS (SAP-Equivalent) ===
   // Reconciliation Account
   reconciliationAccountCode: text("reconciliation_account_code"), // GL reconciliation account
-  
+
   // Dunning and Payment Controls
   dunningProcedure: text("dunning_procedure"), // Procedure for overdue payment reminders
   dunningBlock: boolean("dunning_block").default(false), // Block dunning for this customer
   paymentBlock: boolean("payment_block").default(false), // Block payments for this customer
   cashDiscountTerms: text("cash_discount_terms"), // Cash discount conditions
   paymentGuaranteeProcedure: text("payment_guarantee_procedure"), // Payment guarantee setup
-  
+
   // Credit Management
   creditControlArea: text("credit_control_area"), // Credit management area
   riskCategory: text("risk_category"), // Customer risk classification
   creditLimitCurrency: text("credit_limit_currency").default("USD"), // Currency for credit limit
   creditExposure: numeric("credit_exposure").default(0), // Current credit exposure amount
   creditCheckProcedure: text("credit_check_procedure"), // Credit check process
-  
+
   // Tax and Compliance
   taxClassificationCode: text("tax_classification_code"), // Detailed tax classification
   taxExemptionCertificate: text("tax_exemption_certificate"), // Tax exemption details
   withholdingTaxCode: text("withholding_tax_code"), // Tax withholding requirements
   taxJurisdiction: text("tax_jurisdiction"), // Tax jurisdiction information
-  
+
   // Banking Information
   bankAccountNumber: text("bank_account_number"), // Customer bank account number
   bankRoutingNumber: text("bank_routing_number"), // Bank routing information
   bankName: text("bank_name"), // Customer bank name
   electronicPaymentMethod: text("electronic_payment_method"), // Preferred electronic payment method
-  
+
   // Financial Posting Controls
   postingBlock: boolean("posting_block").default(false), // Block financial postings
   deletionFlag: boolean("deletion_flag").default(false), // Mark for deletion
@@ -184,7 +186,7 @@ export const vendors = pgTable("vendors", {
   industry: text("industry"),
   industryKey: text("industry_key"), // Industry classification key
   industryClassification: text("industry_classification"), // Detailed industry classification
-  
+
   // Tax Information
   taxId: text("tax_id"), // Tax ID number 1
   taxId2: text("tax_id_2"), // Tax ID number 2
@@ -193,7 +195,7 @@ export const vendors = pgTable("vendors", {
   vatNumber: text("vat_number"), // VAT registration number
   fiscalAddress: text("fiscal_address"), // Fiscal/tax address
   registrationNumber: text("registration_number"), // Business registration number
-  
+
   // Address Information
   address: text("address"), // Street address line 1
   address2: text("address_2"), // Street address line 2
@@ -211,13 +213,13 @@ export const vendors = pgTable("vendors", {
   county: text("county"), // County information
   timeZone: text("time_zone"), // Time zone
   taxJurisdiction: text("tax_jurisdiction"), // Tax jurisdiction code
-  
+
   // Contact Information
   phone: text("phone"),
   altPhone: text("alt_phone"),
   email: text("email"),
   website: text("website"),
-  
+
   // Financial Information
   currency: text("currency"),
   paymentTerms: text("payment_terms"),
@@ -227,7 +229,7 @@ export const vendors = pgTable("vendors", {
   paymentBlock: text("payment_block"), // Payment blocking indicator
   houseBank: text("house_bank"), // House bank identifier
   checkDoubleInvoice: boolean("check_double_invoice").default(false), // Flag to check for duplicate invoices
-  
+
   // Banking Information
   bankName: text("bank_name"),
   bankAccount: text("bank_account"),
@@ -238,18 +240,18 @@ export const vendors = pgTable("vendors", {
   bankKey: text("bank_key"), // Bank key/identifier
   accountType: text("account_type"), // Account type (checking, savings, etc.)
   bankTypeKey: text("bank_type_key"), // Bank type classification key
-  
+
   // Purchasing Information
   incoterms: text("incoterms"),
   minimumOrderValue: numeric("minimum_order_value"),
   evaluationScore: numeric("evaluation_score"),
   leadTime: integer("lead_time"), // in days
   purchasingGroupId: integer("purchasing_group_id"), // reference to purchasing groups
-  
+
   // Authorization and Organization
   authorizationGroup: text("authorization_group"), // Authorization group for access control
   corporateGroup: text("corporate_group"), // Corporate group identifier
-  
+
   // Withholding Tax Information
   withholdingTaxCountry: text("withholding_tax_country"), // Country code for withholding tax
   withholdingTaxType: text("withholding_tax_type"), // Type of withholding tax
@@ -260,7 +262,7 @@ export const vendors = pgTable("vendors", {
   exemptionReason: text("exemption_reason"), // Reason code for exemption
   exemptionFrom: timestamp("exemption_from"), // Exemption valid from date
   exemptionTo: timestamp("exemption_to"), // Exemption valid to date
-  
+
   // Blocking and Status Management
   status: text("status").default("active"),
   centralPostingBlock: boolean("central_posting_block").default(false), // Central posting block
@@ -271,7 +273,7 @@ export const vendors = pgTable("vendors", {
   deletionFlagPurchasingOrg: boolean("deletion_flag_purchasing_org").default(false), // Deletion flag at purchasing org level
   blacklisted: boolean("blacklisted").default(false),
   blacklistReason: text("blacklist_reason"),
-  
+
   // Additional Information
   notes: text("notes"),
   tags: text("tags").array(),

@@ -1,16 +1,18 @@
 /**
  * GR GL Posting Service — SAP-style account determination & automatic GL posting
  *
- * Flow (mirrors SAP MIGO / MB01 + OBYC):
- *  1. Get GR details (material, qty, price, plant, movement_type)
- *  2. movement_types.transaction_key        → debit account key  (e.g. BSX)
- *  3. movement_types.credit_transaction_key → credit account key (e.g. WRX)
- *  4. material_account_determination:
- *       transaction_key_id + valuation_class_id + valuation_grouping_code_id + chart_of_accounts_id
- *       → gl_account_id
- *  5. Insert accounting_documents header (FI document)
- *  6. Insert journal_entries: 2 lines (Debit BSX + Credit WRX)
- *  7. Update goods_receipts.financial_posting_status = 'POSTED', gl_document_number = <doc#>
+ * Correct SAP Flow (using the Movement Types tabs configuration):
+ *
+ *  1. Get GR: material_code, quantity, unit_price, movement_type (e.g. '101'), plant
+ *  2. movement_types  →  movement_posting_rules  (via movement_type_code)
+ *     Each posting rule has: special_stock_ind, movement_ind, VALUE_STRING (e.g. 'WE01')
+ *  3. movement_type_value_strings  (per value_string)  →  transaction_key (e.g. 'BSX', 'WRX')
+ *     Each row has debit_credit = 'D' or 'C'
+ *  4. transaction_keys  →  material_account_determination  →  gl_account_id
+ *     Joined on valuation_class + valuation_grouping_code + chart_of_accounts
+ *  5. Insert accounting_documents (FI header)
+ *  6. Insert gl_entries (one line per transaction key in the value string)
+ *  7. Update goods_receipts: set posted = true, gl_document_number
  */
 
 import { pool } from '../db';
@@ -21,206 +23,258 @@ export interface GRPostingResult {
     accountingDocumentId?: number;
     debitAccount?: string;
     creditAccount?: string;
+    prdAccount?: string | null;
     totalAmount?: number;
     error?: string;
+}
+
+interface ValueStringLine {
+    transaction_key: string;
+    debit_credit: 'D' | 'C';
+    account_modifier: string | null;
+    description: string | null;
 }
 
 export class GRGLPostingService {
 
     /**
-     * Main entry point: post a goods receipt to GL
+     * Main entry point: post a goods receipt to GL using the Movement Types tab configuration.
      */
     async postGRToGL(goodsReceiptId: number): Promise<GRPostingResult> {
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
 
-            // ── 1. Load GR with material + movement type info ──────────────────────
+            // ── 1. Load GR with material + plant + company code info ────────────────
             const grResult = await client.query(`
-        SELECT
-          gr.id,
-          gr.receipt_number,
-          gr.grn_number,
-          gr.quantity,
-          gr.unit_price,
-          gr.total_value,
-          gr.movement_type,
-          gr.purchase_order_id,
-          gr.plant_id,
-          gr.currency,
-          gr.material_code,
-          m.id            AS material_id,
-          m.valuation_class_id,
-          p.company_code_id,
-          cc.chart_of_accounts_id,
-          vgc.id          AS valuation_grouping_code_id
-        FROM goods_receipts gr
-        LEFT JOIN materials m    ON m.code = gr.material_code
-        LEFT JOIN plants p       ON p.id   = gr.plant_id
-        LEFT JOIN company_codes cc ON cc.id = p.company_code_id
-        LEFT JOIN valuation_grouping_codes vgc ON vgc.company_code_id = cc.id
-        WHERE gr.id = $1
-      `, [goodsReceiptId]);
+                SELECT
+                    gr.id,
+                    gr.receipt_number,
+                    gr.grn_number,
+                    gr.quantity        AS quantity,
+                    gr.unit_price      AS unit_price,
+                    gr.total_value     AS total_value,
+                    gr.movement_type   AS movement_type,
+                    gr.purchase_order_id,
+                    gr.plant_id,
+                    gr.currency,
+                    gr.material_code,
+                    m.id                    AS material_id,
+                    m.price_control         AS price_control,
+                    m.base_unit_price       AS standard_price,
+                    -- valuation_class is stored as TEXT code; resolve ID via valuation_classes
+                    (SELECT vc.id FROM valuation_classes vc
+                     WHERE vc.class_code = m.valuation_class LIMIT 1) AS valuation_class_id,
+                    p.company_code_id,
+                    cc.chart_of_accounts_id,
+                    -- valuation_grouping_code_id is assigned at Plant level (Plant master)
+                    p.valuation_grouping_code_id
+                FROM goods_receipts gr
+                LEFT JOIN materials m     ON m.code = gr.material_code
+                LEFT JOIN plants p        ON p.id   = gr.plant_id
+                LEFT JOIN company_codes cc ON cc.id  = p.company_code_id
+                WHERE gr.id = $1
+            `, [goodsReceiptId]);
 
             if (grResult.rows.length === 0) {
                 throw new Error(`Goods receipt ${goodsReceiptId} not found`);
             }
 
             const gr = grResult.rows[0];
-            const totalAmount = parseFloat(gr.total_value || '0') ||
-                (parseFloat(gr.quantity || '1') * parseFloat(gr.unit_price || '0'));
+            const movementTypeCode = gr.movement_type || '101';
+            const qty = parseFloat(gr.quantity || '1');
+            const poUnitPrice = parseFloat(gr.unit_price || '0');
+            const totalPoValue = qty * poUnitPrice;
 
-            if (totalAmount <= 0) {
+            if (totalPoValue <= 0) {
                 throw new Error(`GR ${goodsReceiptId} has zero value — cannot post to GL`);
             }
 
-            // ── 2. Get movement type transaction keys ──────────────────────────────
-            const movTypeResult = await client.query(`
-        SELECT transaction_key, credit_transaction_key
-        FROM movement_types
-        WHERE movement_code = $1
-        LIMIT 1
-      `, [gr.movement_type || '101']);
+            // Price-control values for PRD calculation
+            const priceControl = gr.price_control || 'V';
+            const standardPrice = parseFloat(gr.standard_price || '0');
 
-            // SAP defaults for movement type 101: BSX (Debit Inventory) / WRX (Credit GR/IR)
-            const movType = movTypeResult.rows[0] || {};
-            const debitKey = movType.transaction_key || 'BSX';
-            const creditKey = movType.credit_transaction_key || 'WRX';
+            let inventoryValue = totalPoValue;
+            let varianceAmount = 0;
+            if (priceControl === 'S' && standardPrice > 0) {
+                inventoryValue = standardPrice * qty;
+                varianceAmount = totalPoValue - inventoryValue; // PRD = PO value - Std value
+            }
+            const hasVariance = Math.abs(varianceAmount) > 0.001;
 
-            // ── 3. Resolve GL accounts via material_account_determination ──────────
-            const debitGLId = await this.resolveGLAccount(
-                client, debitKey, gr.valuation_class_id,
-                gr.valuation_grouping_code_id, gr.chart_of_accounts_id
-            );
-            const creditGLId = await this.resolveGLAccount(
-                client, creditKey, gr.valuation_class_id,
-                gr.valuation_grouping_code_id, gr.chart_of_accounts_id
-            );
+            // ── 2. Resolve the posting rule for this movement type ─────────────────
+            // Chain: movement_types → movement_posting_rules (value_string)
+            const postingRuleResult = await client.query(`
+                SELECT pr.value_string
+                FROM movement_types mt
+                JOIN movement_posting_rules pr ON pr.movement_type_id = mt.id
+                WHERE mt.movement_type_code = $1
+                  AND pr.is_active = true
+                  AND (pr.special_stock_ind = '' OR pr.special_stock_ind IS NULL)
+                  AND (pr.movement_ind = '' OR pr.movement_ind IS NULL)
+                ORDER BY pr.id
+                LIMIT 1
+            `, [movementTypeCode]);
 
-            // ── 4. Get GL account numbers for reference ────────────────────────────
-            const glLookup = await client.query(`
-        SELECT id, account_number FROM gl_accounts WHERE id = ANY($1)
-      `, [[debitGLId, creditGLId].filter(Boolean)]);
+            if (postingRuleResult.rows.length === 0) {
+                // Try with any posting rule for this movement type
+                const fallbackRule = await client.query(`
+                    SELECT pr.value_string
+                    FROM movement_types mt
+                    JOIN movement_posting_rules pr ON pr.movement_type_id = mt.id
+                    WHERE mt.movement_type_code = $1
+                      AND pr.is_active = true
+                    ORDER BY pr.id
+                    LIMIT 1
+                `, [movementTypeCode]);
 
-            const glMap: Record<number, string> = {};
-            glLookup.rows.forEach(r => { glMap[r.id] = r.account_number; });
+                if (fallbackRule.rows.length === 0) {
+                    throw new Error(`No posting rule configured for movement type ${movementTypeCode}. Please add a Posting Rule in the Movement Types configuration.`);
+                }
+                postingRuleResult.rows.push(fallbackRule.rows[0]);
+            }
 
-            const debitAccountNum = debitGLId ? glMap[debitGLId] : null;
-            const creditAccountNum = creditGLId ? glMap[creditGLId] : null;
+            const valueString = postingRuleResult.rows[0].value_string as string;
+            console.log(`[GR GL] Movement ${movementTypeCode} → Posting Rule → Value String: ${valueString}`);
 
-            // ── 5. Generate FI document number ─────────────────────────────────────
+            // ── 3. Get all transaction key lines for this value string ─────────────
+            // Chain: movement_type_value_strings → transaction_keys
+            const vsLinesResult = await client.query(`
+                SELECT
+                    mvs.transaction_key,
+                    mvs.debit_credit,
+                    mvs.account_modifier,
+                    mvs.description
+                FROM movement_type_value_strings mvs
+                WHERE mvs.value_string = $1
+                  AND mvs.is_active = true
+                ORDER BY mvs.sort_order, mvs.debit_credit
+            `, [valueString]);
+
+            if (vsLinesResult.rows.length === 0) {
+                throw new Error(`Value String "${valueString}" has no transaction key lines configured. Please add lines in the Value Strings tab.`);
+            }
+
+            const vsLines: ValueStringLine[] = vsLinesResult.rows;
+            console.log(`[GR GL] Value String ${valueString} → ${vsLines.length} line(s):`, vsLines.map(l => `${l.debit_credit}(${l.transaction_key})`).join(', '));
+
+            // ── 4. Generate FI document number ─────────────────────────────────────
             const today = new Date();
             const fiscal_year = today.getFullYear();
-            const docNumber = `FI-GR-${goodsReceiptId}-${Date.now()}`;
+            const fiscal_period = today.getMonth() + 1;
+            const docNumber = `FIGR${goodsReceiptId}-${Date.now().toString().slice(-8)}`;
 
-            // ── 6. Insert accounting_documents header ──────────────────────────────
+            // ── 5. Create accounting_documents header ──────────────────────────────
+            const grRef = gr.receipt_number || gr.grn_number || `GR-${goodsReceiptId}`;
+
             const adResult = await client.query(`
-        INSERT INTO accounting_documents (
-          document_number, document_type, posting_date, document_date,
-          company_code, fiscal_year, period, reference,
-          header_text, total_amount, currency,
-          source_module, source_document_id, source_document_type,
-          status, created_at
-        ) VALUES (
-          $1, 'WE', CURRENT_DATE, CURRENT_DATE,
-          $2, $3, $4, $5,
-          $6, $7, $8,
-          'MM', $9, 'GOODS_RECEIPT',
-          'POSTED', NOW()
-        ) RETURNING id
-      `, [
+                INSERT INTO accounting_documents (
+                    document_number, document_type, posting_date, document_date,
+                    company_code, fiscal_year, period, reference,
+                    header_text, total_amount, currency,
+                    source_module, source_document_id, source_document_type,
+                    status, created_at
+                ) VALUES (
+                    $1, 'WE', CURRENT_DATE, CURRENT_DATE,
+                    $2, $3, $4, $5,
+                    $6, $7, $8,
+                    'MM', $9, 'GOODS_RECEIPT',
+                    'POSTED', NOW()
+                ) RETURNING id
+            `, [
                 docNumber,
                 gr.company_code_id?.toString() || '1000',
                 fiscal_year,
-                today.getMonth() + 1,
-                gr.receipt_number || gr.grn_number || `GR-${goodsReceiptId}`,
-                `Goods Receipt ${gr.receipt_number || goodsReceiptId} — Movement ${gr.movement_type || '101'}`,
-                totalAmount,
+                fiscal_period,
+                grRef,
+                `GR ${grRef} — ${movementTypeCode} — ${valueString}`,
+                totalPoValue,
                 gr.currency || 'INR',
                 goodsReceiptId
             ]);
 
             const accountingDocId = adResult.rows[0].id;
 
-            // ── 7. Insert journal entry lines (Debit + Credit) ─────────────────────
-            const grRef = gr.receipt_number || gr.grn_number || `GR-${goodsReceiptId}`;
+            // ── 6. Insert GL entry lines — one per value string line ──────────────
+            let debitAccountNum: string | null = null;
+            let creditAccountNum: string | null = null;
+            let prdAccountNum: string | null = null;
 
-            // Line 1: Debit (e.g. Inventory — BSX)
-            await client.query(`
-        INSERT INTO journal_entries (
-          document_number, document_type, posting_date, document_date,
-          fiscal_year, reference_document, header_text,
-          total_debit_amount, total_credit_amount,
-          gl_account, account_type,
-          debit_amount, credit_amount,
-          description, status, entry_date, active, created_at
-        ) VALUES (
-          $1, 'WE', CURRENT_DATE, CURRENT_DATE,
-          $2, $3, $4,
-          $5, 0,
-          $6, 'GL',
-          $5, 0,
-          $7, 'POSTED', CURRENT_DATE, true, NOW()
-        )
-      `, [
-                docNumber,
-                fiscal_year,
-                grRef,
-                `GR Posting — ${debitKey} Debit`,
-                totalAmount,
-                debitAccountNum || debitKey,
-                `${debitKey}: ${gr.material_code || 'Material'} — GR ${grRef}`
-            ]);
+            for (const line of vsLines) {
+                const txKey = line.transaction_key;
+                const dcIndicator = line.debit_credit; // 'D' or 'C'
+                const isPrd = txKey === 'PRD';
 
-            // Line 2: Credit (e.g. GR/IR Clearing — WRX)
-            await client.query(`
-        INSERT INTO journal_entries (
-          document_number, document_type, posting_date, document_date,
-          fiscal_year, reference_document, header_text,
-          total_debit_amount, total_credit_amount,
-          gl_account, account_type,
-          debit_amount, credit_amount,
-          description, status, entry_date, active, created_at
-        ) VALUES (
-          $1, 'WE', CURRENT_DATE, CURRENT_DATE,
-          $2, $3, $4,
-          0, $5,
-          $6, 'GL',
-          0, $5,
-          $7, 'POSTED', CURRENT_DATE, true, NOW()
-        )
-      `, [
-                docNumber,
-                fiscal_year,
-                grRef,
-                `GR Posting — ${creditKey} Credit`,
-                totalAmount,
-                creditAccountNum || creditKey,
-                `${creditKey}: GR/IR Clearing — GR ${grRef}`
-            ]);
+                // Skip PRD line if no variance
+                if (isPrd && !hasVariance) continue;
 
-            // ── 8. Mark GR as financially posted ──────────────────────────────────
+                // Resolve GL account via material_account_determination
+                const glAccountId = await this.resolveGLAccount(
+                    client,
+                    txKey,
+                    gr.valuation_class_id,
+                    gr.valuation_grouping_code_id,
+                    gr.chart_of_accounts_id
+                );
+
+                if (!glAccountId) {
+                    console.warn(`[GR GL] ⚠️ No GL account found for transaction key ${txKey} (${valueString}). Skipping line.`);
+                    continue;
+                }
+
+                // Determine posting amount
+                let postingAmount: number;
+                if (isPrd) {
+                    postingAmount = Math.abs(varianceAmount);
+                    // If variance is negative, flip debit/credit
+                    const actualDC = varianceAmount > 0 ? dcIndicator : (dcIndicator === 'D' ? 'C' : 'D');
+                    const actualPK = actualDC === 'D' ? '40' : '50'; // posting key from direction
+                    await this.insertGLEntry(client, docNumber, glAccountId, postingAmount, actualDC as 'D' | 'C', actualPK, fiscal_period, fiscal_year, `${txKey}: Price Variance — ${grRef}`, goodsReceiptId, grRef);
+                } else if (dcIndicator === 'D') {
+                    postingAmount = inventoryValue;
+                    await this.insertGLEntry(client, docNumber, glAccountId, postingAmount, 'D', '40', fiscal_period, fiscal_year, `${txKey}: ${gr.material_code || 'Inventory'} — ${grRef}`, goodsReceiptId, grRef);
+                } else {
+                    postingAmount = totalPoValue;
+                    await this.insertGLEntry(client, docNumber, glAccountId, postingAmount, 'C', '50', fiscal_period, fiscal_year, `${txKey}: GR/IR Clearing — ${grRef}`, goodsReceiptId, grRef);
+                }
+
+                // Track account numbers for logging
+                const acctResult = await client.query('SELECT account_number FROM gl_accounts WHERE id = $1', [glAccountId]);
+                const acctNum = acctResult.rows[0]?.account_number || glAccountId.toString();
+                if (dcIndicator === 'D' && !isPrd) debitAccountNum = acctNum;
+                else if (dcIndicator === 'C') creditAccountNum = acctNum;
+                else if (isPrd) prdAccountNum = acctNum;
+            }
+
+            // ── 7. Mark GR as financially posted ──────────────────────────────────
+            // Add columns if they don't exist (defensive migration)
+            try {
+                await client.query(`ALTER TABLE goods_receipts ADD COLUMN IF NOT EXISTS financial_posting_status VARCHAR(20)`);
+                await client.query(`ALTER TABLE goods_receipts ADD COLUMN IF NOT EXISTS gl_document_number VARCHAR(50)`);
+            } catch (_) { /* columns exist */ }
+
             await client.query(`
-        UPDATE goods_receipts
-        SET
-          financial_posting_status = 'POSTED',
-          gl_document_number       = $1,
-          posted                   = true,
-          posted_date              = NOW()
-        WHERE id = $2
-      `, [docNumber, goodsReceiptId]);
+                UPDATE goods_receipts
+                SET
+                    financial_posting_status = 'POSTED',
+                    gl_document_number       = $1,
+                    posted                   = true,
+                    posted_date              = NOW()
+                WHERE id = $2
+            `, [docNumber, goodsReceiptId]);
 
             await client.query('COMMIT');
 
-            console.log(`✅ GR ${goodsReceiptId} posted to GL: ${docNumber} | Dr(${debitKey}): ${debitAccountNum} Cr(${creditKey}): ${creditAccountNum} | Amount: ${totalAmount}`);
+            console.log(`✅ GR ${goodsReceiptId} posted to GL: ${docNumber} | ValueString=${valueString} | Dr: ${debitAccountNum} Cr: ${creditAccountNum}${hasVariance ? ` PRD: ${prdAccountNum}` : ''} | Amount: ${totalPoValue}`);
 
             return {
                 success: true,
                 glDocumentNumber: docNumber,
                 accountingDocumentId: accountingDocId,
-                debitAccount: debitAccountNum || debitKey,
-                creditAccount: creditAccountNum || creditKey,
-                totalAmount
+                debitAccount: debitAccountNum || 'BSX',
+                creditAccount: creditAccountNum || 'WRX',
+                prdAccount: hasVariance ? (prdAccountNum || 'PRD') : null,
+                totalAmount: totalPoValue
             };
 
         } catch (error: any) {
@@ -233,8 +287,40 @@ export class GRGLPostingService {
     }
 
     /**
-     * Resolve GL account from material_account_determination table
-     * Chain: transaction_key + valuation_class + valuation_grouping_code + chart_of_accounts → gl_account
+     * Insert a single GL entry line.
+     */
+    private async insertGLEntry(
+        client: any,
+        docNumber: string,
+        glAccountId: number,
+        amount: number,
+        dcIndicator: 'D' | 'C',
+        postingKey: string,          // OB41 posting key e.g. '40' (GL Dr), '50' (GL Cr)
+        period: number,
+        year: number,
+        description: string,
+        sourceDocId: number,
+        reference: string
+    ): Promise<void> {
+        await client.query(`
+            INSERT INTO gl_entries (
+                document_number, gl_account_id, amount, debit_credit_indicator,
+                posting_key,
+                posting_date, posting_status, fiscal_period, fiscal_year,
+                description, source_module, source_document_type, source_document_id,
+                reference
+            ) VALUES (
+                $1, $2, $3, $4, $5,
+                CURRENT_DATE, 'posted', $6, $7,
+                $8, 'MM', 'GOODS_RECEIPT', $9, $10
+            )
+        `, [docNumber, glAccountId, amount, dcIndicator, postingKey, period, year, description, sourceDocId, reference]);
+    }
+
+    /**
+     * Resolve GL account via material_account_determination.
+     * Chain: transaction_key code → transaction_key_id → material_account_determination → gl_account_id
+     * Falls back from most-specific to least-specific match (SAP OBYC logic).
      */
     private async resolveGLAccount(
         client: any,
@@ -244,26 +330,25 @@ export class GRGLPostingService {
         chartOfAccountsId: number | null
     ): Promise<number | null> {
         try {
-            // Look up transaction_key ID by code
+            // Resolve transaction_key ID from code
             const tkResult = await client.query(
                 'SELECT id FROM transaction_keys WHERE code = $1 AND is_active = true LIMIT 1',
                 [transactionKeyCode]
             );
-            if (tkResult.rows.length === 0) return null;
+            if (tkResult.rows.length === 0) {
+                console.warn(`[GR GL] Transaction key "${transactionKeyCode}" not found in transaction_keys table`);
+                return null;
+            }
             const transactionKeyId = tkResult.rows[0].id;
 
-            // Try most specific match first, then fall back to less specific
+            // Try from most-specific to least-specific (SAP fallback logic)
             const attempts = [
-                // Most specific: all 4 fields match
                 { vcId: valuationClassId, vgcId: valuationGroupingCodeId, coaId: chartOfAccountsId },
-                // Without valuation grouping code
                 { vcId: valuationClassId, vgcId: null, coaId: chartOfAccountsId },
-                // Without chart of accounts
                 { vcId: valuationClassId, vgcId: valuationGroupingCodeId, coaId: null },
-                // Only transaction key + valuation class
                 { vcId: valuationClassId, vgcId: null, coaId: null },
-                // Just transaction key (most generic fallback)
-                { vcId: null, vgcId: null, coaId: null }
+                { vcId: null, vgcId: null, coaId: chartOfAccountsId },
+                { vcId: null, vgcId: null, coaId: null }, // last resort
             ];
 
             for (const attempt of attempts) {
@@ -271,35 +356,46 @@ export class GRGLPostingService {
                 const params: any[] = [transactionKeyId];
                 let idx = 2;
 
-                if (attempt.vcId) {
-                    conditions.push(`mad.valuation_class_id = $${idx++}`);
-                    params.push(attempt.vcId);
-                }
-                if (attempt.vgcId) {
-                    conditions.push(`mad.valuation_grouping_code_id = $${idx++}`);
-                    params.push(attempt.vgcId);
-                }
-                if (attempt.coaId) {
-                    conditions.push(`mad.chart_of_accounts_id = $${idx++}`);
-                    params.push(attempt.coaId);
-                }
+                if (attempt.vcId) { conditions.push(`mad.valuation_class_id = $${idx++}`); params.push(attempt.vcId); }
+                if (attempt.vgcId) { conditions.push(`mad.valuation_grouping_code_id = $${idx++}`); params.push(attempt.vgcId); }
+                if (attempt.coaId) { conditions.push(`mad.chart_of_accounts_id = $${idx++}`); params.push(attempt.coaId); }
 
                 const result = await client.query(`
-          SELECT mad.gl_account_id
-          FROM material_account_determination mad
-          WHERE ${conditions.join(' AND ')}
-          LIMIT 1
-        `, params);
+                    SELECT mad.gl_account_id
+                    FROM material_account_determination mad
+                    WHERE ${conditions.join(' AND ')}
+                    LIMIT 1
+                `, params);
 
                 if (result.rows.length > 0 && result.rows[0].gl_account_id) {
                     return result.rows[0].gl_account_id;
                 }
             }
 
-            console.warn(`⚠️ No GL account found for transaction key ${transactionKeyCode} — using naming fallback`);
+            // Name-based fallback as last resort
+            const fallbackMap: Record<string, string> = {
+                'BSX': '%inventory%',
+                'WRX': '%gr/ir%',
+                'PRD': '%price diff%',
+                'GBB': '%consumption%',
+                'FRL': '%freight%',
+            };
+            const pattern = fallbackMap[transactionKeyCode];
+            if (pattern) {
+                const nameResult = await client.query(
+                    `SELECT id FROM gl_accounts WHERE account_name ILIKE $1 AND is_active = true LIMIT 1`,
+                    [pattern]
+                );
+                if (nameResult.rows.length > 0) {
+                    console.warn(`[GR GL] ⚠️ Using name-based fallback for ${transactionKeyCode}: ${nameResult.rows[0].id}`);
+                    return nameResult.rows[0].id;
+                }
+            }
+
+            console.warn(`[GR GL] No GL account found for transaction key ${transactionKeyCode}`);
             return null;
         } catch (err: any) {
-            console.warn(`GL account resolution failed for ${transactionKeyCode}:`, err.message);
+            console.warn(`[GR GL] GL account resolution failed for ${transactionKeyCode}:`, err.message);
             return null;
         }
     }

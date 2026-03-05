@@ -48,7 +48,7 @@ export default function DocumentTypes() {
     documentCategory: '',
     numberRange: '',
     reversalAllowed: true,
-    accountTypesAllowed: 'all',
+    accountTypesAllowed: [] as string[], // SAP: A=Assets, D=Customer, K=Vendor, G=G/L, M=Material
     entryView: 'standard',
     referenceRequired: false,
     authorizationGroup: '',
@@ -87,7 +87,7 @@ export default function DocumentTypes() {
     isActive: at.is_active !== undefined ? at.is_active : (at.isActive !== undefined ? at.isActive : true),
   });
 
-  const accountTypesForDropdown = Array.isArray(accountTypesRaw) 
+  const accountTypesForDropdown = Array.isArray(accountTypesRaw)
     ? accountTypesRaw.map(normalizeAccountType).filter((at: any) => at.isActive)
     : [];
 
@@ -115,14 +115,14 @@ export default function DocumentTypes() {
     isActive: nr.is_active !== undefined ? nr.is_active : (nr.isActive !== undefined ? nr.isActive : true),
   });
 
-  const numberRangesForDropdown = Array.isArray(numberRangesRaw) 
+  const numberRangesForDropdown = Array.isArray(numberRangesRaw)
     ? numberRangesRaw.map(normalizeNumberRange).filter((nr: any) => {
-        // Only filter out if explicitly inactive (false) or if code is truly missing
-        // Allow records with isActive === true, undefined, or null (default to active)
-        const isActive = nr.isActive !== false; // Default to true if undefined/null
-        const hasCode = nr.code && nr.code.trim() !== '';
-        return isActive && hasCode;
-      })
+      // Only filter out if explicitly inactive (false) or if code is truly missing
+      // Allow records with isActive === true, undefined, or null (default to active)
+      const isActive = nr.isActive !== false; // Default to true if undefined/null
+      const hasCode = nr.code && nr.code.trim() !== '';
+      return isActive && hasCode;
+    })
     : [];
 
   useEffect(() => {
@@ -133,29 +133,16 @@ export default function DocumentTypes() {
   useEffect(() => {
     if (documentCategories.length > 0 && !formData.documentCategory) {
       // Try to find FINANCIAL or FINANCE, otherwise use first available
-      const defaultCategory = documentCategories.find((dc: any) => 
+      const defaultCategory = documentCategories.find((dc: any) =>
         dc.code === 'FINANCIAL' || dc.code === 'FINANCE'
       ) || documentCategories[0];
-      
+
       if (defaultCategory && !editingId) {
         setFormData(prev => ({ ...prev, documentCategory: defaultCategory.code }));
       }
     }
   }, [documentCategories, editingId]);
 
-  // Set default account type when account types are loaded
-  useEffect(() => {
-    if (accountTypesForDropdown.length > 0 && !formData.accountTypesAllowed) {
-      // Try to find 'all', otherwise use first available
-      const defaultAccountType = accountTypesForDropdown.find((at: any) => 
-        at.code === 'all'
-      ) || accountTypesForDropdown[0];
-      
-      if (defaultAccountType && !editingId) {
-        setFormData(prev => ({ ...prev, accountTypesAllowed: defaultAccountType.code }));
-      }
-    }
-  }, [accountTypesForDropdown, editingId]);
 
   useEffect(() => {
     if (showAccountTypesModal) {
@@ -167,7 +154,7 @@ export default function DocumentTypes() {
     try {
       setLoading(true);
       const response = await fetch('/api/master-data/document-types');
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         console.error('API Error:', response.status, errorData);
@@ -179,17 +166,17 @@ export default function DocumentTypes() {
         setDocumentTypes([]);
         return;
       }
-      
+
       const data = await response.json();
       console.log('Document Types API Response:', data);
-      
+
       // Handle different response structures:
       // 1. { records: { rows: [...] } } - from masterDataCRUDRoutes
       // 2. { records: [...] } - direct array in records
       // 3. [...] - direct array
       // 4. { data: [...] } - wrapped in data
       let documentTypesData: any[] = [];
-      
+
       if (Array.isArray(data)) {
         documentTypesData = data;
       } else if (data.records) {
@@ -203,9 +190,9 @@ export default function DocumentTypes() {
       } else if (data.rows && Array.isArray(data.rows)) {
         documentTypesData = data.rows;
       }
-      
+
       console.log('Extracted document types data:', documentTypesData.length, 'items');
-      
+
       // Transform API response to match frontend interface
       const transformedData = documentTypesData.map((item: any) => ({
         id: item.id,
@@ -223,7 +210,7 @@ export default function DocumentTypes() {
         createdAt: item.created_at || item.createdAt || new Date().toISOString(),
         updatedAt: item.updated_at || item.updatedAt || new Date().toISOString()
       }));
-      
+
       console.log('Transformed document types:', transformedData.length, 'items');
       setDocumentTypes(transformedData);
     } catch (error: any) {
@@ -242,14 +229,20 @@ export default function DocumentTypes() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const url = editingId 
+      const url = editingId
         ? `/api/master-data/document-types/${editingId}`
         : '/api/master-data/document-types';
-      
+
       const response = await fetch(url, {
         method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          ...formData,
+          // Join array back to comma-separated string for DB storage (e.g. ['D','G'] → 'D,G')
+          accountTypesAllowed: Array.isArray(formData.accountTypesAllowed)
+            ? formData.accountTypesAllowed.join(',')
+            : formData.accountTypesAllowed
+        })
       });
 
       if (response.ok) {
@@ -284,7 +277,10 @@ export default function DocumentTypes() {
       documentCategory: documentType.documentCategory,
       numberRange: documentType.numberRange || '',
       reversalAllowed: documentType.reversalAllowed,
-      accountTypesAllowed: documentType.accountTypesAllowed,
+      // Parse comma-separated string (e.g. 'D,G') → array ['D','G']
+      accountTypesAllowed: documentType.accountTypesAllowed
+        ? documentType.accountTypesAllowed.split(',').map((s: string) => s.trim()).filter(Boolean)
+        : [],
       entryView: documentType.entryView,
       referenceRequired: documentType.referenceRequired,
       authorizationGroup: documentType.authorizationGroup || '',
@@ -333,7 +329,7 @@ export default function DocumentTypes() {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' }
         });
-        
+
         if (response.ok) {
           await fetchDocumentTypes();
           toast({
@@ -389,7 +385,7 @@ export default function DocumentTypes() {
       const url = editingAccountTypeId
         ? `/api/master-data/account-types/${editingAccountTypeId}`
         : '/api/master-data/account-types';
-      
+
       const response = await fetch(url, {
         method: editingAccountTypeId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -481,7 +477,7 @@ export default function DocumentTypes() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ isActive: false })
         });
-        
+
         if (response.ok) {
           await fetchAccountTypes();
           toast({
@@ -509,22 +505,22 @@ export default function DocumentTypes() {
 
   const resetForm = () => {
     // Set default category when resetting
-    const defaultCategory = documentCategories.find((dc: any) => 
+    const defaultCategory = documentCategories.find((dc: any) =>
       dc.code === 'FINANCIAL' || dc.code === 'FINANCE'
     ) || (documentCategories.length > 0 ? documentCategories[0] : { code: '' });
-    
+
     // Set default account type when resetting
-    const defaultAccountType = accountTypesForDropdown.find((at: any) => 
+    const defaultAccountType = accountTypesForDropdown.find((at: any) =>
       at.code === 'all'
     ) || (accountTypesForDropdown.length > 0 ? accountTypesForDropdown[0] : { code: '' });
-    
+
     setFormData({
       documentTypeCode: '',
       description: '',
       documentCategory: defaultCategory?.code || '',
       numberRange: '',
       reversalAllowed: true,
-      accountTypesAllowed: defaultAccountType?.code || '',
+      accountTypesAllowed: [], // no default — user must select per SAP OBA7 pattern
       entryView: 'standard',
       referenceRequired: false,
       authorizationGroup: '',
@@ -549,8 +545,8 @@ export default function DocumentTypes() {
     <div className="p-6">
       {/* Header */}
       <div className="flex items-center gap-4 mb-6">
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           size="sm"
           onClick={() => window.history.back()}
           className="flex items-center gap-2"
@@ -571,16 +567,16 @@ export default function DocumentTypes() {
           </div>
         </div>
         <div className="flex gap-2">
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             onClick={() => window.open('/master-data/document-categories-config', '_blank')}
             className="flex items-center gap-2"
           >
             <Settings className="h-4 w-4" />
             Configure Categories
           </Button>
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             onClick={() => setShowAccountTypesModal(true)}
             className="flex items-center gap-2"
           >
@@ -615,11 +611,10 @@ export default function DocumentTypes() {
               {editingId ? 'Edit' : 'Add'} Document Type
               {editingId && (
                 <div className="mt-2">
-                  <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
-                    formData.isActive 
-                      ? 'bg-green-100 text-green-800' 
-                      : 'bg-red-100 text-red-800'
-                  }`}>
+                  <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${formData.isActive
+                    ? 'bg-green-100 text-green-800'
+                    : 'bg-red-100 text-red-800'
+                    }`}>
                     {formData.isActive ? 'Active' : 'Inactive'}
                   </span>
                 </div>
@@ -725,30 +720,56 @@ export default function DocumentTypes() {
                   </>
                 )}
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  Account Types Allowed {accountTypesLoading ? "(Loading...)" : `(${accountTypesForDropdown.length} available)`}
-                </label>
-                <select
-                  value={formData.accountTypesAllowed}
-                  onChange={(e) => setFormData({ ...formData, accountTypesAllowed: e.target.value })}
-                  className="w-full p-2 border border-gray-300 rounded-md"
-                  disabled={accountTypesLoading || accountTypesForDropdown.length === 0}
-                >
+              <div className="col-span-2">
+                <label className="block text-sm font-medium mb-3">Account Types Allowed</label>
+                <div className="border rounded-md p-4 bg-gray-50">
+                  <p className="text-xs text-gray-500 mb-3">Select which account types are permitted for postings in this document type (SAP OBA7)</p>
                   {accountTypesLoading ? (
-                    <option value="">Loading account types...</option>
+                    <div className="text-sm text-gray-400">Loading account types...</div>
                   ) : accountTypesForDropdown.length === 0 ? (
-                    <option value="">No account types available</option>
+                    <div className="text-sm text-red-500">No account types found. Please configure account types in Master Data → Account Types.</div>
                   ) : (
-                    <>
-                      {accountTypesForDropdown.map((accountType: any) => (
-                        <option key={accountType.id} value={accountType.code}>
-                          {accountType.code} — {accountType.name}
-                        </option>
-                      ))}
-                    </>
+                    <div className="grid grid-cols-5 gap-4">
+                      {accountTypesForDropdown.map((at: any) => {
+                        const checked = Array.isArray(formData.accountTypesAllowed)
+                          ? formData.accountTypesAllowed.includes(at.code)
+                          : false;
+                        return (
+                          <label
+                            key={at.code}
+                            className={`flex flex-col items-center gap-1 p-3 border-2 rounded-lg cursor-pointer transition-colors ${checked ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-gray-300'
+                              }`}
+                          >
+                            <input
+                              type="checkbox"
+                              className="sr-only"
+                              checked={checked}
+                              onChange={(e) => {
+                                const current = Array.isArray(formData.accountTypesAllowed)
+                                  ? [...formData.accountTypesAllowed]
+                                  : [];
+                                const updated = e.target.checked
+                                  ? [...current, at.code]
+                                  : current.filter(c => c !== at.code);
+                                setFormData({ ...formData, accountTypesAllowed: updated });
+                              }}
+                            />
+                            <span className={`text-lg font-bold ${checked ? 'text-blue-600' : 'text-gray-400'}`}>{at.code}</span>
+                            <span className="text-xs font-medium text-center">{at.name}</span>
+                            {at.description && (
+                              <span className="text-xs text-gray-400 text-center hidden sm:block">{at.description}</span>
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
                   )}
-                </select>
+                  {Array.isArray(formData.accountTypesAllowed) && formData.accountTypesAllowed.length > 0 && (
+                    <p className="mt-2 text-xs text-blue-600">
+                      Selected: {formData.accountTypesAllowed.join(', ')}
+                    </p>
+                  )}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2">Entry View</label>
@@ -847,15 +868,39 @@ export default function DocumentTypes() {
                       {(() => {
                         if (!documentType.numberRange) return '-';
                         const numberRange = numberRangesForDropdown.find((nr: any) => nr.code === documentType.numberRange);
-                        return numberRange 
+                        return numberRange
                           ? `${numberRange.code} — ${numberRange.name || numberRange.description || 'Number Range'}`
                           : documentType.numberRange;
                       })()}
                     </td>
                     <td className="border border-gray-300 px-4 py-2">
                       {(() => {
-                        const accountType = accountTypesForDropdown.find((at: any) => at.code === documentType.accountTypesAllowed);
-                        return accountType ? `${accountType.code} — ${accountType.name}` : documentType.accountTypesAllowed;
+                        const val = documentType.accountTypesAllowed;
+                        if (!val || val === 'all') return <span className="text-gray-400 text-xs">—</span>;
+                        const types = val.split(',').map((s: string) => s.trim()).filter(Boolean);
+                        const colorMap: Record<string, string> = {
+                          A: 'bg-purple-100 text-purple-700',
+                          D: 'bg-blue-100 text-blue-700',
+                          K: 'bg-orange-100 text-orange-700',
+                          S: 'bg-green-100 text-green-700',
+                          M: 'bg-gray-100 text-gray-700',
+                        };
+                        return (
+                          <div className="flex flex-wrap gap-1">
+                            {types.map((t: string) => {
+                              const atInfo = accountTypesForDropdown.find((at: any) => at.code === t);
+                              return (
+                                <span
+                                  key={t}
+                                  title={atInfo?.description || atInfo?.name || t}
+                                  className={`px-1.5 py-0.5 rounded text-xs font-mono font-bold ${colorMap[t] || 'bg-gray-100 text-gray-700'}`}
+                                >
+                                  {t}{atInfo ? ` — ${atInfo.name}` : ''}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        );
                       })()}
                     </td>
                     <td className="border border-gray-300 px-4 py-2">
@@ -865,11 +910,10 @@ export default function DocumentTypes() {
                       </div>
                     </td>
                     <td className="border border-gray-300 px-4 py-2">
-                      <span className={`px-2 py-1 rounded text-xs ${
-                        documentType.isActive 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-red-100 text-red-800'
-                      }`}>
+                      <span className={`px-2 py-1 rounded text-xs ${documentType.isActive
+                        ? 'bg-green-100 text-green-800'
+                        : 'bg-red-100 text-red-800'
+                        }`}>
                         {documentType.isActive ? 'Active' : 'Inactive'}
                       </span>
                     </td>
@@ -994,9 +1038,9 @@ export default function DocumentTypes() {
                       <Button type="submit">
                         {editingAccountTypeId ? 'Update' : 'Create'} Account Type
                       </Button>
-                      <Button 
-                        type="button" 
-                        variant="outline" 
+                      <Button
+                        type="button"
+                        variant="outline"
                         onClick={() => {
                           setShowAccountTypeForm(false);
                           setEditingAccountTypeId(null);
@@ -1049,11 +1093,10 @@ export default function DocumentTypes() {
                           <td className="border border-gray-300 px-4 py-2">{accountType.description || '-'}</td>
                           <td className="border border-gray-300 px-4 py-2 capitalize">{accountType.category}</td>
                           <td className="border border-gray-300 px-4 py-2">
-                            <span className={`px-2 py-1 rounded text-xs ${
-                              accountType.is_active 
-                                ? 'bg-green-100 text-green-800' 
-                                : 'bg-red-100 text-red-800'
-                            }`}>
+                            <span className={`px-2 py-1 rounded text-xs ${accountType.is_active
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-red-100 text-red-800'
+                              }`}>
                               {accountType.is_active ? 'Active' : 'Inactive'}
                             </span>
                           </td>

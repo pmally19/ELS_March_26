@@ -16,7 +16,7 @@ const industrySectorSchema = z.object({
 router.get('/', async (req: Request, res: Response) => {
     try {
         const result = await pool.query(
-            'SELECT * FROM industry_sectors ORDER BY code ASC'
+            'SELECT *, "_tenantId", "_deletedAt", created_by as "createdBy", updated_by as "updatedBy" FROM industry_sectors WHERE active = true AND "_deletedAt" IS NULL ORDER BY code ASC'
         );
         res.json(result.rows);
     } catch (error) {
@@ -30,7 +30,7 @@ router.get('/:id', async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const result = await pool.query(
-            'SELECT * FROM industry_sectors WHERE id = $1',
+            'SELECT *, "_tenantId", "_deletedAt", created_by as "createdBy", updated_by as "updatedBy" FROM industry_sectors WHERE id = $1 AND active = true AND "_deletedAt" IS NULL',
             [id]
         );
 
@@ -53,11 +53,14 @@ router.post('/', async (req: Request, res: Response) => {
         // Convert code to uppercase
         const code = validatedData.code.toUpperCase();
 
+        const userId = (req as any).user?.id || 1;
+        const tenantId = (req as any).user?.tenantId || '001';
+
         const result = await pool.query(
-            `INSERT INTO industry_sectors (code, name, description, active)
-       VALUES ($1, $2, $3, $4)
+            `INSERT INTO industry_sectors (code, name, description, active, "_tenantId", created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-            [code, validatedData.name, validatedData.description, validatedData.active]
+            [code, validatedData.name, validatedData.description || '', validatedData.active !== false, tenantId, userId, userId]
         );
 
         res.status(201).json(result.rows[0]);
@@ -85,12 +88,14 @@ router.put('/:id', async (req: Request, res: Response) => {
         // Convert code to uppercase
         const code = validatedData.code.toUpperCase();
 
+        const userId = (req as any).user?.id || 1;
+
         const result = await pool.query(
             `UPDATE industry_sectors
-       SET code = $1, name = $2, description = $3, active = $4, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $5
+       SET code = $1, name = $2, description = $3, active = $4, updated_at = CURRENT_TIMESTAMP, updated_by = $5
+       WHERE id = $6
        RETURNING *`,
-            [code, validatedData.name, validatedData.description, validatedData.active, id]
+            [code, validatedData.name, validatedData.description || '', validatedData.active !== false, userId, id]
         );
 
         if (result.rows.length === 0) {
@@ -117,10 +122,13 @@ router.put('/:id', async (req: Request, res: Response) => {
 router.delete('/:id', async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
+        const userId = (req as any).user?.id || 1;
 
         const result = await pool.query(
-            'DELETE FROM industry_sectors WHERE id = $1 RETURNING *',
-            [id]
+            `UPDATE industry_sectors 
+             SET active = false, "_deletedAt" = CURRENT_TIMESTAMP, updated_by = $1, updated_at = CURRENT_TIMESTAMP 
+             WHERE id = $2 RETURNING *`,
+            [userId, id]
         );
 
         if (result.rows.length === 0) {
@@ -138,13 +146,14 @@ router.delete('/:id', async (req: Request, res: Response) => {
 router.put('/:id/deactivate', async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
+        const userId = (req as any).user?.id || 1;
 
         const result = await pool.query(
             `UPDATE industry_sectors
-       SET active = false, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1
+       SET active = false, updated_at = CURRENT_TIMESTAMP, updated_by = $1
+       WHERE id = $2
        RETURNING *`,
-            [id]
+            [userId, id]
         );
 
         if (result.rows.length === 0) {

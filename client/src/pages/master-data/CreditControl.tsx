@@ -20,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialog } from "@/components/ui/alert-dialog";
-import { PlusCircle, Edit, Trash2, CircleDollarSign, RefreshCw, ShieldCheck, ArrowLeft } from "lucide-react";
+import { PlusCircle, Edit, Trash2, CircleDollarSign, RefreshCw, ShieldCheck, ArrowLeft, Search, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
 
@@ -49,6 +49,13 @@ interface CreditControl {
   isActive: boolean;
   notes?: string;
   companyCode?: CompanyCode;
+  // Audit trail fields
+  _tenantId?: string | null;
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  _deletedAt?: string | null;
 }
 
 // Validation schema for the form
@@ -78,6 +85,8 @@ export default function CreditControl() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [editingCreditControl, setEditingCreditControl] = useState<CreditControl | null>(null);
   const [deletingCreditControl, setDeletingCreditControl] = useState<CreditControl | null>(null);
+  const [viewDetailsCreditControl, setViewDetailsCreditControl] = useState<CreditControl | null>(null);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
 
   // Forms
   const addForm = useForm<z.infer<typeof creditControlFormSchema>>({
@@ -159,7 +168,7 @@ export default function CreditControl() {
 
   // Debug logging
   console.log('Credit Control Debug:', { creditControls, isLoading, error });
-  
+
   // Show error if there is one
   if (error) {
     console.error('Credit Control Error:', error);
@@ -172,7 +181,7 @@ export default function CreditControl() {
 
   // Mutations
   const addCreditControlMutation = useMutation({
-    mutationFn: (data: z.infer<typeof creditControlFormSchema>) => 
+    mutationFn: (data: z.infer<typeof creditControlFormSchema>) =>
       apiRequest('/api/master-data/credit-control', {
         method: 'POST',
         body: JSON.stringify(data)
@@ -197,7 +206,7 @@ export default function CreditControl() {
   });
 
   const updateCreditControlMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: z.infer<typeof creditControlFormSchema> }) => 
+    mutationFn: ({ id, data }: { id: number; data: z.infer<typeof creditControlFormSchema> }) =>
       apiRequest(`/api/master-data/credit-control/${id}`, {
         method: 'PUT',
         body: JSON.stringify(data)
@@ -292,8 +301,8 @@ export default function CreditControl() {
             </p>
           </div>
         </div>
-        <Button 
-          variant="default" 
+        <Button
+          variant="default"
           onClick={() => setIsAddDialogOpen(true)}
           className="space-x-2"
         >
@@ -307,38 +316,41 @@ export default function CreditControl() {
           <p className="text-red-800">Error loading credit control data: {error.message}</p>
         </div>
       )}
-      
+
       <Tabs defaultValue="all" className="w-full">
         <TabsList className="mb-4">
           <TabsTrigger value="all">All Areas</TabsTrigger>
           <TabsTrigger value="active">Active</TabsTrigger>
           <TabsTrigger value="high-risk">High Risk</TabsTrigger>
         </TabsList>
-        
+
         <TabsContent value="all">
-          <CreditControlTable 
+          <CreditControlTable
             creditControls={creditControls as CreditControl[]}
             isLoading={isLoading}
             onEdit={openEditDialog}
             onDelete={openDeleteDialog}
+            onView={(cc) => { setViewDetailsCreditControl(cc); setAdminDataOpen(false); }}
           />
         </TabsContent>
-        
+
         <TabsContent value="active">
-          <CreditControlTable 
+          <CreditControlTable
             creditControls={(creditControls as CreditControl[]).filter(area => area.isActive)}
             isLoading={isLoading}
             onEdit={openEditDialog}
             onDelete={openDeleteDialog}
+            onView={(cc) => { setViewDetailsCreditControl(cc); setAdminDataOpen(false); }}
           />
         </TabsContent>
-        
+
         <TabsContent value="high-risk">
-          <CreditControlTable 
+          <CreditControlTable
             creditControls={(creditControls as CreditControl[]).filter(area => area.creditCheckingGroup === 'high_risk')}
             isLoading={isLoading}
             onEdit={openEditDialog}
             onDelete={openDeleteDialog}
+            onView={(cc) => { setViewDetailsCreditControl(cc); setAdminDataOpen(false); }}
           />
         </TabsContent>
       </Tabs>
@@ -474,7 +486,7 @@ export default function CreditControl() {
                   )}
                 />
               </div>
-              
+
               <div className="grid grid-cols-3 gap-4">
                 <FormField
                   control={addForm.control}
@@ -566,7 +578,7 @@ export default function CreditControl() {
                   )}
                 />
               </div>
-              
+
               <div className="grid grid-cols-2 gap-4">
                 <FormField
                   control={addForm.control}
@@ -612,7 +624,7 @@ export default function CreditControl() {
                   )}
                 />
               </div>
-              
+
               <FormField
                 control={addForm.control}
                 name="description"
@@ -620,17 +632,17 @@ export default function CreditControl() {
                   <FormItem>
                     <FormLabel>Description</FormLabel>
                     <FormControl>
-                      <Textarea 
-                        placeholder="Detailed description of the credit control area" 
-                        className="resize-none" 
-                        {...field} 
+                      <Textarea
+                        placeholder="Detailed description of the credit control area"
+                        className="resize-none"
+                        {...field}
                       />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={addForm.control}
                 name="notes"
@@ -638,17 +650,17 @@ export default function CreditControl() {
                   <FormItem>
                     <FormLabel>Notes</FormLabel>
                     <FormControl>
-                      <Textarea 
-                        placeholder="Additional information about this credit control area" 
-                        className="resize-none" 
-                        {...field} 
+                      <Textarea
+                        placeholder="Additional information about this credit control area"
+                        className="resize-none"
+                        {...field}
                       />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={addForm.control}
                 name="isActive"
@@ -669,7 +681,7 @@ export default function CreditControl() {
                   </FormItem>
                 )}
               />
-              
+
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>
                   Cancel
@@ -793,7 +805,7 @@ export default function CreditControl() {
                   )}
                 />
               </div>
-              
+
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)}>
                   Cancel
@@ -829,6 +841,131 @@ export default function CreditControl() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={!!viewDetailsCreditControl} onOpenChange={(open) => !open && setViewDetailsCreditControl(null)}>
+        <DialogContent className="sm:max-w-[700px]">
+          <DialogHeader>
+            <DialogTitle>Credit Control Area Details</DialogTitle>
+          </DialogHeader>
+          {viewDetailsCreditControl && (
+            <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto pr-2">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Code</h4>
+                  <p>{viewDetailsCreditControl.code}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Name</h4>
+                  <p>{viewDetailsCreditControl.name}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Company Code</h4>
+                  <p>{viewDetailsCreditControl.companyCode?.code} - {viewDetailsCreditControl.companyCode?.name}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Status</h4>
+                  <p>
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewDetailsCreditControl.isActive
+                          ? "bg-green-100 text-green-800"
+                          : "bg-gray-100 text-gray-800"
+                        }`}
+                    >
+                      {viewDetailsCreditControl.isActive ? "Active" : "Inactive"}
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4 border-t pt-4">
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Credit Group</h4>
+                  <p className="capitalize">{viewDetailsCreditControl.creditCheckingGroup?.replace(/_/g, ' ') || 'None'}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Period (Days)</h4>
+                  <p>{viewDetailsCreditControl.creditPeriod}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Grace Percentage</h4>
+                  <p>{viewDetailsCreditControl.gracePercentage}%</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Currency</h4>
+                  <p>{viewDetailsCreditControl.currency}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Review Frequency</h4>
+                  <p className="capitalize">{viewDetailsCreditControl.reviewFrequency}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Approver</h4>
+                  <p>{viewDetailsCreditControl.creditApprover || "—"}</p>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-medium text-sm text-gray-500">Description</h4>
+                <p>{viewDetailsCreditControl.description || "—"}</p>
+              </div>
+
+              <div>
+                <h4 className="font-medium text-sm text-gray-500">Blocking Reason</h4>
+                <p>{viewDetailsCreditControl.blockingReason ? viewDetailsCreditControl.blockingReason.replace(/_/g, ' ') : "—"}</p>
+              </div>
+
+              {viewDetailsCreditControl.notes && (
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Notes</h4>
+                  <p className="whitespace-pre-wrap">{viewDetailsCreditControl.notes}</p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Created At</h4>
+                  <p>{viewDetailsCreditControl.createdAt ? new Date(viewDetailsCreditControl.createdAt).toLocaleString() : "—"}</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-sm text-gray-500">Updated At</h4>
+                  <p>{viewDetailsCreditControl.updatedAt ? new Date(viewDetailsCreditControl.updatedAt).toLocaleString() : "—"}</p>
+                </div>
+              </div>
+
+              {/* Collapsible Administrative Data */}
+              <div className="border-t pt-3">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                >
+                  {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  <Info className="h-3 w-3" />
+                  Administrative Data
+                </button>
+                {adminDataOpen && (
+                  <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                    <div><dt className="font-medium inline">Created By (ID): </dt><dd className="inline">{viewDetailsCreditControl.createdBy ?? "—"}</dd></div>
+                    <div><dt className="font-medium inline">Updated By (ID): </dt><dd className="inline">{viewDetailsCreditControl.updatedBy ?? "—"}</dd></div>
+                    <div><dt className="font-medium inline">Tenant ID: </dt><dd className="inline">{viewDetailsCreditControl._tenantId ?? "—"}</dd></div>
+                  </dl>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewDetailsCreditControl(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -838,16 +975,18 @@ function CreditControlTable({
   creditControls,
   isLoading,
   onEdit,
-  onDelete
+  onDelete,
+  onView
 }: {
   creditControls: CreditControl[];
   isLoading: boolean;
   onEdit: (creditControl: CreditControl) => void;
   onDelete: (creditControl: CreditControl) => void;
+  onView: (creditControl: CreditControl) => void;
 }) {
   // Debug logging
   console.log('CreditControlTable Debug:', { creditControls, isLoading, creditControlsLength: creditControls?.length });
-  
+
   if (isLoading) {
     return (
       <Card>
@@ -919,6 +1058,13 @@ function CreditControlTable({
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onView(creditControl)}
+                    >
+                      <Search className="h-4 w-4" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"

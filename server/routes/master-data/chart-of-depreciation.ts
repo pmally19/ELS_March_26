@@ -1,7 +1,7 @@
 import { Request, Response, Router } from "express";
 import { pool } from "../../db";
-import { 
-  insertChartOfDepreciationSchema, 
+import {
+  insertChartOfDepreciationSchema,
   updateChartOfDepreciationSchema,
   depreciationMethodValues,
   baseMethodValues,
@@ -15,7 +15,7 @@ const router = Router();
 router.get("/", async (req: Request, res: Response) => {
   try {
     const { company_code_id, active, fiscal_year_variant_id } = req.query;
-    
+
     let query = `
       SELECT 
         cod.id,
@@ -42,6 +42,7 @@ router.get("/", async (req: Request, res: Response) => {
         cod.updated_at,
         cod.created_by,
         cod.updated_by,
+        cod."_tenantId" as tenant_id,
         cc.code as company_code,
         cc.name as company_name,
         fyv.variant_id as fiscal_year_variant_code,
@@ -51,38 +52,38 @@ router.get("/", async (req: Request, res: Response) => {
       LEFT JOIN fiscal_year_variants fyv ON cod.fiscal_year_variant_id = fyv.id
       WHERE 1=1
     `;
-    
+
     const params: any[] = [];
     let paramIndex = 1;
-    
+
     if (company_code_id) {
       query += ` AND cod.company_code_id = $${paramIndex}`;
       params.push(parseInt(company_code_id as string));
       paramIndex++;
     }
-    
+
     if (fiscal_year_variant_id) {
       query += ` AND cod.fiscal_year_variant_id = $${paramIndex}`;
       params.push(parseInt(fiscal_year_variant_id as string));
       paramIndex++;
     }
-    
+
     if (active !== undefined) {
       query += ` AND cod.is_active = $${paramIndex}`;
       params.push(active === 'true');
       paramIndex++;
     }
-    
+
     query += " ORDER BY cod.code";
-    
+
     const result = await pool.query(query, params);
-    
+
     return res.status(200).json(result.rows);
   } catch (error: any) {
     console.error("Error fetching chart of depreciation:", error);
-    return res.status(500).json({ 
-      message: "Failed to fetch chart of depreciation", 
-      error: error.message || "Unknown error" 
+    return res.status(500).json({
+      message: "Failed to fetch chart of depreciation",
+      error: error.message || "Unknown error"
     });
   }
 });
@@ -104,7 +105,7 @@ router.get("/:id", async (req: Request, res: Response) => {
     if (isNaN(id)) {
       return res.status(400).json({ message: "Invalid ID format" });
     }
-    
+
     const result = await pool.query(`
       SELECT 
         cod.*,
@@ -117,17 +118,17 @@ router.get("/:id", async (req: Request, res: Response) => {
       LEFT JOIN fiscal_year_variants fyv ON cod.fiscal_year_variant_id = fyv.id
       WHERE cod.id = $1
     `, [id]);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Chart of depreciation not found" });
     }
-    
+
     return res.status(200).json(result.rows[0]);
   } catch (error: any) {
     console.error("Error fetching chart of depreciation:", error);
-    return res.status(500).json({ 
-      message: "Failed to fetch chart of depreciation", 
-      error: error.message || "Unknown error" 
+    return res.status(500).json({
+      message: "Failed to fetch chart of depreciation",
+      error: error.message || "Unknown error"
     });
   }
 });
@@ -151,7 +152,7 @@ router.post("/", async (req: Request, res: Response) => {
       baseMethod: normalizeBaseMethod(req.body.baseMethod),
       depreciationCalculation: normalizeDepCalculation(req.body.depreciationCalculation),
     });
-    
+
     // Check if code already exists
     const existingCode = await pool.query(
       "SELECT id FROM chart_of_depreciation WHERE code = $1",
@@ -160,13 +161,13 @@ router.post("/", async (req: Request, res: Response) => {
     if (existingCode.rows.length > 0) {
       return res.status(409).json({ message: "Chart of depreciation code already exists" });
     }
-    
+
     // Verify company code exists
     const companyCheck = await pool.query("SELECT id FROM company_codes WHERE id = $1", [validatedData.companyCodeId]);
     if (companyCheck.rows.length === 0) {
       return res.status(404).json({ message: "Company code not found" });
     }
-    
+
     // Verify fiscal year variant if provided
     if (validatedData.fiscalYearVariantId) {
       const fyvCheck = await pool.query("SELECT id FROM fiscal_year_variants WHERE id = $1", [validatedData.fiscalYearVariantId]);
@@ -174,7 +175,7 @@ router.post("/", async (req: Request, res: Response) => {
         return res.status(404).json({ message: "Fiscal year variant not found" });
       }
     }
-    
+
     // Normalize date strings to datetime format for PostgreSQL
     // If only date (YYYY-MM-DD) is provided, convert to datetime at midnight UTC
     const normalizeDate = (dateStr: string | null | undefined): string | null => {
@@ -184,19 +185,22 @@ router.post("/", async (req: Request, res: Response) => {
       // If only date format, append time component
       return `${dateStr}T00:00:00.000Z`;
     };
-    
+
     const depreciationStartDate = normalizeDate(validatedData.depreciationStartDate);
     const depreciationEndDate = normalizeDate(validatedData.depreciationEndDate);
-    
+
+    const userId = (req as any).user?.id || 1;
+    const tenantId = (req as any).user?.tenantId || '001';
+
     const result = await pool.query(`
       INSERT INTO chart_of_depreciation (
         code, name, description, company_code_id, fiscal_year_variant_id,
         currency, country, depreciation_method, base_method, depreciation_calculation,
         period_control, allow_manual_depreciation, allow_accelerated_depreciation,
         allow_special_depreciation, require_depreciation_key, allow_negative_depreciation,
-        depreciation_start_date, depreciation_end_date, is_active, created_by, updated_by
+        depreciation_start_date, depreciation_end_date, is_active, created_by, updated_by, "_tenantId"
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
       ) RETURNING *
     `, [
       validatedData.code,
@@ -218,10 +222,11 @@ router.post("/", async (req: Request, res: Response) => {
       depreciationStartDate,
       depreciationEndDate,
       validatedData.isActive ?? true,
-      validatedData.createdBy || null,
-      validatedData.updatedBy || null,
+      userId,
+      userId,
+      tenantId,
     ]);
-    
+
     // Fetch with joins for complete response
     const fullResult = await pool.query(`
       SELECT 
@@ -235,7 +240,7 @@ router.post("/", async (req: Request, res: Response) => {
       LEFT JOIN fiscal_year_variants fyv ON cod.fiscal_year_variant_id = fyv.id
       WHERE cod.id = $1
     `, [result.rows[0].id]);
-    
+
     return res.status(201).json(fullResult.rows[0]);
   } catch (error: any) {
     if (error.name === 'ZodError') {
@@ -244,8 +249,8 @@ router.post("/", async (req: Request, res: Response) => {
         message: err.message,
       }));
       console.error("Validation error:", errorDetails);
-      return res.status(400).json({ 
-        message: "Validation error", 
+      return res.status(400).json({
+        message: "Validation error",
         errors: errorDetails
       });
     }
@@ -253,9 +258,9 @@ router.post("/", async (req: Request, res: Response) => {
       return res.status(409).json({ message: "Chart of depreciation code already exists" });
     }
     console.error("Error creating chart of depreciation:", error);
-    return res.status(500).json({ 
-      message: "Failed to create chart of depreciation", 
-      error: error.message || "Unknown error" 
+    return res.status(500).json({
+      message: "Failed to create chart of depreciation",
+      error: error.message || "Unknown error"
     });
   }
 });
@@ -267,15 +272,15 @@ router.put("/:id", async (req: Request, res: Response) => {
     if (isNaN(id)) {
       return res.status(400).json({ message: "Invalid ID format" });
     }
-    
+
     const validatedData = updateChartOfDepreciationSchema.parse(req.body);
-    
+
     // Check if record exists
     const existing = await pool.query("SELECT * FROM chart_of_depreciation WHERE id = $1", [id]);
     if (existing.rows.length === 0) {
       return res.status(404).json({ message: "Chart of depreciation not found" });
     }
-    
+
     // Check if new code conflicts with existing (excluding current record)
     if (validatedData.code && validatedData.code !== existing.rows[0].code) {
       const codeConflict = await pool.query(
@@ -286,7 +291,7 @@ router.put("/:id", async (req: Request, res: Response) => {
         return res.status(409).json({ message: "Chart of depreciation code already exists" });
       }
     }
-    
+
     // Verify company code if provided
     if (validatedData.companyCodeId) {
       const companyCheck = await pool.query("SELECT id FROM company_codes WHERE id = $1", [validatedData.companyCodeId]);
@@ -294,7 +299,7 @@ router.put("/:id", async (req: Request, res: Response) => {
         return res.status(404).json({ message: "Company code not found" });
       }
     }
-    
+
     // Verify fiscal year variant if provided
     if (validatedData.fiscalYearVariantId !== undefined) {
       if (validatedData.fiscalYearVariantId) {
@@ -304,12 +309,12 @@ router.put("/:id", async (req: Request, res: Response) => {
         }
       }
     }
-    
+
     // Build update query dynamically
     const updates: string[] = [];
     const values: any[] = [];
     let paramCount = 1;
-    
+
     if (validatedData.code !== undefined) {
       updates.push(`code = $${paramCount++}`);
       values.push(validatedData.code);
@@ -394,27 +399,28 @@ router.put("/:id", async (req: Request, res: Response) => {
       updates.push(`is_active = $${paramCount++}`);
       values.push(validatedData.isActive);
     }
-    if (validatedData.updatedBy !== undefined) {
-      updates.push(`updated_by = $${paramCount++}`);
-      values.push(validatedData.updatedBy || null);
-    }
-    
+
+    // Always set updated_by from the authenticated user
+    const userId = (req as any).user?.id || 1;
+    updates.push(`updated_by = $${paramCount++}`);
+    values.push(userId);
+
     if (updates.length === 0) {
       return res.status(400).json({ message: "No fields to update" });
     }
-    
+
     updates.push(`updated_at = NOW()`);
     values.push(id);
-    
+
     const query = `
       UPDATE chart_of_depreciation 
       SET ${updates.join(', ')}
       WHERE id = $${paramCount}
       RETURNING *
     `;
-    
+
     await pool.query(query, values);
-    
+
     // Fetch with joins for complete response
     const fullResult = await pool.query(`
       SELECT 
@@ -428,7 +434,7 @@ router.put("/:id", async (req: Request, res: Response) => {
       LEFT JOIN fiscal_year_variants fyv ON cod.fiscal_year_variant_id = fyv.id
       WHERE cod.id = $1
     `, [id]);
-    
+
     return res.status(200).json(fullResult.rows[0]);
   } catch (error: any) {
     if (error.name === 'ZodError') {
@@ -437,8 +443,8 @@ router.put("/:id", async (req: Request, res: Response) => {
         message: err.message,
       }));
       console.error("Validation error:", errorDetails);
-      return res.status(400).json({ 
-        message: "Validation error", 
+      return res.status(400).json({
+        message: "Validation error",
         errors: errorDetails
       });
     }
@@ -446,9 +452,9 @@ router.put("/:id", async (req: Request, res: Response) => {
       return res.status(409).json({ message: "Chart of depreciation code already exists" });
     }
     console.error("Error updating chart of depreciation:", error);
-    return res.status(500).json({ 
-      message: "Failed to update chart of depreciation", 
-      error: error.message || "Unknown error" 
+    return res.status(500).json({
+      message: "Failed to update chart of depreciation",
+      error: error.message || "Unknown error"
     });
   }
 });
@@ -460,22 +466,22 @@ router.delete("/:id", async (req: Request, res: Response) => {
     if (isNaN(id)) {
       return res.status(400).json({ message: "Invalid ID format" });
     }
-    
+
     // Check if chart of depreciation is referenced by other records
     // This would need to check asset master data or depreciation areas if they exist
     // For now, we'll just check if it exists and delete it
-    
+
     const result = await pool.query(
       "DELETE FROM chart_of_depreciation WHERE id = $1 RETURNING id, code, name",
       [id]
     );
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "Chart of depreciation not found" });
     }
-    
-    return res.status(200).json({ 
-      message: "Chart of depreciation deleted successfully", 
+
+    return res.status(200).json({
+      message: "Chart of depreciation deleted successfully",
       deleted: result.rows[0]
     });
   } catch (error: any) {
@@ -483,9 +489,9 @@ router.delete("/:id", async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Cannot delete chart of depreciation. It is referenced by other records." });
     }
     console.error("Error deleting chart of depreciation:", error);
-    return res.status(500).json({ 
-      message: "Failed to delete chart of depreciation", 
-      error: error.message || "Unknown error" 
+    return res.status(500).json({
+      message: "Failed to delete chart of depreciation",
+      error: error.message || "Unknown error"
     });
   }
 });

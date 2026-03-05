@@ -84,6 +84,8 @@ router.post('/', async (req, res) => {
       sales_office_code = '',
       priority = 'Normal',
       notes = '',
+      shipping_condition = '',
+      shipping_point_id = null,
       items = []
     } = req.body;
 
@@ -144,6 +146,8 @@ router.post('/', async (req, res) => {
         tax_amount DECIMAL(15,2) DEFAULT 0,
         shipping_amount DECIMAL(15,2) DEFAULT 0,
         total_amount DECIMAL(15,2) DEFAULT 0,
+        shipping_condition VARCHAR(4),
+        shipping_point_id INTEGER,
         notes TEXT,
         sales_rep VARCHAR(100),
         sales_office_code VARCHAR(4),
@@ -183,14 +187,16 @@ router.post('/', async (req, res) => {
       INSERT INTO sales_orders (
         order_number, customer_name, order_date, delivery_date, status,
         payment_terms, shipping_method, currency, subtotal, tax_amount,
-        shipping_amount, total_amount, notes, sales_rep, priority
+        shipping_amount, total_amount, notes, sales_rep, priority,
+        shipping_condition, shipping_point_id
       ) VALUES (
-        $1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+        $1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
       ) RETURNING id
     `, [
       order_number, customer_name, order_date, delivery_date,
       payment_terms, shipping_method, currency, subtotal, tax_amount,
-      shipping_amount, total_amount, notes, sales_rep, priority
+      shipping_amount, total_amount, notes, sales_rep, priority,
+      shipping_condition, shipping_point_id
     ]);
 
     const order_id = orderResult.rows[0].id;

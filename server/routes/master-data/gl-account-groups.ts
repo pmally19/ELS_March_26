@@ -88,6 +88,9 @@ router.get("/", async (req: Request, res: Response) => {
       isActive: row.is_active,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      createdBy: row.created_by,
+      updatedBy: row.updated_by,
+      tenantId: row["_tenantId"],
     }));
 
     return res.status(200).json(formatted);
@@ -152,6 +155,9 @@ router.get("/:id", async (req: Request, res: Response) => {
       isActive: row.is_active,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      createdBy: row.created_by,
+      updatedBy: row.updated_by,
+      tenantId: row["_tenantId"],
     };
 
     return res.status(200).json(formatted);
@@ -176,15 +182,19 @@ router.post("/", async (req: Request, res: Response) => {
       return res.status(409).json({ message: "GL account group code already exists" });
     }
 
+    const userId = (req as any).user?.id || 1;
+    const tenantId = (req as any).user?.tenantId || '001';
+
     const result = await pool.query(`
       INSERT INTO gl_account_groups (
         code, name, description, account_category, account_subcategory,
         number_range_id,
         account_name_required, description_required, currency_required, tax_settings_required,
         allow_posting, requires_reconciliation, allow_cash_posting,
-        requires_cost_center, requires_profit_center, display_layout, sort_order, is_active
+        requires_cost_center, requires_profit_center, display_layout, sort_order, is_active,
+        created_by, updated_by, "_tenantId"
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
       )
       RETURNING *
     `, [
@@ -206,6 +216,9 @@ router.post("/", async (req: Request, res: Response) => {
       validatedData.displayLayout || null,
       validatedData.sortOrder,
       validatedData.isActive,
+      userId,
+      userId,
+      tenantId,
     ]);
 
     const row = result.rows[0];
@@ -231,6 +244,9 @@ router.post("/", async (req: Request, res: Response) => {
       isActive: row.is_active,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      createdBy: row.created_by,
+      updatedBy: row.updated_by,
+      tenantId: row["_tenantId"],
     };
 
     return res.status(201).json(formatted);
@@ -279,6 +295,8 @@ router.put("/:id", async (req: Request, res: Response) => {
       }
     }
 
+    const userId = (req as any).user?.id || 1;
+
     // Build dynamic update query
     const updates: string[] = [];
     const values: any[] = [];
@@ -297,6 +315,8 @@ router.put("/:id", async (req: Request, res: Response) => {
     }
 
     updates.push(`updated_at = NOW()`);
+    updates.push(`updated_by = $${paramCount++}`);
+    values.push(userId);
     values.push(id);
 
     const query = `
@@ -331,6 +351,9 @@ router.put("/:id", async (req: Request, res: Response) => {
       isActive: row.is_active,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      createdBy: row.created_by,
+      updatedBy: row.updated_by,
+      tenantId: row["_tenantId"],
     };
 
     return res.status(200).json(formatted);

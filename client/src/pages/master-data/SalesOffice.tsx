@@ -70,7 +70,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Link } from "wouter";
-import { ArrowLeft, Download, FileUp } from "lucide-react";
+import { ArrowLeft, Download, FileUp, ChevronRight, ChevronDown, Info } from "lucide-react";
 import SalesOfficeExcelImport from "@/components/master-data/SalesOfficeExcelImport";
 import { useAgentPermissions } from "@/hooks/useAgentPermissions";
 
@@ -88,6 +88,11 @@ interface SalesOffice {
     // In schema: `is_active: ...`. Property name is `is_active`. Result object will have `is_active`.
     createdAt: string;
     updatedAt: string;
+    // Audit fields
+    _tenantId?: string | null;
+    createdBy?: string | null;
+    updatedBy?: string | null;
+    _deletedAt?: string | null;
 }
 
 interface Region {
@@ -124,6 +129,7 @@ export default function SalesOffice() {
     const [searchTerm, setSearchTerm] = useState("");
     const [viewingSalesOffice, setViewingSalesOffice] = useState<SalesOffice | null>(null);
     const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+    const [adminDataOpen, setAdminDataOpen] = useState(false);
 
     const form = useForm<SalesOfficeFormValues>({
         resolver: zodResolver(salesOfficeSchema),
@@ -266,6 +272,7 @@ export default function SalesOffice() {
 
     const handleView = (office: SalesOffice) => {
         setViewingSalesOffice(office);
+        setAdminDataOpen(false);
         setIsViewDialogOpen(true);
     };
 
@@ -431,6 +438,37 @@ export default function SalesOffice() {
                                         </div>
                                     </CardContent>
                                 </Card>
+
+                                <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                                    <div>
+                                        <h4 className="font-medium text-sm text-gray-500">Created At</h4>
+                                        <p>{viewingSalesOffice.createdAt ? new Date(viewingSalesOffice.createdAt).toLocaleString() : "—"}</p>
+                                    </div>
+                                    <div>
+                                        <h4 className="font-medium text-sm text-gray-500">Updated At</h4>
+                                        <p>{viewingSalesOffice.updatedAt ? new Date(viewingSalesOffice.updatedAt).toLocaleString() : "—"}</p>
+                                    </div>
+                                </div>
+
+                                {/* Collapsible Administrative Data */}
+                                <div className="border-t pt-3">
+                                    <button
+                                        type="button"
+                                        className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 focus:outline-none"
+                                        onClick={() => setAdminDataOpen(o => !o)}
+                                    >
+                                        {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                        <Info className="h-3 w-3" />
+                                        Administrative Data
+                                    </button>
+                                    {adminDataOpen && (
+                                        <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                                            <div><dt className="font-medium inline">Created By (ID): </dt><dd className="inline">{viewingSalesOffice.createdBy ?? "—"}</dd></div>
+                                            <div><dt className="font-medium inline">Updated By (ID): </dt><dd className="inline">{viewingSalesOffice.updatedBy ?? "—"}</dd></div>
+                                            <div><dt className="font-medium inline">Tenant ID: </dt><dd className="inline">{viewingSalesOffice._tenantId ?? "—"}</dd></div>
+                                        </dl>
+                                    )}
+                                </div>
                             </div>
 
                             <DialogFooter>

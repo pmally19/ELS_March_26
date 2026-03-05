@@ -64,6 +64,9 @@ async function ensureAssetsTable(): Promise<void> {
     ALTER TABLE asset_master ADD COLUMN IF NOT EXISTS is_auc BOOLEAN DEFAULT false;
     ALTER TABLE asset_master ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
     ALTER TABLE asset_master ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    ALTER TABLE asset_master ADD COLUMN IF NOT EXISTS "_tenantId" CHAR(3) DEFAULT '001';
+    ALTER TABLE asset_master ADD COLUMN IF NOT EXISTS updated_by INTEGER;
+    ALTER TABLE asset_master ADD COLUMN IF NOT EXISTS "_deletedAt" TIMESTAMPTZ;
     DO $$ BEGIN
       IF NOT EXISTS (
         SELECT 1 FROM pg_indexes WHERE tablename = 'asset_master' AND indexname = 'asset_master_asset_number_key'
@@ -110,6 +113,10 @@ router.get("/", async (_req: Request, res: Response) => {
         am.is_active,
         am.created_at,
         am.updated_at,
+        am.created_by,
+        am.updated_by,
+        am."_tenantId" as tenant_id,
+        am."_deletedAt" as deleted_at,
         am.company_code_id,
         am.cost_center_id,
         cc.code as company_code,
@@ -120,7 +127,7 @@ router.get("/", async (_req: Request, res: Response) => {
       LEFT JOIN company_codes cc ON am.company_code_id = cc.id
       LEFT JOIN cost_centers co ON am.cost_center_id = co.id
       LEFT JOIN asset_classes ac ON am.asset_class_id = ac.id
-      WHERE COALESCE(am.is_active, true) = true
+      WHERE COALESCE(am.is_active, true) = true AND am."_deletedAt" IS NULL
       ORDER BY am.id
     `);
     const rows = result.rows.map((r: any) => ({
@@ -146,7 +153,13 @@ router.get("/", async (_req: Request, res: Response) => {
       company_name: r.company_name || null,
       cost_center_code: r.cost_center_code || null,
       cost_center_description: r.cost_center_description || null,
-      active: r.is_active
+      active: r.is_active,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      created_by: r.created_by,
+      updated_by: r.updated_by,
+      tenant_id: r.tenant_id,
+      deleted_at: r.deleted_at
     }));
     return res.json(rows);
   } catch (error: any) {
@@ -163,7 +176,7 @@ router.get("/:id", async (req: Request, res: Response) => {
         am.id, am.asset_number, am.name, am.description, am.asset_class, am.asset_class_id,
         am.acquisition_date, am.acquisition_cost, am.current_value, 
         am.depreciation_method, am.useful_life_years, am.status, am.location, 
-        am.is_active, am.created_at, am.updated_at,
+        am.is_active, am.created_at, am.updated_at, am.created_by, am.updated_by, am."_tenantId" as tenant_id, am."_deletedAt" as deleted_at,
         am.company_code_id, am.cost_center_id,
         cc.code as company_code, cc.name as company_name,
         co.cost_center as cost_center_code, co.description as cost_center_description,
@@ -172,7 +185,7 @@ router.get("/:id", async (req: Request, res: Response) => {
       LEFT JOIN company_codes cc ON am.company_code_id = cc.id
       LEFT JOIN cost_centers co ON am.cost_center_id = co.id
       LEFT JOIN asset_classes ac ON am.asset_class_id = ac.id
-      WHERE am.id = $1`,
+      WHERE am.id = $1 AND am."_deletedAt" IS NULL`,
       [id]
     );
     if (result.rows.length === 0) return res.status(404).json({ message: 'Not found' });
@@ -196,7 +209,13 @@ router.get("/:id", async (req: Request, res: Response) => {
       company_code: r.company_code || null,
       company_name: r.company_name || null,
       cost_center_code: r.cost_center_code || null,
-      cost_center_description: r.cost_center_description || null
+      cost_center_description: r.cost_center_description || null,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      created_by: r.created_by,
+      updated_by: r.updated_by,
+      tenant_id: r.tenant_id,
+      deleted_at: r.deleted_at
     });
   } catch (error: any) {
     console.error("Error fetching asset:", error);
@@ -285,7 +304,7 @@ router.post("/", async (req: Request, res: Response) => {
     // Insert asset - all fields come from request body, no defaults
     const insertResult = await pool.query(
       `INSERT INTO asset_master (
-        asset_number, name, description, asset_class_id, asset_class, acquisition_date, acquisition_cost, current_value, depreciation_method, useful_life_years, status, location, company_code_id, cost_center_id, is_active, active, created_at, updated_at
+        asset_number, name, description, asset_class_id, asset_class, acquisition_date, acquisition_cost, current_value, depreciation_method, useful_life_years, status, location, company_code_id, cost_center_id, is_active, active, created_at, updated_at, created_by, updated_by, "_tenantId"
       )
       VALUES (
         $1,
@@ -305,7 +324,10 @@ router.post("/", async (req: Request, res: Response) => {
         true,
         true,
         NOW(),
-        NOW()
+        NOW(),
+        $15,
+        $16,
+        $17
       )
       RETURNING *`,
       [
@@ -322,7 +344,10 @@ router.post("/", async (req: Request, res: Response) => {
         normalizedStatus,
         normalizedLocation,
         company_code_id ? parseInt(String(company_code_id)) : null,
-        cost_center_id ? parseInt(String(cost_center_id)) : null
+        cost_center_id ? parseInt(String(cost_center_id)) : null,
+        (req as any).user?.id || 1,
+        (req as any).user?.id || 1,
+        (req as any).user?.tenantId || '001'
       ]
     );
 
@@ -478,6 +503,10 @@ router.put("/:id", async (req: Request, res: Response) => {
         add('is_active', active);
       }
     }
+
+    // Add audit trail explicitly
+    params.push((req as any).user?.id || 1);
+    updates.push(`updated_by = $${params.length}`);
     updates.push('updated_at = NOW()');
 
     // If no fields to update (only updated_at), just return current record
@@ -651,6 +680,9 @@ router.patch("/:id", async (req: Request, res: Response) => {
         add('is_active', active);
       }
     }
+    // Add audit trail explicitly
+    params.push((req as any).user?.id || 1);
+    updates.push(`updated_by = $${params.length}`);
     updates.push('updated_at = NOW()');
 
     // If no fields to update (only updated_at), just return current record
@@ -705,7 +737,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
   try {
     ensureActivePool();
     const { id } = req.params;
-    const result = await pool.query(`UPDATE asset_master SET is_active = false, active = false, updated_at = NOW() WHERE id = $1 RETURNING id`, [id]);
+    const result = await pool.query(`UPDATE asset_master SET "_deletedAt" = NOW(), updated_by = $2 WHERE id = $1 AND "_deletedAt" IS NULL RETURNING id`, [id, (req as any).user?.id || 1]);
     if (result.rows.length === 0) return res.status(404).json({ message: 'Not found' });
     return res.json({ message: 'Asset deactivated' });
   } catch (error: any) {

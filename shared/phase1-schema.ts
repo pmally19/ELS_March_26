@@ -21,9 +21,9 @@ const commonFields = {
 
 // Status enum for approval workflows
 export const approvalStatusEnum = pgEnum('approval_status', [
-  'draft', 
-  'pending_approval', 
-  'approved', 
+  'draft',
+  'pending_approval',
+  'approved',
   'rejected',
   'superseded'
 ]);
@@ -91,6 +91,8 @@ export const uom = pgTable("uom", {
   description: text("description"),
   category: text("category").notNull(), // weight, volume, length, etc.
   isBase: boolean("is_base").default(false).notNull(), // is this a base unit?
+  _tenantId: text("_tenantId").default("001"),
+  _deletedAt: timestamp("_deletedAt", { withTimezone: true }),
 });
 
 export const uomRelations = relations(uom, ({ one, many }) => ({
@@ -269,7 +271,7 @@ export const productRelations = relations(products, ({ one, many }) => ({
     references: [uom.id],
     relationName: "productUom",
   }),
-  weightUom: one(uom, { 
+  weightUom: one(uom, {
     fields: [products.weightUomId],
     references: [uom.id],
     relationName: "weightUom",
@@ -615,44 +617,44 @@ export const glAccountRelations = relations(glAccounts, ({ one, many }) => ({
 }));
 
 // Insert Schemas
-export const insertUserSchema = createInsertSchema(users).omit({ 
-  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true, lastLogin: true 
+export const insertUserSchema = createInsertSchema(users).omit({
+  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true, lastLogin: true
 });
 
-export const insertCategorySchema = createInsertSchema(categories).omit({ 
-  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true, path: true 
+export const insertCategorySchema = createInsertSchema(categories).omit({
+  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true, path: true
 });
 
-export const insertProductSchema = createInsertSchema(products).omit({ 
-  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true 
+export const insertProductSchema = createInsertSchema(products).omit({
+  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true
 });
 
-export const insertMaterialSchema = createInsertSchema(materials).omit({ 
-  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true 
+export const insertMaterialSchema = createInsertSchema(materials).omit({
+  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true
 });
 
-export const insertCustomerSchema = createInsertSchema(customers).omit({ 
-  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true 
+export const insertCustomerSchema = createInsertSchema(customers).omit({
+  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true
 });
 
-export const insertVendorSchema = createInsertSchema(vendors).omit({ 
-  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true 
+export const insertVendorSchema = createInsertSchema(vendors).omit({
+  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true
 });
 
-export const insertUomSchema = createInsertSchema(uom).omit({ 
-  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true 
+export const insertUomSchema = createInsertSchema(uom).omit({
+  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true
 });
 
-export const insertLocationSchema = createInsertSchema(locations).omit({ 
-  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true 
+export const insertLocationSchema = createInsertSchema(locations).omit({
+  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true
 });
 
-export const insertBomSchema = createInsertSchema(bom).omit({ 
-  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true 
+export const insertBomSchema = createInsertSchema(bom).omit({
+  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true
 });
 
-export const insertGlAccountSchema = createInsertSchema(glAccounts).omit({ 
-  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true, path: true 
+export const insertGlAccountSchema = createInsertSchema(glAccounts).omit({
+  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true, path: true
 });
 
 // Types

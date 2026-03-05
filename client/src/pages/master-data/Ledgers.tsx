@@ -1,32 +1,33 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/apiClient";
-import { 
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardHeader, 
-  CardTitle 
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
 } from "@/components/ui/card";
-import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogDescription, 
-  DialogFooter, 
-  DialogHeader, 
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
   DialogTitle,
   DialogTrigger
 } from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
 import {
   Form,
   FormControl,
@@ -66,7 +67,7 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Plus, Search, Edit, Trash2, ArrowLeft, RefreshCw, BookOpen, MoreHorizontal } from "lucide-react";
+import { Plus, Search, Edit, Trash2, ArrowLeft, RefreshCw, BookOpen, MoreHorizontal, Eye } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 
@@ -111,11 +112,14 @@ type Ledger = {
   sort_key?: string;
   is_active: boolean;
   is_default: boolean;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: number;
+  updated_by?: number;
+  tenant_id?: string;
 };
 
-  // Fiscal Year Variant type
+// Fiscal Year Variant type
 type FiscalYearVariant = {
   id: number;
   variant_id: string;
@@ -176,6 +180,8 @@ export default function Ledgers() {
   const [searchQuery, setSearchQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [editingLedger, setEditingLedger] = useState<Ledger | null>(null);
+  const [viewingLedger, setViewingLedger] = useState<Ledger | null>(null);
+  const [showAdminData, setShowAdminData] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -188,7 +194,7 @@ export default function Ledgers() {
         console.log("Ledgers fetched:", response?.length || 0, "ledgers");
         // Normalize snake_case to camelCase and convert empty strings to undefined
         const normalizeValue = (val: any) => (val && val !== "") ? val : undefined;
-        
+
         const normalized = (response || []).map((item: any) => ({
           id: item.id,
           code: item.code,
@@ -231,6 +237,9 @@ export default function Ledgers() {
           is_default: item.is_default !== undefined ? item.is_default : item.isDefault,
           created_at: item.created_at || item.createdAt,
           updated_at: item.updated_at || item.updatedAt,
+          created_by: item.created_by || item.createdBy,
+          updated_by: item.updated_by || item.updatedBy,
+          tenant_id: item.tenant_id || item.tenantId,
         }));
         return normalized;
       } catch (error) {
@@ -394,10 +403,10 @@ export default function Ledgers() {
     },
     onError: (error: any) => {
       const errorMessage = error?.response?.data?.error || error?.message || "Failed to create ledger";
-      toast({ 
-        title: "Error", 
-        description: errorMessage, 
-        variant: "destructive" 
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive"
       });
     },
   });
@@ -407,7 +416,7 @@ export default function Ledgers() {
     mutationFn: ({ id, ...data }: { id: number } & z.infer<typeof ledgerSchema>) => {
       // Convert snake_case to camelCase for backend
       const payload: any = {};
-      
+
       // Map all fields from snake_case to camelCase
       if (data.code !== undefined) payload.code = data.code;
       if (data.name !== undefined) payload.name = data.name;
@@ -441,7 +450,7 @@ export default function Ledgers() {
       if (data.sort_key !== undefined) payload.sortKey = data.sort_key || undefined;
       if (data.is_active !== undefined) payload.isActive = data.is_active;
       if (data.is_default !== undefined) payload.isDefault = data.is_default;
-      
+
       console.log('Updating ledger:', { id, payload, companyCodeId: payload.companyCodeId });
       return apiPut(`/api/master-data/ledgers/${id}`, payload);
     },
@@ -454,10 +463,10 @@ export default function Ledgers() {
     },
     onError: (error: any) => {
       const errorMessage = error?.response?.data?.error || error?.message || "Failed to update ledger";
-      toast({ 
-        title: "Error", 
-        description: errorMessage, 
-        variant: "destructive" 
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive"
       });
     },
   });
@@ -471,10 +480,10 @@ export default function Ledgers() {
     },
     onError: (error: any) => {
       const errorMessage = error?.response?.data?.error || error?.message || "Failed to delete ledger";
-      toast({ 
-        title: "Error", 
-        description: errorMessage, 
-        variant: "destructive" 
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive"
       });
     },
   });
@@ -500,7 +509,7 @@ export default function Ledgers() {
       company_code_id: (data.company_code_id === 0 || data.company_code_id === undefined || data.company_code_id === null) ? null : (typeof data.company_code_id === 'number' ? data.company_code_id : parseInt(data.company_code_id)),
       sort_key: (data.sort_key === "" || !data.sort_key) ? undefined : data.sort_key,
     };
-    
+
     // Validate the cleaned data
     const validationResult = ledgerSchema.safeParse(cleanedData);
     if (!validationResult.success) {
@@ -512,7 +521,7 @@ export default function Ledgers() {
       });
       return;
     }
-    
+
     if (editingLedger) {
       // Ensure company_code_id is always included when editing (even if null)
       const updateData = {
@@ -687,8 +696,8 @@ export default function Ledgers() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Category</FormLabel>
-                          <Select 
-                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : value)} 
+                          <Select
+                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : value)}
                             value={field.value || "NONE"}
                           >
                             <FormControl>
@@ -717,8 +726,8 @@ export default function Ledgers() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Company Code</FormLabel>
-                          <Select 
-                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : parseInt(value))} 
+                          <Select
+                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : parseInt(value))}
                             value={field.value ? field.value.toString() : "NONE"}
                           >
                             <FormControl>
@@ -746,8 +755,8 @@ export default function Ledgers() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Fiscal Year Variant</FormLabel>
-                          <Select 
-                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : parseInt(value))} 
+                          <Select
+                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : parseInt(value))}
                             value={field.value?.toString() || "NONE"}
                           >
                             <FormControl>
@@ -779,9 +788,9 @@ export default function Ledgers() {
                         <FormItem>
                           <FormLabel>Display Order</FormLabel>
                           <FormControl>
-                            <Input 
-                              type="number" 
-                              {...field} 
+                            <Input
+                              type="number"
+                              {...field}
                               onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
                               value={field.value}
                             />
@@ -831,8 +840,8 @@ export default function Ledgers() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Accounting Principle</FormLabel>
-                          <Select 
-                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : value)} 
+                          <Select
+                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : value)}
                             value={field.value || "NONE"}
                           >
                             <FormControl>
@@ -862,8 +871,8 @@ export default function Ledgers() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Chart of Accounts</FormLabel>
-                          <Select 
-                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : parseInt(value))} 
+                          <Select
+                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : parseInt(value))}
                             value={field.value ? field.value.toString() : "NONE"}
                           >
                             <FormControl>
@@ -894,8 +903,8 @@ export default function Ledgers() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Base Ledger (for Extension Ledgers)</FormLabel>
-                          <Select 
-                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : parseInt(value))} 
+                          <Select
+                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : parseInt(value))}
                             value={field.value ? field.value.toString() : "NONE"}
                           >
                             <FormControl>
@@ -923,8 +932,8 @@ export default function Ledgers() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Extension Type</FormLabel>
-                          <Select 
-                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : value)} 
+                          <Select
+                            onValueChange={(value) => field.onChange(value === "NONE" ? undefined : value)}
                             value={field.value || "NONE"}
                           >
                             <FormControl>
@@ -1157,9 +1166,9 @@ export default function Ledgers() {
                   </div>
 
                   <DialogFooter>
-                    <Button 
-                      type="button" 
-                      variant="outline" 
+                    <Button
+                      type="button"
+                      variant="outline"
                       onClick={() => {
                         setOpen(false);
                         setEditingLedger(null);
@@ -1169,8 +1178,8 @@ export default function Ledgers() {
                     >
                       Cancel
                     </Button>
-                    <Button 
-                      type="submit" 
+                    <Button
+                      type="submit"
                       disabled={createMutation.isPending || updateMutation.isPending}
                     >
                       {createMutation.isPending || updateMutation.isPending ? (
@@ -1312,13 +1321,17 @@ export default function Ledgers() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => setViewingLedger(ledger)}>
+                            <Eye className="h-4 w-4 mr-2" />
+                            View Details
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleEdit(ledger)}>
                             <Edit className="h-4 w-4 mr-2" />
                             Edit
                           </DropdownMenuItem>
                           <AlertDialog>
                             <AlertDialogTrigger asChild>
-                              <DropdownMenuItem 
+                              <DropdownMenuItem
                                 onSelect={(e) => e.preventDefault()}
                                 className="text-destructive"
                               >
@@ -1354,6 +1367,134 @@ export default function Ledgers() {
           )}
         </CardContent>
       </Card>
+
+      {/* View Ledger Dialog (Read-Only) */}
+      <Dialog open={!!viewingLedger} onOpenChange={(open) => !open && setViewingLedger(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>View Ledger</DialogTitle>
+            <DialogDescription>
+              Read-only view of Ledger {viewingLedger?.code}
+            </DialogDescription>
+          </DialogHeader>
+
+          {viewingLedger && (
+            <div className="space-y-4 pt-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Code</label>
+                  <p className="text-sm mt-1">{viewingLedger.code}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Name</label>
+                  <p className="text-sm mt-1">{viewingLedger.name}</p>
+                </div>
+                <div className="col-span-2">
+                  <label className="text-sm font-medium text-muted-foreground">Description</label>
+                  <p className="text-sm mt-1">{viewingLedger.description || 'N/A'}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Ledger Type</label>
+                  <p className="text-sm mt-1">{viewingLedger.ledger_type}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Category</label>
+                  <p className="text-sm mt-1">{viewingLedger.ledger_category ? viewingLedger.ledger_category.replace(/_/g, " ") : 'N/A'}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Company Code</label>
+                  <p className="text-sm mt-1">{viewingLedger.company_code || 'N/A'}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Fiscal Year Variant</label>
+                  <p className="text-sm mt-1">{viewingLedger.fiscal_year_variant_code ? `${viewingLedger.fiscal_year_variant_code} - ${viewingLedger.fiscal_year_variant_name}` : 'N/A'}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Default Currency</label>
+                  <p className="text-sm mt-1">{viewingLedger.default_currency_code}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Parallel Currency</label>
+                  <p className="text-sm mt-1">{viewingLedger.parallel_currency_code || 'N/A'}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Accounting Principle</label>
+                  <p className="text-sm mt-1">{viewingLedger.accounting_principle || 'N/A'}</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Ledger Group</label>
+                  <p className="text-sm mt-1">{viewingLedger.ledger_group_code || 'N/A'}</p>
+                </div>
+              </div>
+
+              <div className="space-y-2 mt-4">
+                <p className="text-sm font-medium text-muted-foreground mb-2">Flags</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox checked={viewingLedger.allow_postings} disabled />
+                    <label className="text-sm">Allow Postings</label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox checked={viewingLedger.is_consolidation_ledger} disabled />
+                    <label className="text-sm">Consolidation Ledger</label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox checked={viewingLedger.requires_approval} disabled />
+                    <label className="text-sm">Requires Approval</label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox checked={viewingLedger.is_active} disabled />
+                    <label className="text-sm">Active</label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox checked={viewingLedger.is_default} disabled />
+                    <label className="text-sm">Default</label>
+                  </div>
+                </div>
+              </div>
+
+              <Separator className="my-3" />
+              {/* Administrative Data - collapsible */}
+              <div
+                className="cursor-pointer flex justify-between items-center select-none py-1 px-1"
+                onClick={() => setShowAdminData(!showAdminData)}
+              >
+                <p className="font-semibold text-sm text-gray-700">Administrative Data</p>
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ transform: showAdminData ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </div>
+              {showAdminData && (
+                <dl className="grid grid-cols-2 gap-3 px-1 pb-2">
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Created By</dt>
+                    <dd className="text-sm text-gray-900">{(viewingLedger as any)?.created_by ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Updated By</dt>
+                    <dd className="text-sm text-gray-900">{(viewingLedger as any)?.updated_by ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Created At</dt>
+                    <dd className="text-sm text-gray-900">{(viewingLedger as any)?.created_at ? new Date((viewingLedger as any).created_at).toLocaleString() : '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Updated At</dt>
+                    <dd className="text-sm text-gray-900">{(viewingLedger as any)?.updated_at ? new Date((viewingLedger as any).updated_at).toLocaleString() : '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Tenant ID</dt>
+                    <dd className="text-sm text-gray-900">{(viewingLedger as any)?.tenant_id ?? '—'}</dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

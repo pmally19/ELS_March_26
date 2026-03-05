@@ -11,13 +11,18 @@ router.get('/', async (req, res) => {
         const result = await pool.query(`
       SELECT 
         id,
-        payment_term_key,
-        description,
-        cash_discount_days,
-        payment_due_days,
-        cash_discount_percent,
-        created_at
+        "payment_term_key",
+        "description",
+        "cash_discount_days",
+        "payment_due_days",
+        "cash_discount_percent",
+        "created_at",
+        "created_by",
+        "updated_by",
+        "_tenantId",
+        "_deletedAt"
       FROM payment_terms
+      WHERE "_deletedAt" IS NULL
       ORDER BY payment_term_key
     `);
 
@@ -31,7 +36,12 @@ router.get('/', async (req, res) => {
             cashDiscountDays: row.cash_discount_days,
             paymentDueDays: row.payment_due_days,
             cashDiscountPercent: row.cash_discount_percent,
-            createdAt: row.created_at
+            isActive: true,
+            createdAt: row.created_at,
+            createdBy: row.created_by,
+            updatedBy: row.updated_by,
+            tenantId: row._tenantId,
+            deletedAt: row._deletedAt
         }));
 
         res.json(paymentTerms);

@@ -4,6 +4,8 @@
  */
 
 import express from 'express';
+import { ensureActivePool } from '../database.js';
+import { DocumentNumberingService } from '../services/documentNumberingService.js';
 // import { Pool } from '@neondatabase/serverless';
 import pg from 'pg';
 const { Pool } = pg
@@ -202,7 +204,8 @@ router.get('/goods-receipt/:id', async (req, res) => {
 router.post('/goods-receipt', async (req, res) => {
   try {
     const {
-      receipt_number,
+      receipt_number: temp_receipt_number, // We will ignore this and generate our own
+      movement_type_code, // Must accept movement_type_code to determine type
       purchase_order,
       vendor_code,
       plant_code,
@@ -211,6 +214,21 @@ router.post('/goods-receipt', async (req, res) => {
       line_items
     } = req.body;
 
+    // Determine the Document Type and generate the Number Sequence automatically
+    let documentNumber = temp_receipt_number;
+    let documentTypeId = null;
+    try {
+      const generationResult = await DocumentNumberingService.getNextDocumentNumber(
+        movement_type_code || '101',
+        'WE' // WE = Goods Receipt Fallback
+      );
+      documentNumber = generationResult.documentNumber;
+      documentTypeId = generationResult.documentTypeId;
+    } catch (err) {
+      console.error("Number Range Generation Failed", err);
+      return res.status(500).json({ message: "Failed to generate Material Document Number", error: err.message });
+    }
+
     // Calculate totals
     const total_quantity = line_items.reduce((sum, item) => sum + item.quantity, 0);
     const total_amount = line_items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
@@ -218,12 +236,12 @@ router.post('/goods-receipt', async (req, res) => {
     // Insert goods receipt header
     const headerResult = await pool.query(`
       INSERT INTO goods_receipts (
-        receipt_number, purchase_order, vendor_code, plant_code,
+        receipt_number, document_type_id, purchase_order, vendor_code, plant_code,
         receipt_date, delivery_note, total_quantity, total_amount, currency, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING id
     `, [
-      receipt_number, purchase_order, vendor_code, plant_code,
+      documentNumber, documentTypeId, purchase_order, vendor_code, plant_code,
       receipt_date, delivery_note, total_quantity, total_amount, 'USD', 'Received'
     ]);
 
@@ -245,7 +263,7 @@ router.post('/goods-receipt', async (req, res) => {
     res.status(201).json({
       message: 'Goods receipt posted successfully',
       receipt_id: receipt_id,
-      receipt_number: receipt_number
+      receipt_number: documentNumber
     });
   } catch (error) {
     console.error('Error posting goods receipt:', error);

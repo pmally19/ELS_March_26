@@ -177,6 +177,8 @@ export const creditControlAreas = pgTable("credit_control_areas", {
   currency: text("currency").default("USD"),
   creditApprover: text("credit_approver"), // responsible person
   status: text("status").default("active").notNull(),
+  _tenantId: text("_tenantId").default("001"),
+  _deletedAt: timestamp("_deletedAt", { withTimezone: true }),
 });
 
 export const creditControlAreaRelations = relations(creditControlAreas, ({ one }) => ({

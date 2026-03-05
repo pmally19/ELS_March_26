@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Search, Plus, Edit, Trash2, ChevronDown, ChevronRight, X, ArrowLeft } from "lucide-react";
+import { Search, Plus, Edit, Trash2, ChevronDown, ChevronRight, X, ArrowLeft, Eye, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -36,6 +36,12 @@ interface RoutingMaster {
   valid_to?: string;
   is_active: boolean;
   operations_count?: number;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: number | null;
+  updated_by?: number | null;
+  _tenantId?: string | null;
+  _deletedAt?: string | null;
 }
 
 interface RoutingOperation {
@@ -70,7 +76,7 @@ export default function RoutingManagement() {
   const [expandedOperations, setExpandedOperations] = useState<Set<number>>(new Set());
   const [selectedRoutingForOperations, setSelectedRoutingForOperations] = useState<number | null>(null);
   const [selectedOperationForComponents, setSelectedOperationForComponents] = useState<number | null>(null);
-  
+
   // Dialog states
   const [showRoutingDialog, setShowRoutingDialog] = useState(false);
   const [showOperationDialog, setShowOperationDialog] = useState(false);
@@ -78,7 +84,10 @@ export default function RoutingManagement() {
   const [editingRouting, setEditingRouting] = useState<RoutingMaster | null>(null);
   const [editingOperation, setEditingOperation] = useState<RoutingOperation | null>(null);
   const [editingComponent, setEditingComponent] = useState<RoutingComponent | null>(null);
-  
+  const [viewingRouting, setViewingRouting] = useState<RoutingMaster | null>(null);
+  const [showViewDialog, setShowViewDialog] = useState(false);
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
+
   // Form states
   const [routingForm, setRoutingForm] = useState({
     materialCode: "",
@@ -92,7 +101,7 @@ export default function RoutingManagement() {
     validTo: "",
     isActive: true,
   });
-  
+
   const [operationForm, setOperationForm] = useState({
     operationNumber: "",
     operationDescription: "",
@@ -103,14 +112,14 @@ export default function RoutingManagement() {
     sequenceOrder: 10,
     isActive: true,
   });
-  
+
   const [componentForm, setComponentForm] = useState({
     materialCode: "",
     quantity: "1",
     unit: "PC",
     isActive: true,
   });
-  
+
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -232,17 +241,17 @@ export default function RoutingManagement() {
   // Create/Update Routing Master
   const createRoutingMutation = useMutation({
     mutationFn: async (data: any) => {
-      const url = editingRouting 
+      const url = editingRouting
         ? `/api/master-data/routing/${editingRouting.id}`
         : "/api/master-data/routing";
       const method = editingRouting ? "PUT" : "POST";
-      
+
       const response = await apiRequest(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      
+
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.error || "Failed to save routing");
@@ -282,23 +291,23 @@ export default function RoutingManagement() {
   // Create/Update Operation
   const createOperationMutation = useMutation({
     mutationFn: async (data: any) => {
-      const routingMasterId = editingOperation 
+      const routingMasterId = editingOperation
         ? operations.find(op => op.id === editingOperation.id)?.routing_master_id
         : selectedRoutingForOperations;
-      
+
       if (!routingMasterId) throw new Error("Routing master ID is required");
-      
+
       const url = editingOperation
         ? `/api/master-data/routing/operations/${editingOperation.id}`
         : `/api/master-data/routing/${routingMasterId}/operations`;
       const method = editingOperation ? "PUT" : "POST";
-      
+
       const response = await apiRequest(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      
+
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.error || "Failed to save operation");
@@ -339,20 +348,20 @@ export default function RoutingManagement() {
       const operationId = editingComponent
         ? editingComponent.routing_operation_id
         : selectedOperationForComponents;
-      
+
       if (!operationId) throw new Error("Operation ID is required");
-      
+
       const url = editingComponent
         ? `/api/master-data/routing/components/${editingComponent.id}`
         : `/api/master-data/routing/operations/${operationId}/components`;
       const method = editingComponent ? "PUT" : "POST";
-      
+
       const response = await apiRequest(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      
+
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.error || "Failed to save component");
@@ -678,6 +687,16 @@ export default function RoutingManagement() {
                           <Button
                             variant="outline"
                             size="sm"
+                            onClick={() => {
+                              setViewingRouting(routing);
+                              setShowViewDialog(true);
+                            }}
+                          >
+                            <Eye className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => handleEditRouting(routing)}
                           >
                             <Edit className="h-3 w-3" />
@@ -826,6 +845,106 @@ export default function RoutingManagement() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* View Routing Details Dialog */}
+      <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
+        <DialogContent className="sm:max-w-[600px]">
+          {viewingRouting && (
+            <>
+              <DialogHeader>
+                <div className="flex items-center justify-between">
+                  <DialogTitle>Routing Details</DialogTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setShowViewDialog(false);
+                      handleEditRouting(viewingRouting);
+                    }}
+                  >
+                    <Edit className="h-3 w-3 mr-1" />
+                    Edit
+                  </Button>
+                </div>
+              </DialogHeader>
+
+              <div className="space-y-6">
+                <div className="bg-muted/50 p-4 rounded-lg flex items-start justify-between">
+                  <div>
+                    <h3 className="font-semibold text-lg">{viewingRouting.routing_group_code}</h3>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border bg-white">{viewingRouting.material_code}</span>
+                      <Badge variant={viewingRouting.is_active ? "default" : "secondary"}>
+                        {viewingRouting.status || (viewingRouting.is_active ? "ACTIVE" : "INACTIVE")}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">General Information</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-sm text-muted-foreground">Plant Code</span>
+                        <p className="font-medium mt-1">{viewingRouting.plant_code || "—"}</p>
+                      </div>
+                      <div>
+                        <span className="text-sm text-muted-foreground">Base Quantity</span>
+                        <p className="font-medium mt-1">{viewingRouting.base_quantity} {viewingRouting.base_unit}</p>
+                      </div>
+                      <div>
+                        <span className="text-sm text-muted-foreground">Valid From</span>
+                        <p className="font-medium mt-1">{viewingRouting.valid_from ? new Date(viewingRouting.valid_from).toLocaleDateString() : "—"}</p>
+                      </div>
+                      <div>
+                        <span className="text-sm text-muted-foreground">Valid To</span>
+                        <p className="font-medium mt-1">{viewingRouting.valid_to ? new Date(viewingRouting.valid_to).toLocaleDateString() : "—"}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-sm text-muted-foreground">Description</span>
+                        <p className="font-medium mt-1">{viewingRouting.description || "—"}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                  <div>
+                    <h4 className="font-medium text-sm text-gray-500">Created At</h4>
+                    <p>{viewingRouting.created_at ? new Date(viewingRouting.created_at).toLocaleString() : "—"}</p>
+                  </div>
+                  <div>
+                    <h4 className="font-medium text-sm text-gray-500">Updated At</h4>
+                    <p>{viewingRouting.updated_at ? new Date(viewingRouting.updated_at).toLocaleString() : "—"}</p>
+                  </div>
+                </div>
+
+                <div className="border-t pt-3">
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 focus:outline-none"
+                    onClick={() => setAdminDataOpen(o => !o)}
+                  >
+                    {adminDataOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                    <Info className="h-3 w-3" />
+                    Administrative Data
+                  </button>
+                  {adminDataOpen && (
+                    <dl className="mt-2 grid grid-cols-1 gap-y-1 text-xs text-gray-400">
+                      <div><dt className="font-medium inline">Created By (ID): </dt><dd className="inline">{viewingRouting.created_by ?? "—"}</dd></div>
+                      <div><dt className="font-medium inline">Updated By (ID): </dt><dd className="inline">{viewingRouting.updated_by ?? "—"}</dd></div>
+                      <div><dt className="font-medium inline">Tenant ID: </dt><dd className="inline">{viewingRouting._tenantId ?? "—"}</dd></div>
+                    </dl>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Routing Dialog */}
       <Dialog open={showRoutingDialog} onOpenChange={setShowRoutingDialog}>

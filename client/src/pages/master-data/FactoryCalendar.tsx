@@ -53,7 +53,8 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { Plus, Search, Edit, Download, FileUp, ArrowLeft, RefreshCw, MoreHorizontal, Calendar as CalendarIcon } from "lucide-react";
+import { Plus, Search, Edit, Download, FileUp, ArrowLeft, RefreshCw, MoreHorizontal, Calendar as CalendarIcon, Eye } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { useAgentPermissions } from "@/hooks/useAgentPermissions";
@@ -75,6 +76,11 @@ type FactoryCalendar = {
     sundayWorking?: boolean;
     createdDate?: string;
     status?: string;
+    createdBy?: number;
+    updatedBy?: number;
+    tenantId?: string;
+    createdAt?: string;
+    updatedAt?: string;
 };
 
 // Factory Calendar Form Schema
@@ -101,6 +107,7 @@ export default function FactoryCalendar() {
     const [activeTab, setActiveTab] = useState("basic");
     const [viewingCalendarDetails, setViewingCalendarDetails] = useState<FactoryCalendar | null>(null);
     const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+    const [showAdminData, setShowAdminData] = useState(false);
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const permissions = useAgentPermissions();
@@ -553,6 +560,10 @@ export default function FactoryCalendar() {
                                                             </Button>
                                                         </DropdownMenuTrigger>
                                                         <DropdownMenuContent align="end">
+                                                            <DropdownMenuItem onClick={() => openDetails(calendar)}>
+                                                                <Eye className="mr-2 h-4 w-4" />
+                                                                View
+                                                            </DropdownMenuItem>
                                                             <DropdownMenuItem onClick={() => handleEdit(calendar)}>
                                                                 <Edit className="mr-2 h-4 w-4" />
                                                                 Edit
@@ -829,8 +840,8 @@ export default function FactoryCalendar() {
             </Dialog>
 
             {/* Details Dialog - View Only */}
-            <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
-                <DialogContent className="sm:max-w-[600px]">
+            <Dialog open={isDetailsOpen} onOpenChange={(open) => { setIsDetailsOpen(open); if (!open) setShowAdminData(false); }}>
+                <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle>Factory Calendar Details</DialogTitle>
                         <DialogDescription>
@@ -842,7 +853,7 @@ export default function FactoryCalendar() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Calendar ID</p>
-                                    <p className="text-sm">{viewingCalendarDetails.calendarId}</p>
+                                    <p className="text-sm font-semibold">{viewingCalendarDetails.calendarId}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Calendar Code</p>
@@ -854,15 +865,15 @@ export default function FactoryCalendar() {
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Country Code</p>
-                                    <p className="text-sm">{viewingCalendarDetails.countryCode || "N/A"}</p>
+                                    <p className="text-sm">{viewingCalendarDetails.countryCode || 'N/A'}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Working Days</p>
-                                    <p className="text-sm">{viewingCalendarDetails.workingDays || "N/A"}</p>
+                                    <p className="text-sm">{viewingCalendarDetails.workingDays || 'N/A'}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Holiday Calendar</p>
-                                    <p className="text-sm">{viewingCalendarDetails.holidayCalendar || "N/A"}</p>
+                                    <p className="text-sm">{viewingCalendarDetails.holidayCalendar || 'N/A'}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Shifts per Day</p>
@@ -878,31 +889,72 @@ export default function FactoryCalendar() {
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Annual Hours</p>
-                                    <p className="text-sm">{viewingCalendarDetails.annualHours || "N/A"}</p>
+                                    <p className="text-sm">{viewingCalendarDetails.annualHours || 'N/A'}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Saturday Working</p>
-                                    <p className="text-sm">{viewingCalendarDetails.saturdayWorking ? "Yes" : "No"}</p>
+                                    <p className="text-sm">{viewingCalendarDetails.saturdayWorking ? 'Yes' : 'No'}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Sunday Working</p>
-                                    <p className="text-sm">{viewingCalendarDetails.sundayWorking ? "Yes" : "No"}</p>
+                                    <p className="text-sm">{viewingCalendarDetails.sundayWorking ? 'Yes' : 'No'}</p>
                                 </div>
                                 <div>
                                     <p className="text-sm font-medium text-gray-500">Status</p>
-                                    <span
-                                        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewingCalendarDetails.status === "ACTIVE"
-                                            ? "bg-green-100 text-green-800"
-                                            : "bg-gray-100 text-gray-800"
-                                            }`}
-                                    >
-                                        {viewingCalendarDetails.status || "ACTIVE"}
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${viewingCalendarDetails.status === 'ACTIVE' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                                        }`}>
+                                        {viewingCalendarDetails.status || 'ACTIVE'}
                                     </span>
                                 </div>
                             </div>
+
+                            <Separator />
+
+                            {/* Administrative Data - collapsible */}
+                            <div
+                                className="cursor-pointer flex justify-between items-center select-none py-1"
+                                onClick={() => setShowAdminData(!showAdminData)}
+                            >
+                                <p className="font-semibold text-sm text-gray-700">Administrative Data</p>
+                                <svg
+                                    xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                                    viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                                    style={{ transform: showAdminData ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
+                                >
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </div>
+                            {showAdminData && (
+                                <dl className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <dt className="text-sm font-medium text-gray-500">Created By</dt>
+                                        <dd className="text-sm text-gray-900">{viewingCalendarDetails.createdBy ?? '—'}</dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-sm font-medium text-gray-500">Updated By</dt>
+                                        <dd className="text-sm text-gray-900">{viewingCalendarDetails.updatedBy ?? viewingCalendarDetails.createdBy ?? '—'}</dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-sm font-medium text-gray-500">Created At</dt>
+                                        <dd className="text-sm text-gray-900">{viewingCalendarDetails.createdAt ? new Date(viewingCalendarDetails.createdAt).toLocaleString() : '—'}</dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-sm font-medium text-gray-500">Updated At</dt>
+                                        <dd className="text-sm text-gray-900">{viewingCalendarDetails.updatedAt ? new Date(viewingCalendarDetails.updatedAt).toLocaleString() : '—'}</dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-sm font-medium text-gray-500">Tenant ID</dt>
+                                        <dd className="text-sm text-gray-900">{viewingCalendarDetails.tenantId ?? '—'}</dd>
+                                    </div>
+                                </dl>
+                            )}
                         </div>
                     )}
                     <DialogFooter>
+                        <Button variant="outline" onClick={() => { setIsDetailsOpen(false); if (viewingCalendarDetails) handleEdit(viewingCalendarDetails); }}>
+                            <Edit className="h-4 w-4 mr-1" /> Edit
+                        </Button>
                         <Button onClick={() => setIsDetailsOpen(false)}>Close</Button>
                     </DialogFooter>
                 </DialogContent>

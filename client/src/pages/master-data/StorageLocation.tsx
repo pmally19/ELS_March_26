@@ -18,7 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialog } from "@/components/ui/alert-dialog";
-import { PlusCircle, Edit, Trash2, RefreshCw, ArrowLeft, FileUp, MoreHorizontal, PowerOff, Eye } from "lucide-react";
+import { PlusCircle, Edit, Trash2, RefreshCw, ArrowLeft, FileUp, MoreHorizontal, PowerOff, Eye, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { Label } from "@/components/ui/label";
 
@@ -55,6 +55,13 @@ interface StorageLocation {
   isActive: boolean;
   notes?: string;
   plant?: Plant;
+  // Audit trail fields
+  createdAt?: string;
+  updatedAt?: string;
+  _tenantId?: string | null;
+  _createdBy?: number | null;
+  _updatedBy?: number | null;
+  _deletedAt?: string | null;
 }
 
 // Validation schema for the form
@@ -200,6 +207,7 @@ export default function StorageLocation() {
   const [editingStorageLocation, setEditingStorageLocation] = useState<StorageLocation | null>(null);
   const [deletingStorageLocation, setDeletingStorageLocation] = useState<StorageLocation | null>(null);
   const [activeTab, setActiveTab] = useState("basic");
+  const [adminDataOpen, setAdminDataOpen] = useState(false);
 
   // Forms
   const addForm = useForm<z.infer<typeof storageLocationFormSchema>>({
@@ -1448,13 +1456,44 @@ export default function StorageLocation() {
                 </div>
               </div>
 
-              {/* Additional Notes */}
-              {viewingStorageLocation.notes && (
-                <div className="border-t pt-4">
-                  <h3 className="text-lg font-semibold mb-4">Notes</h3>
-                  <p className="text-gray-700 whitespace-pre-wrap">{viewingStorageLocation.notes}</p>
-                </div>
-              )}
+              {/* Administrative Data — collapsible (SAP ECC pattern) */}
+              <div className="border-t pt-4">
+                <button
+                  type="button"
+                  className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-2"
+                  onClick={() => setAdminDataOpen(o => !o)}
+                >
+                  {adminDataOpen
+                    ? <ChevronDown className="h-3 w-3" />
+                    : <ChevronRight className="h-3 w-3" />}
+                  <Info className="h-3 w-3" />
+                  Administrative Data
+                </button>
+                {adminDataOpen && (
+                  <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs text-gray-400">
+                    <div>
+                      <dt className="font-medium">Created At</dt>
+                      <dd>{viewingStorageLocation.createdAt ? new Date(viewingStorageLocation.createdAt).toLocaleString() : "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-medium">Updated At</dt>
+                      <dd>{viewingStorageLocation.updatedAt ? new Date(viewingStorageLocation.updatedAt).toLocaleString() : "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-medium">Created By (ID)</dt>
+                      <dd>{viewingStorageLocation._createdBy ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-medium">Updated By (ID)</dt>
+                      <dd>{viewingStorageLocation._updatedBy ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-medium">Tenant ID</dt>
+                      <dd>{viewingStorageLocation._tenantId ?? "—"}</dd>
+                    </div>
+                  </dl>
+                )}
+              </div>
 
               <div className="flex justify-end gap-2 pt-4">
                 <Button
