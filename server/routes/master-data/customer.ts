@@ -24,17 +24,20 @@ const customerSchema = z.object({
     payment_terms: z.string().optional(),
     credit_limit: z.number().optional(),
     company_code_id: z.number().optional(),
-    sales_organization_id: z.number().optional(),
-    credit_control_area_id: z.number().optional(),
+    sales_org_code: z.string().optional(),
+    distribution_channel_code: z.string().optional(),
+    division_code: z.string().optional(),
+    credit_control_area: z.string().optional(),
     is_b2b: z.boolean().optional(),
     is_vip: z.boolean().optional(),
     status: z.string().optional(),
     // New pricing procedure field
     customer_pricing_procedure: z.string().optional(),
     // Additional fields from schema
+    sales_district: z.string().optional(),
     sales_office_code: z.string().optional(),
     sales_group_code: z.string().optional(),
-    customer_group: z.string().optional(),
+    account_group_id: z.number().optional(),
     customer_assignment_group_id: z.number().optional(),
 });
 
@@ -262,21 +265,27 @@ router.post("/", async (req: Request, res: Response) => {
         const fields = [
             'customer_code', 'name', 'type', 'description', 'tax_id', 'industry', 'segment',
             'address', 'city', 'state', 'country', 'postal_code', 'phone', 'email',
-            'currency', 'payment_terms', 'credit_limit', 'company_code_id',
-            'sales_organization_id', 'credit_control_area_id', 'is_b2b', 'is_vip',
+            'currency', 'payment_terms', 'credit_limit', 'company_code_id', 'account_group_id',
+            'sales_org_code', 'distribution_channel_code', 'division_code',
+            'credit_control_area', 'is_b2b', 'is_vip',
             'status', 'is_active', 'customer_pricing_procedure',
-            'sales_office_code', 'sales_group_code', 'customer_group', 'customer_assignment_group_id',
-            'shipping_condition_key', 'created_by', 'updated_by', '"_tenantId"'
+            'sales_district', 'sales_office_code', 'sales_group_code', 'customer_assignment_group_id',
+            'shipping_condition_key', 'delivery_priority', 'price_list',
+            'reconciliation_account_code', 'language_code',
+            'created_by', 'updated_by', '"_tenantId"'
         ];
 
         const values = [
             data.code, data.name, data.type, data.description, data.tax_id, data.industry, data.segment,
             data.address, data.city, data.state, data.country, data.postal_code, data.phone, data.email,
-            data.currency, data.payment_terms, data.credit_limit || 0, data.company_code_id,
-            data.sales_organization_id, data.credit_control_area_id, data.is_b2b || false, data.is_vip || false,
+            data.currency, data.payment_terms, data.credit_limit || 0, data.company_code_id, data.account_group_id,
+            data.sales_org_code, data.distribution_channel_code, data.division_code,
+            data.credit_control_area, data.is_b2b || false, data.is_vip || false,
             data.status || 'active', true, data.customer_pricing_procedure || null,
-            data.sales_office_code, data.sales_group_code, data.customer_group, data.customer_assignment_group_id,
-            data.shipping_condition_key || null, userId, userId, tenantId
+            data.sales_district, data.sales_office_code, data.sales_group_code, data.customer_assignment_group_id,
+            data.shipping_condition_key || null, data.delivery_priority, data.price_list,
+            data.reconciliation_account_code, data.language_code,
+            userId, userId, tenantId
         ];
 
         const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
@@ -380,8 +389,6 @@ router.patch("/:id", async (req: Request, res: Response) => {
             reconciliation_account_code: data.reconciliation_account_code,
 
             // Sales & Distribution
-            sales_organization_id: data.sales_organization_id,
-            credit_control_area_id: data.credit_control_area_id,
             discount_group: data.discount_group,
             price_group: data.price_group,
             incoterms: data.incoterms,

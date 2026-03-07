@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { Link } from "wouter";
 import { toast } from "@/hooks/use-toast";
+import SourceList from "./SourceList";
 
 import { useAgentPermissions } from "@/hooks/useAgentPermissions";
 // Types for data
@@ -77,10 +78,10 @@ interface Vendor {
   website?: string;
   currency?: string;
   paymentTerms?: string;
-  paymentMethod?: string;
   alternativePayee?: string;
   paymentBlock?: string;
   houseBank?: string;
+  reconciliationAccountId?: number;
   checkDoubleInvoice?: boolean;
   bankName?: string;
   bankAccount?: string;
@@ -697,6 +698,7 @@ export default function Vendor() {
           <TabsTrigger value="contractors">Contractors</TabsTrigger>
           <TabsTrigger value="service">Service Providers</TabsTrigger>
           <TabsTrigger value="blacklisted">Blacklisted</TabsTrigger>
+          <TabsTrigger value="source-lists">Source Lists</TabsTrigger>
         </TabsList>
 
         <TabsContent value="all">
@@ -747,6 +749,10 @@ export default function Vendor() {
             onDelete={openDeleteDialog}
             onViewDetails={openVendorDetails}
           />
+        </TabsContent>
+
+        <TabsContent value="source-lists">
+          <SourceList />
         </TabsContent>
       </Tabs>
 

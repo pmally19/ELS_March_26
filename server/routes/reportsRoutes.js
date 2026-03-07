@@ -23,7 +23,7 @@ const REPORT_TEMPLATES = {
     filters: ['date_range', 'customer', 'material', 'sales_org']
   },
   'aging-report': {
-    name: 'Customer Aging Report', 
+    name: 'Customer Aging Report',
     description: 'Accounts receivable aging analysis',
     tables: ['financeview', 'customers', 'account_receivables'],
     defaultCharts: ['bar', 'table'],
@@ -75,7 +75,7 @@ const TABLE_SCHEMAS = {
   financialmaterialintegrationview: ['business_document', 'financial_transaction', 'material_movement', 'integrated_process_type', 'financial_impact', 'material_impact', 'variance', 'integration_quality', 'business_partner', 'account_type', 'material_type', 'risk_level'],
   // Standard Tables
   materials: ['id', 'code', 'name', 'description', 'category_id', 'uom_id', 'price', 'created_at'],
-  customers: ['id', 'code', 'name', 'email', 'phone', 'address', 'city', 'country', 'created_at'],
+  erp_customers: ['id', 'code', 'name', 'email', 'phone', 'address', 'city', 'country', 'created_at'],
   vendors: ['id', 'code', 'name', 'email', 'phone', 'address', 'city', 'country', 'created_at'],
   sales_orders: ['id', 'order_number', 'customer_id', 'order_date', 'total_amount', 'status', 'created_at'],
   purchase_orders: ['id', 'order_number', 'vendor_id', 'order_date', 'total_amount', 'status', 'created_at'],
@@ -105,14 +105,24 @@ async function executeSafeSQL(query, params = []) {
   const client = await pool.connect();
   try {
     // Basic SQL injection protection
-    const sanitizedQuery = query.replace(/;[\s]*$/g, ''); // Remove trailing semicolons
-    
+    let sanitizedQuery = query.replace(/;[\s]*$/g, ''); // Remove trailing semicolons
+
+    // ── Table name compatibility rewriting ─────────────────────────────────────
+    // The ERP uses 'erp_customers' but many saved reports and templates use the
+    // generic name 'customers'. Auto-rewrite both standalone and aliased references
+    // so that existing saved reports continue to work without manual edits.
+    sanitizedQuery = sanitizedQuery
+      .replace(/\bFROM\s+customers\b/gi, 'FROM erp_customers')
+      .replace(/\bJOIN\s+customers\b/gi, 'JOIN erp_customers')
+      .replace(/\bIN\s*\(\s*SELECT\s+.*?FROM\s+customers\b/gi, (m) => m.replace(/\bcustomers\b/gi, 'erp_customers'));
+    // ──────────────────────────────────────────────────────────────────────────
+
     // Validate that query is SELECT only for security
     const trimmedQuery = sanitizedQuery.trim().toUpperCase();
     if (!trimmedQuery.startsWith('SELECT') && !trimmedQuery.startsWith('WITH')) {
       throw new Error('Only SELECT queries are allowed for reports');
     }
-    
+
     // Block dangerous keywords
     const dangerousKeywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'ALTER', 'CREATE', 'TRUNCATE'];
     for (const keyword of dangerousKeywords) {
@@ -120,11 +130,11 @@ async function executeSafeSQL(query, params = []) {
         throw new Error(`Query contains prohibited keyword: ${keyword}`);
       }
     }
-    
+
     const startTime = Date.now();
     const result = await client.query(sanitizedQuery, params);
     const executionTime = Date.now() - startTime;
-    
+
     return {
       columns: result.fields ? result.fields.map(field => field.name) : [],
       data: result.rows || [],
@@ -139,10 +149,49 @@ async function executeSafeSQL(query, params = []) {
 // GET /api/reports/schemas - Get table schemas for query builder
 router.get('/schemas', async (req, res) => {
   try {
-    res.json(TABLE_SCHEMAS);
+    // Query all user tables from database dynamically
+    const tablesQuery = `
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_type = 'BASE TABLE'
+      ORDER BY table_name
+    `;
+    const tablesResult = await pool.query(tablesQuery);
+
+    // Query all columns for those tables
+    const columnsQuery = `
+      SELECT table_name, column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+      ORDER BY table_name, ordinal_position
+    `;
+    const columnsResult = await pool.query(columnsQuery);
+
+    // Build schema map: { tableName: [col1, col2, ...] }
+    const schemas = {};
+    for (const row of tablesResult.rows) {
+      schemas[row.table_name] = [];
+    }
+    for (const row of columnsResult.rows) {
+      if (schemas[row.table_name]) {
+        schemas[row.table_name].push(row.column_name);
+      }
+    }
+
+    // Also include enterprise views from static TABLE_SCHEMAS (views don't appear in BASE TABLE)
+    const viewKeys = ['financeview', 'materialflowview', 'inventoryflowview', 'financialmaterialintegrationview'];
+    for (const key of viewKeys) {
+      if (TABLE_SCHEMAS[key] && !schemas[key]) {
+        schemas[key] = TABLE_SCHEMAS[key];
+      }
+    }
+
+    res.json(schemas);
   } catch (error) {
     console.error('Error fetching table schemas:', error);
-    res.status(500).json({ error: 'Failed to fetch table schemas' });
+    // Fallback to static schemas if DB query fails
+    res.json(TABLE_SCHEMAS);
   }
 });
 
@@ -151,16 +200,16 @@ router.get('/enterprise-views/:viewName', async (req, res) => {
   try {
     const { viewName } = req.params;
     const { limit = 50, offset = 0 } = req.query;
-    
+
     const validViews = ['financeview', 'materialflowview', 'inventoryflowview', 'financialmaterialintegrationview'];
-    
+
     if (!validViews.includes(viewName.toLowerCase())) {
       return res.status(400).json({ error: 'Invalid view name' });
     }
-    
+
     const query = `SELECT * FROM ${viewName} LIMIT $1 OFFSET $2`;
     const result = await pool.query(query, [limit, offset]);
-    
+
     res.json({
       data: result.rows,
       total: result.rows.length,
@@ -170,9 +219,9 @@ router.get('/enterprise-views/:viewName', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching view data:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to fetch view data',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -191,14 +240,14 @@ router.get('/enterprise-summary', async (req, res) => {
         (SELECT SUM(CASE WHEN cost_impact > 0 THEN cost_impact ELSE 0 END) FROM financeview) as total_costs,
         (SELECT SUM(ABS(total_valuation)) FROM materialflowview) as total_material_value
     `;
-    
+
     const result = await pool.query(summaryQuery);
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error fetching enterprise summary:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to fetch enterprise summary',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -209,9 +258,9 @@ router.get('/templates', async (req, res) => {
     res.json(REPORT_TEMPLATES);
   } catch (error) {
     console.error('Error fetching report templates:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to fetch report templates',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -221,17 +270,17 @@ router.post('/templates/:templateId/generate', async (req, res) => {
   try {
     const { templateId } = req.params;
     const { filters = {}, chartType = 'bar' } = req.body;
-    
+
     const template = REPORT_TEMPLATES[templateId];
     if (!template) {
       return res.status(404).json({ error: 'Template not found' });
     }
-    
+
     // Build dynamic query based on template and filters
     let query = buildTemplateQuery(template, filters);
-    
+
     const result = await pool.query(query);
-    
+
     res.json({
       template: template,
       data: result.rows,
@@ -241,9 +290,9 @@ router.post('/templates/:templateId/generate', async (req, res) => {
     });
   } catch (error) {
     console.error('Error generating template report:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to generate report',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -252,16 +301,16 @@ router.post('/templates/:templateId/generate', async (req, res) => {
 router.post('/ai-generate', async (req, res) => {
   try {
     const { prompt, requirements } = req.body;
-    
+
     // AI-powered report generation logic
     const aiResponse = await generateAIReport(prompt, requirements);
-    
+
     res.json(aiResponse);
   } catch (error) {
     console.error('Error with AI report generation:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to generate AI report',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -270,32 +319,32 @@ router.post('/ai-generate', async (req, res) => {
 function buildTemplateQuery(template, filters) {
   const baseTable = template.tables[0];
   let query = `SELECT * FROM ${baseTable}`;
-  
+
   // Add WHERE conditions based on filters
   const conditions = [];
-  
+
   if (filters.date_range) {
     conditions.push(`business_date BETWEEN '${filters.date_range.start}' AND '${filters.date_range.end}'`);
   }
-  
+
   if (filters.customer) {
     conditions.push(`customer = '${filters.customer}'`);
   }
-  
+
   if (filters.material) {
     conditions.push(`material LIKE '%${filters.material}%'`);
   }
-  
+
   if (filters.status) {
     conditions.push(`processing_status = '${filters.status}'`);
   }
-  
+
   if (conditions.length > 0) {
     query += ` WHERE ${conditions.join(' AND ')}`;
   }
-  
+
   query += ` LIMIT 100`;
-  
+
   return query;
 }
 
@@ -315,16 +364,16 @@ async function generateAIReport(prompt, requirements) {
 router.post('/execute', async (req, res) => {
   try {
     const { query, parameters = [] } = req.body;
-    
+
     if (!query) {
       return res.status(400).json({ error: 'SQL query is required' });
     }
-    
+
     const result = await executeSafeSQL(query, parameters);
     res.json(result);
   } catch (error) {
     console.error('Error executing query:', error);
-    res.status(400).json({ 
+    res.status(400).json({
       error: error.message || 'Failed to execute query',
       details: error.message
     });
@@ -335,7 +384,7 @@ router.post('/execute', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const { category, search, limit = 50, offset = 0 } = req.query;
-    
+
     let query = `
       SELECT id, name, description, category, chart_config, sql_query,
              created_at, updated_at
@@ -344,22 +393,22 @@ router.get('/', async (req, res) => {
     `;
     const params = [];
     let paramIndex = 1;
-    
+
     if (category) {
       query += ` AND category = $${paramIndex}`;
       params.push(category);
       paramIndex++;
     }
-    
+
     if (search) {
       query += ` AND (name ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`;
       params.push(`%${search}%`);
       paramIndex++;
     }
-    
+
     query += ` ORDER BY updated_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     params.push(parseInt(limit), parseInt(offset));
-    
+
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (error) {
@@ -371,36 +420,36 @@ router.get('/', async (req, res) => {
 // POST /api/reports - Create new custom report
 router.post('/', async (req, res) => {
   try {
-    const { 
-      name, 
-      description, 
-      sql_query, 
-      chart_config = {}, 
-      parameters = [], 
+    const {
+      name,
+      description,
+      sql_query,
+      chart_config = {},
+      parameters = [],
       category = 'custom',
-      is_shared = false 
+      is_shared = false
     } = req.body;
-    
+
     if (!name || !sql_query) {
       return res.status(400).json({ error: 'Name and SQL query are required' });
     }
-    
+
     // Validate SQL query by executing it with LIMIT 1
     try {
       await executeSafeSQL(sql_query + ' LIMIT 1');
     } catch (error) {
-      return res.status(400).json({ 
-        error: 'Invalid SQL query', 
-        details: error.message 
+      return res.status(400).json({
+        error: 'Invalid SQL query',
+        details: error.message
       });
     }
-    
+
     const query = `
       INSERT INTO custom_reports (name, description, sql_query, chart_config, parameters, category, is_shared, created_by)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
     `;
-    
+
     const result = await pool.query(query, [
       name,
       description,
@@ -411,7 +460,7 @@ router.post('/', async (req, res) => {
       is_shared,
       'system' // TODO: Replace with actual user ID from session
     ]);
-    
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating report:', error);
@@ -423,28 +472,28 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
-      name, 
-      description, 
-      sql_query, 
-      chart_config, 
-      parameters, 
+    const {
+      name,
+      description,
+      sql_query,
+      chart_config,
+      parameters,
       category,
-      is_shared 
+      is_shared
     } = req.body;
-    
+
     // Validate SQL query if provided
     if (sql_query) {
       try {
         await executeSafeSQL(sql_query + ' LIMIT 1');
       } catch (error) {
-        return res.status(400).json({ 
-          error: 'Invalid SQL query', 
-          details: error.message 
+        return res.status(400).json({
+          error: 'Invalid SQL query',
+          details: error.message
         });
       }
     }
-    
+
     const query = `
       UPDATE custom_reports 
       SET name = COALESCE($1, name),
@@ -458,7 +507,7 @@ router.put('/:id', async (req, res) => {
       WHERE id = $8
       RETURNING *
     `;
-    
+
     const result = await pool.query(query, [
       name,
       description,
@@ -469,11 +518,11 @@ router.put('/:id', async (req, res) => {
       is_shared,
       id
     ]);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Report not found' });
     }
-    
+
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating report:', error);
@@ -485,17 +534,17 @@ router.put('/:id', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const query = `
       SELECT * FROM custom_reports WHERE id = $1
     `;
-    
+
     const result = await pool.query(query, [id]);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Report not found' });
     }
-    
+
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error fetching report:', error);
@@ -508,25 +557,25 @@ router.post('/:id/execute', async (req, res) => {
   try {
     const { id } = req.params;
     const { parameters = {} } = req.body;
-    
+
     // Get the report
     const reportQuery = 'SELECT * FROM custom_reports WHERE id = $1';
     const reportResult = await pool.query(reportQuery, [id]);
-    
+
     if (reportResult.rows.length === 0) {
       return res.status(404).json({ error: 'Report not found' });
     }
-    
+
     const report = reportResult.rows[0];
     let sqlQuery = report.sql_query;
-    
+
     // Replace parameters in SQL query
     Object.entries(parameters).forEach(([key, value]) => {
       sqlQuery = sqlQuery.replace(new RegExp(`{{${key}}}`, 'g'), value);
     });
-    
+
     const result = await executeSafeSQL(sqlQuery);
-    
+
     res.json({
       report: {
         id: report.id,
@@ -546,14 +595,14 @@ router.post('/:id/execute', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const query = 'DELETE FROM custom_reports WHERE id = $1 RETURNING *';
     const result = await pool.query(query, [id]);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Report not found' });
     }
-    
+
     res.json({ message: 'Report deleted successfully' });
   } catch (error) {
     console.error('Error deleting report:', error);
@@ -566,25 +615,25 @@ router.post('/:id/duplicate', async (req, res) => {
   try {
     const { id } = req.params;
     const { name } = req.body;
-    
+
     // Get the original report
     const originalQuery = 'SELECT * FROM custom_reports WHERE id = $1';
     const originalResult = await pool.query(originalQuery, [id]);
-    
+
     if (originalResult.rows.length === 0) {
       return res.status(404).json({ error: 'Report not found' });
     }
-    
+
     const original = originalResult.rows[0];
     const duplicateName = name || `${original.name} (Copy)`;
-    
+
     // Create duplicate
     const duplicateQuery = `
       INSERT INTO custom_reports (name, description, sql_query, chart_config, parameters, category, is_shared, created_by)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
     `;
-    
+
     const result = await pool.query(duplicateQuery, [
       duplicateName,
       original.description,
@@ -595,7 +644,7 @@ router.post('/:id/duplicate', async (req, res) => {
       false, // Duplicates are private by default
       'system' // TODO: Replace with actual user ID
     ]);
-    
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error duplicating report:', error);
@@ -612,7 +661,7 @@ router.get('/categories/list', async (req, res) => {
       GROUP BY category 
       ORDER BY count DESC
     `;
-    
+
     const result = await pool.query(query);
     res.json(result.rows);
   } catch (error) {
@@ -625,20 +674,20 @@ router.get('/categories/list', async (req, res) => {
 router.post('/chart-data', async (req, res) => {
   try {
     const { dataSource, kpi, characteristic } = req.body;
-    
+
     // Build dynamic query based on chart configuration
     let query = '';
     let params = [];
-    
+
     // Enhanced query building with safety checks
-    const allowedTables = ['customers', 'financeview', 'materials', 'sales_orders', 'employees'];
+    const allowedTables = ['erp_customers', 'financeview', 'materials', 'sales_orders', 'employees'];
     const allowedColumns = ['region', 'category', 'status', 'transaction_type', 'department', 'id', 'amount', 'stock_quantity', 'total_amount'];
     const allowedAggregations = ['count', 'sum', 'avg', 'max', 'min'];
-    
-    if (!allowedTables.includes(dataSource) || 
-        !allowedColumns.includes(characteristic.column) || 
-        !allowedColumns.includes(kpi.column) ||
-        !allowedAggregations.includes(kpi.aggregation)) {
+
+    if (!allowedTables.includes(dataSource) ||
+      !allowedColumns.includes(characteristic.column) ||
+      !allowedColumns.includes(kpi.column) ||
+      !allowedAggregations.includes(kpi.aggregation)) {
       return res.json({
         chartData: [
           { name: 'Sample Data', value: 100, color: '#8884d8' },
@@ -647,12 +696,12 @@ router.post('/chart-data', async (req, res) => {
       });
     }
 
-    if (dataSource === 'customers') {
+    if (dataSource === 'erp_customers' || dataSource === 'customers') {
       query = `
         SELECT 
           COALESCE(${characteristic.column}::text, 'Unknown') as name,
           ${kpi.aggregation}(CASE WHEN ${kpi.column} IS NOT NULL THEN ${kpi.column} ELSE 1 END) as value
-        FROM customers 
+        FROM erp_customers 
         GROUP BY ${characteristic.column}
         ORDER BY value DESC
         LIMIT 8
@@ -698,24 +747,24 @@ router.post('/chart-data', async (req, res) => {
         ]
       });
     }
-    
+
     const result = await pool.query(query, params);
-    
+
     // Transform data for chart display
     const colors = ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#0088fe', '#00c49f', '#ffbb28', '#ff8042', '#8dd1e1', '#d084d0'];
-    
+
     const chartData = result.rows.map((row, index) => ({
       name: row.name || 'Unknown',
       value: parseInt(row.value) || 0,
       color: colors[index % colors.length]
     }));
-    
-    res.json({ 
+
+    res.json({
       chartData: chartData.length > 0 ? chartData : [
         { name: 'No Data', value: 1, color: '#cccccc' }
       ]
     });
-    
+
   } catch (error) {
     console.error('Chart data generation error:', error);
     res.json({
@@ -732,17 +781,17 @@ router.post('/chart-data', async (req, res) => {
 router.get('/tables/info', async (req, res) => {
   try {
     const tablesInfo = {};
-    
+
     // Get actual table information from database
     for (const [tableName, columns] of Object.entries(TABLE_SCHEMAS)) {
       try {
         // Get row count
         const countResult = await pool.query(`SELECT COUNT(*) as count FROM ${tableName}`);
         const rowCount = parseInt(countResult.rows[0].count);
-        
+
         // Get sample data
         const sampleResult = await pool.query(`SELECT * FROM ${tableName} LIMIT 3`);
-        
+
         tablesInfo[tableName] = {
           columns,
           rowCount,
@@ -758,7 +807,7 @@ router.get('/tables/info', async (req, res) => {
         };
       }
     }
-    
+
     res.json(tablesInfo);
   } catch (error) {
     console.error('Error fetching table info:', error);
@@ -771,25 +820,25 @@ router.post('/export/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { format = 'csv', parameters = {} } = req.body;
-    
+
     // Get and execute the report
     const reportQuery = 'SELECT * FROM custom_reports WHERE id = $1';
     const reportResult = await pool.query(reportQuery, [id]);
-    
+
     if (reportResult.rows.length === 0) {
       return res.status(404).json({ error: 'Report not found' });
     }
-    
+
     const report = reportResult.rows[0];
     let sqlQuery = report.sql_query;
-    
+
     // Replace parameters in SQL query
     Object.entries(parameters).forEach(([key, value]) => {
       sqlQuery = sqlQuery.replace(new RegExp(`{{${key}}}`, 'g'), value);
     });
-    
+
     const result = await executeSafeSQL(sqlQuery);
-    
+
     if (format === 'csv') {
       // Generate CSV
       let csv = result.columns.join(',') + '\n';
@@ -800,7 +849,7 @@ router.post('/export/:id', async (req, res) => {
         });
         csv += values.join(',') + '\n';
       });
-      
+
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="${report.name}.csv"`);
       res.send(csv);

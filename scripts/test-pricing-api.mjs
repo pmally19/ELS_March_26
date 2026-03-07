@@ -1,62 +1,37 @@
-// Test creating procedure via API with correct company code
-import dotenv from 'dotenv';
-dotenv.config();
+import fetch from 'node-fetch';
 
-async function testAPI() {
+async function testPricingPreview() {
+    const payload = {
+        salesOrgId: 32, // Based on logs from user 1000
+        distributionChannelId: 10, // 01
+        divisionId: 1, // 01
+        customerId: 84, // Maruti
+        items: [
+            {
+                material_id: 164, // rubber
+                plant_id: 21, // 1010
+                quantity: 10,
+                unit_price: 1000
+            }
+        ],
+        manualOverrides: {}
+    };
+
     try {
-        console.log('🧪 Testing Pricing Procedures API...\n');
-
-        const baseURL = 'http://localhost:5001';
-
-        // 1. Test GET all procedures
-        console.log('1. GET /api/pricing-procedures');
-        const getResponse = await fetch(`${baseURL}/api/pricing-procedures?company_code=1000`);
-        const procedures = await getResponse.json();
-
-        if (getResponse.ok) {
-            console.log(`   ✅ Success! Found ${procedures.length} procedures\n`);
-        } else {
-            console.log(`   ❌ Failed:`, procedures);
-            return;
-        }
-
-        // 2. Test CREATE procedure
-        console.log('2. POST /api/pricing-procedures');
-        const createData = {
-            procedure_code: 'TEST002',
-            procedure_name: 'API Test Procedure',
-            description: 'Created via API test',
-            is_active: true,
-            company_code: '1000'
-        };
-
-        const createResponse = await fetch(`${baseURL}/api/pricing-procedures`, {
+        console.log('Sending Pricing Preview request for ZMRF 20 (id 50)...');
+        const res = await fetch('http://localhost:5001/api/pricing-procedures/50/preview', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(createData)
+            body: JSON.stringify(payload)
         });
 
-        const created = await createResponse.json();
-
-        if (createResponse.ok) {
-            console.log(`   ✅ Created procedure ID: ${created.id}`);
-            console.log(`   Code: ${created.procedure_code}`);
-            console.log(`   Name: ${created.procedure_name}\n`);
-
-            // 3. Test GET again to verify
-            console.log('3. GET /api/pricing-procedures (verify)');
-            const verifyResponse = await fetch(`${baseURL}/api/pricing-procedures?company_code=1000`);
-            const updatedList = await verifyResponse.json();
-            console.log(`   ✅ Now found ${updatedList.length} procedures\n`);
-
-            console.log('✅ All API tests passed!');
-        } else {
-            console.log(`   ❌ Failed:`, created);
-        }
-
-    } catch (error) {
-        console.error('❌ Test failed:', error.message);
+        const data = await res.json();
+        console.log('Status:', res.status);
+        console.log(JSON.stringify(data.conditions, null, 2));
+        console.log(`Totals: Subtotal=${data.subtotal}, Tax=${data.taxTotal}, Grand=${data.grandTotal}`);
+    } catch (e) {
+        console.error(e);
     }
 }
 
-testAPI();
+testPricingPreview();

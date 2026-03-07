@@ -79,6 +79,7 @@ import routesMasterRouter from './routes-master';
 import transportationGroupsRouter from './transportation-groups';
 import shippingPointDeterminationRouter from './shipping-point-determination';
 import taxConditionRecordsRouter from './tax-condition-records';
+import sourceListsRouter from './source-lists';
 
 
 
@@ -560,6 +561,7 @@ export function registerMasterDataRoutes(app: Express) {
 
 
   // Register all 21 new Master Data routes (keep after dedicated routers)
+  app.use('/api/master-data/source-lists', sourceListsRouter);
   app.use('/api/master-data', allMasterDataRoutes);
 
   // Seed Discount Groups - generates sample data based on real-time patterns from existing data

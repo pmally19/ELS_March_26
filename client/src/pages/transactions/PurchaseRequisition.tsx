@@ -67,6 +67,9 @@ interface BOMComponent {
   estimatedPrice: number;
   isAssembly: boolean;
   notes?: string;
+  plantCode?: string;
+  storageLocation?: string;
+  availableQuantity?: number;
 }
 
 interface MaterialBOM {
@@ -212,7 +215,7 @@ export default function PurchaseRequisition() {
       // apiRequest already returns parsed JSON
       return response;
     },
-    onSuccess: (data, variables) => {
+    onSuccess: (data: any, variables) => {
       queryClient.invalidateQueries({ queryKey: ['/api/purchase/requisitions'] });
       toast({
         title: 'Success',
@@ -362,33 +365,18 @@ export default function PurchaseRequisition() {
             updated.description = material.description || (material as any).name || material.material_name || '';
             updated.unit_of_measure = (material as any).base_uom || material.unit_of_measure || material.base_unit || 'EA';
 
-            // Auto-fill price with priority: vendor price > material base price
-            // First, check if we have vendor-specific pricing
-            const vendorMaterial = selectedVendorId
-              ? vendorMaterials.find((vm: any) => vm.materialId === parseInt(value))
-              : null;
-
             let priceToUse = 0;
             let priceSource = '';
 
-            if (vendorMaterial && vendorMaterial.unitPrice) {
-              // Use vendor-specific price
-              priceToUse = typeof vendorMaterial.unitPrice === 'string'
-                ? parseFloat(vendorMaterial.unitPrice)
-                : vendorMaterial.unitPrice;
-              priceSource = 'vendor';
-              console.log('💰 Using vendor-specific price:', priceToUse, 'for vendor ID:', selectedVendorId);
-            } else {
-              // Fall back to material base price
-              const materialPrice = (material as any).base_unit_price ||
-                (material as any).base_price ||
-                (material as any).standard_price ||
-                (material as any).price ||
-                0;
-              priceToUse = typeof materialPrice === 'string' ? parseFloat(materialPrice) : materialPrice;
-              priceSource = 'material';
-              console.log('💰 Using material base price:', priceToUse);
-            }
+            // Fall back to material base price
+            const materialPrice = (material as any).base_unit_price ||
+              (material as any).base_price ||
+              (material as any).standard_price ||
+              (material as any).price ||
+              0;
+            priceToUse = typeof materialPrice === 'string' ? parseFloat(materialPrice) : materialPrice;
+            priceSource = 'material';
+            console.log('💰 Using material base price:', priceToUse);
 
             if (priceToUse > 0) {
               updated.estimated_unit_price = priceToUse;
@@ -602,7 +590,7 @@ export default function PurchaseRequisition() {
                     <SelectValue placeholder={companyCodeId ? "Select purchasing org" : "Select company code first"} />
                   </SelectTrigger>
                   <SelectContent>
-                    {purchaseOrganizations.map((org: any) => (
+                    {(purchaseOrganizations as any[]).map((org: any) => (
                       <SelectItem key={org.id} value={org.code}>
                         {org.code} - {org.name}
                       </SelectItem>
@@ -618,7 +606,7 @@ export default function PurchaseRequisition() {
                     <SelectValue placeholder="Select purchasing group" />
                   </SelectTrigger>
                   <SelectContent>
-                    {purchasingGroups.map((group) => (
+                    {(purchasingGroups as any[]).map((group: any) => (
                       <SelectItem key={group.code} value={group.code}>
                         {group.code} - {group.name}
                       </SelectItem>
@@ -751,7 +739,7 @@ export default function PurchaseRequisition() {
                                 onValueChange={(value) => {
                                   // Filter materials by this item's plant
                                   const availableMaterials = item.plant_code
-                                    ? (materials as Material[]).filter(m => m.plant_code === item.plant_code)
+                                    ? (materials as Material[]).filter(m => (m as any).plant_code === item.plant_code)
                                     : materials as Material[];
 
                                   const selectedMaterial = availableMaterials.find((m: Material) =>
@@ -806,7 +794,7 @@ export default function PurchaseRequisition() {
                                 </SelectTrigger>
                                 <SelectContent>
                                   {(item.plant_code
-                                    ? (materials as Material[]).filter((m: Material) => m.plant_code === item.plant_code)
+                                    ? (materials as Material[]).filter((m: Material) => (m as any).plant_code === item.plant_code)
                                     : (materials as Material[])
                                   ).map((material: Material) => (
                                     <SelectItem key={material.id} value={material.code || material.material_code || ''}>
@@ -971,13 +959,20 @@ export default function PurchaseRequisition() {
                                         <span className="font-medium text-gray-800">{comp.materialCode}</span>
                                         <span className="text-gray-600">{comp.materialName}</span>
                                       </div>
-                                      <div className="flex gap-6 items-center">
-                                        <span className="text-gray-700 font-medium">
-                                          {comp.requiredQuantity} {comp.uom}
-                                        </span>
-                                        <span className="text-gray-500 text-xs">
-                                          ({comp.quantity} per unit × {item.quantity} units)
-                                        </span>
+                                      <div className="flex gap-4 items-center">
+                                        <div className="flex bg-blue-100 px-2 py-0.5 rounded text-xs text-blue-800 gap-2 border border-blue-200">
+                                          <span>Plant: <strong>{comp.plantCode === 'N/A' || !comp.plantCode ? '—' : comp.plantCode}</strong></span>
+                                          <span className="border-l border-blue-300 pl-2">Loc: <strong>{comp.storageLocation === 'N/A' || !comp.storageLocation ? '—' : comp.storageLocation}</strong></span>
+                                          <span className="border-l border-blue-300 pl-2">Stock: <strong className={comp.availableQuantity && comp.availableQuantity > 0 ? "text-green-700" : "text-red-600"}>{comp.availableQuantity || 0} {comp.uom}</strong></span>
+                                        </div>
+                                        <div className="flex flex-col items-end min-w-[120px]">
+                                          <span className="text-gray-900 font-bold">
+                                            {comp.requiredQuantity} {comp.uom}
+                                          </span>
+                                          <span className="text-gray-500 text-xs">
+                                            ({comp.quantity} / unit)
+                                          </span>
+                                        </div>
                                       </div>
                                     </div>
                                   ))}

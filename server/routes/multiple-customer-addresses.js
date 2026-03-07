@@ -448,6 +448,77 @@ router.post('/:customerId/relationships', async (req, res) => {
   }
 });
 
+// Sync address relationships based on current primary addresses
+router.post('/:customerId/relationships/sync', async (req, res) => {
+  try {
+    const { customerId } = req.params;
+
+    // 1. Get primary addresses for each type
+    const query = `
+      SELECT address_type, id
+      FROM customer_addresses
+      WHERE customer_id = $1 AND is_active = true AND is_primary = true
+    `;
+    const primaryAddresses = await pool.query(query, [customerId]);
+
+    let soldToId = null, billToId = null, shipToId = null, payerToId = null;
+
+    primaryAddresses.rows.forEach(row => {
+      if (row.address_type === 'sold_to') soldToId = row.id;
+      if (row.address_type === 'bill_to') billToId = row.id;
+      if (row.address_type === 'ship_to') shipToId = row.id;
+      if (row.address_type === 'payer_to') payerToId = row.id;
+    });
+
+    // 2. Fallbacks: if a role is missing, fallback to sold_to
+    billToId = billToId || soldToId;
+    shipToId = shipToId || soldToId;
+    payerToId = payerToId || soldToId;
+
+    // If still null, try finding ANY active address for the customer
+    if (!soldToId) {
+      const anyAddr = await pool.query(`SELECT id FROM customer_addresses WHERE customer_id = $1 AND is_active = true LIMIT 1`, [customerId]);
+      if (anyAddr.rows.length > 0) {
+        soldToId = billToId = shipToId = payerToId = anyAddr.rows[0].id;
+      }
+    }
+
+    if (!soldToId) {
+      return res.json({ success: true, message: 'No active addresses found to sync' });
+    }
+
+    // 3. Check if relationship exists
+    const checkQuery = `SELECT id FROM customer_address_relationships WHERE customer_id = $1 AND is_active = true LIMIT 1`;
+    const existing = await pool.query(checkQuery, [customerId]);
+
+    if (existing.rows.length > 0) {
+      // Update
+      const updateQuery = `
+        UPDATE customer_address_relationships 
+        SET sold_to_address_id = $2, bill_to_address_id = $3,
+            ship_to_address_id = $4, payer_to_address_id = $5,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+      `;
+      await pool.query(updateQuery, [existing.rows[0].id, soldToId, billToId, shipToId, payerToId]);
+    } else {
+      // Insert
+      const insertQuery = `
+        INSERT INTO customer_address_relationships (
+          customer_id, relationship_name, sold_to_address_id, bill_to_address_id,
+          ship_to_address_id, payer_to_address_id, is_default, is_active
+        ) VALUES ($1, 'Standard Setup', $2, $3, $4, $5, true, true)
+      `;
+      await pool.query(insertQuery, [customerId, soldToId, billToId, shipToId, payerToId]);
+    }
+
+    res.json({ success: true, message: 'Address relationships synced successfully' });
+  } catch (error) {
+    console.error('Error syncing customer address relationships:', error);
+    res.status(500).json({ success: false, error: 'Failed to sync relationships' });
+  }
+});
+
 // Update an address relationship
 router.put('/:customerId/relationships/:relationshipId', async (req, res) => {
   try {
@@ -468,7 +539,7 @@ router.put('/:customerId/relationships/:relationshipId', async (req, res) => {
         updated_by = $9, updated_at = CURRENT_TIMESTAMP
       WHERE id = $1 AND customer_id = $2
       RETURNING *
-    `;
+        `;
 
     const values = [
       relationshipId, customerId, relationship_name, sold_to_address_id, bill_to_address_id,
@@ -509,7 +580,7 @@ router.delete('/:customerId/relationships/:relationshipId', async (req, res) => 
       SET is_active = false, updated_at = CURRENT_TIMESTAMP, updated_by = $3
       WHERE id = $1 AND customer_id = $2
       RETURNING *
-    `;
+        `;
 
     const result = await pool.query(query, [relationshipId, customerId, 1]);
 
@@ -552,7 +623,7 @@ router.get('/address-summary', async (req, res) => {
       WHERE c.active = true
       GROUP BY c.id, c.name, c.customer_code
       ORDER BY c.name
-    `;
+        `;
 
     const result = await pool.query(query);
 

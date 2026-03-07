@@ -32,8 +32,8 @@ const conditionStepSchema = z.object({
   is_mandatory: z.boolean().default(false),
   account_key: z.string().optional(),
   // New ERP-compatible fields
-  from_step: z.coerce.number().optional(),
-  to_step: z.coerce.number().optional(),
+  from_step: z.union([z.string(), z.number()]).optional().transform(v => v === "" || v === 0 || Number.isNaN(Number(v)) ? null : Number(v)),
+  to_step: z.union([z.string(), z.number()]).optional().transform(v => v === "" || v === 0 || Number.isNaN(Number(v)) ? null : Number(v)),
   requirement: z.string().optional(),
   is_statistical: z.boolean().default(false),
   is_printable: z.boolean().default(true),
@@ -542,8 +542,8 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
     is_mandatory: z.boolean().default(false),
     account_key: z.string().optional(),
     // New ERP-compatible fields
-    from_step: z.coerce.number().optional(),
-    to_step: z.coerce.number().optional(),
+    from_step: z.union([z.string(), z.number()]).optional().transform(v => v === "" || v === 0 || Number.isNaN(Number(v)) ? null : Number(v)),
+    to_step: z.union([z.string(), z.number()]).optional().transform(v => v === "" || v === 0 || Number.isNaN(Number(v)) ? null : Number(v)),
     requirement: z.string().optional(),
     is_statistical: z.boolean().default(false),
     is_printable: z.boolean().default(true),

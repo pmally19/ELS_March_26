@@ -36,6 +36,7 @@ interface InvoiceLineItem {
   id: number;
   materialCode: string;
   description: string;
+  itemCategory?: string;
   quantity: number;
   unitPrice: number;
   lineAmount: number;
@@ -122,10 +123,10 @@ export default function InvoiceVerification() {
       rejected: { icon: XCircle, color: "bg-red-100 text-red-800" },
       revision_required: { icon: AlertCircle, color: "bg-orange-100 text-orange-800" }
     };
-    
+
     const config = statusConfig[status as keyof typeof statusConfig];
     const Icon = config?.icon || Clock;
-    
+
     return (
       <Badge className={config?.color || "bg-gray-100 text-gray-800"}>
         <Icon className="w-3 h-3 mr-1" />
@@ -134,8 +135,8 @@ export default function InvoiceVerification() {
     );
   };
 
-  const filteredInvoices = selectedTab === 'pending' 
-    ? pendingInvoices 
+  const filteredInvoices = selectedTab === 'pending'
+    ? pendingInvoices
     : allInvoices.filter(inv => inv.status !== 'pending');
 
   return (
@@ -249,7 +250,7 @@ export default function InvoiceVerification() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        {invoice.verificationDate 
+                        {invoice.verificationDate
                           ? new Date(invoice.verificationDate).toLocaleDateString()
                           : 'N/A'
                         }
@@ -275,7 +276,7 @@ export default function InvoiceVerification() {
           <DialogHeader>
             <DialogTitle>Verify Invoice: {selectedInvoice?.invoiceNumber}</DialogTitle>
           </DialogHeader>
-          
+
           {selectedInvoice && (
             <div className="space-y-6">
               {/* Invoice Header */}
@@ -306,6 +307,7 @@ export default function InvoiceVerification() {
                     <TableRow>
                       <TableHead>Material</TableHead>
                       <TableHead>Description</TableHead>
+                      <TableHead>Category</TableHead>
                       <TableHead>Qty</TableHead>
                       <TableHead>Unit Price</TableHead>
                       <TableHead>Line Amount</TableHead>
@@ -317,6 +319,7 @@ export default function InvoiceVerification() {
                       <TableRow key={item.id}>
                         <TableCell>{item.materialCode}</TableCell>
                         <TableCell>{item.description}</TableCell>
+                        <TableCell>{item.itemCategory || 'N/A'}</TableCell>
                         <TableCell>{item.quantity}</TableCell>
                         <TableCell>{selectedInvoice.currency} {item.unitPrice.toFixed(2)}</TableCell>
                         <TableCell>{selectedInvoice.currency} {item.lineAmount.toFixed(2)}</TableCell>
@@ -359,23 +362,23 @@ export default function InvoiceVerification() {
                 <Button variant="outline" onClick={() => setVerificationDialog(false)}>
                   Cancel
                 </Button>
-                <Button 
-                  variant="destructive" 
+                <Button
+                  variant="destructive"
                   onClick={() => handleVerification('reject')}
                   disabled={verifyInvoiceMutation.isPending}
                 >
                   <XCircle className="w-4 h-4 mr-2" />
                   Reject
                 </Button>
-                <Button 
-                  variant="secondary" 
+                <Button
+                  variant="secondary"
                   onClick={() => handleVerification('revision')}
                   disabled={verifyInvoiceMutation.isPending}
                 >
                   <AlertCircle className="w-4 h-4 mr-2" />
                   Request Revision
                 </Button>
-                <Button 
+                <Button
                   onClick={() => handleVerification('approve')}
                   disabled={verifyInvoiceMutation.isPending}
                 >

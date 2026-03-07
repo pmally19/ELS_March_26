@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { useQuery } from "@tanstack/react-query";
 import SalesFunnel from "@/components/sales/SalesFunnel";
 import SalesFunnelCustomizer from "@/components/sales/SalesFunnelCustomizer";
@@ -41,7 +42,12 @@ import {
   Database,
   Copy,
   ArrowLeft,
-  Calculator
+  Calculator,
+  LayoutDashboard,
+  SlidersHorizontal,
+  X,
+  GripVertical,
+  CheckCheck
 } from "lucide-react";
 import PipelineByStage from "@/components/sales/PipelineByStage";
 import OpenOpportunitiesList from "@/components/sales/OpenOpportunitiesList";
@@ -49,11 +55,165 @@ import LeadsList from "@/components/sales/LeadsList";
 import { Input } from "@/components/ui/input";
 import AddLeadDialog from "@/components/sales/AddLeadDialog";
 
+// ── Tab definitions ──────────────────────────────────────────────────────────
+interface TabDef { id: string; label: string; icon: string; pinned?: boolean; }
+const ALL_TABS: TabDef[] = [
+  { id: "overview",           label: "Overview",            icon: "📊", pinned: true },
+  { id: "orders",             label: "Orders",              icon: "📦" },
+  { id: "leads",              label: "Leads",               icon: "👥" },
+  { id: "opportunities",      label: "Opportunities",       icon: "💡" },
+  { id: "quotes",             label: "Quotes",              icon: "📄" },
+  { id: "invoices",           label: "Invoices",            icon: "🧾" },
+  { id: "returns",            label: "Returns",             icon: "↩️" },
+  { id: "customers",          label: "Customers",           icon: "🏢" },
+  { id: "order-to-cash",      label: "Order-to-Cash",       icon: "💰" },
+  { id: "configuration",      label: "Configuration",       icon: "⚙️" },
+  { id: "customization",      label: "S&D Customization",   icon: "🎨" },
+  { id: "shipping-logistics", label: "Shipping & Logistics",icon: "🚚" },
+  { id: "revenue-recognition",label: "Revenue Recognition", icon: "📈" },
+  { id: "customer-portal",    label: "Customer Portal",     icon: "🌐" },
+];
+
+const LS_KEY = "sales_visible_tabs";
+const DEFAULT_VISIBLE = new Set(ALL_TABS.map(t => t.id));
+
 export default function Sales() {
   const [isAddLeadOpen, setIsAddLeadOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
   const [showPipelineReport, setShowPipelineReport] = useState(false);
+  const [showTabCustomizer, setShowTabCustomizer] = useState(false);
+  const customizerRef = useRef<HTMLDivElement>(null);
+  // Panel drag (customizer list)
+  const dragItem = useRef<number | null>(null);
+  const dragOverItem = useRef<number | null>(null);
+  // Tab bar direct drag
+  const dragBarItem = useRef<number | null>(null);
+  const dragBarOver = useRef<number | null>(null);
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+
+  // ── Load visible tabs from localStorage ─────────────────────────────────
+  const [visibleTabs, setVisibleTabs] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem(LS_KEY);
+      if (saved) {
+        const parsed: string[] = JSON.parse(saved);
+        // Always include pinned tabs
+        const withPinned = new Set([...parsed, ...ALL_TABS.filter(t => t.pinned).map(t => t.id)]);
+        return withPinned;
+      }
+    } catch {}
+    return DEFAULT_VISIBLE;
+  });
+
+  // ── Tab order state (drag-to-reorder) ───────────────────────────────
+  const [tabOrder, setTabOrder] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(LS_KEY + "_order");
+      if (saved) {
+        const parsed: string[] = JSON.parse(saved);
+        // Merge: keep saved order, append any new tabs not yet in order
+        const known = new Set(parsed);
+        const allIds = ALL_TABS.map(t => t.id);
+        const merged = [...parsed.filter(id => allIds.includes(id)), ...allIds.filter(id => !known.has(id))];
+        return merged;
+      }
+    } catch {}
+    return ALL_TABS.map(t => t.id);
+  });
+
+  // Persist visible tabs
+  useEffect(() => {
+    localStorage.setItem(LS_KEY, JSON.stringify(Array.from(visibleTabs)));
+    // If active tab becomes hidden, jump to first visible
+    if (!visibleTabs.has(activeTab)) {
+      const first = tabOrder.find(id => visibleTabs.has(id));
+      if (first) setActiveTab(first);
+    }
+  }, [visibleTabs]);
+
+  // Persist tab order
+  useEffect(() => {
+    localStorage.setItem(LS_KEY + "_order", JSON.stringify(tabOrder));
+  }, [tabOrder]);
+
+  // Close customizer on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (customizerRef.current && !customizerRef.current.contains(e.target as Node)) {
+        setShowTabCustomizer(false);
+      }
+    };
+    if (showTabCustomizer) document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showTabCustomizer]);
+
+  const toggleTab = (id: string) => {
+    setVisibleTabs(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        // Don't allow removing if only 1 left (outside pinned)
+        const removable = Array.from(next).filter(t => !ALL_TABS.find(a => a.id === t && a.pinned));
+        if (removable.length <= 1) return prev;
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  // Panel drag handlers (customizer list → orderedTabs)
+  const handleDragStart = (index: number) => { dragItem.current = index; };
+  const handleDragEnter = (index: number) => { dragOverItem.current = index; };
+  const handleDragEnd = () => {
+    if (dragItem.current === null || dragOverItem.current === null) return;
+    if (dragItem.current === dragOverItem.current) return;
+    const newOrder = [...tabOrder];
+    const dragged = newOrder.splice(dragItem.current, 1)[0];
+    newOrder.splice(dragOverItem.current, 0, dragged);
+    dragItem.current = null;
+    dragOverItem.current = null;
+    setTabOrder(newOrder);
+  };
+
+  // Tab bar direct drag handlers (drag on actual tab pills)
+  const handleTabBarDragStart = (index: number) => {
+    dragBarItem.current = index;
+  };
+  const handleTabBarDragEnter = (index: number, id: string) => {
+    dragBarOver.current = index;
+    setDragOverTabId(id);
+  };
+  const handleTabBarDragEnd = () => {
+    if (dragBarItem.current === null || dragBarOver.current === null) {
+      setDragOverTabId(null);
+      return;
+    }
+    if (dragBarItem.current !== dragBarOver.current) {
+      // Rebuild tabOrder by reordering only within visible tabs, preserving hidden tab positions
+      const newVisible = [...visibleTabsList];
+      const dragged = newVisible.splice(dragBarItem.current, 1)[0];
+      newVisible.splice(dragBarOver.current, 0, dragged);
+
+      // Walk old tabOrder, replace each visible slot with new visible order
+      let vi = 0;
+      const newOrder = tabOrder.map(id =>
+        visibleTabs.has(id) ? newVisible[vi++].id : id
+      );
+      setTabOrder(newOrder);
+    }
+    dragBarItem.current = null;
+    dragBarOver.current = null;
+    setDragOverTabId(null);
+  };
+
+  const showAll = () => setVisibleTabs(DEFAULT_VISIBLE);
+  const resetOrder = () => setTabOrder(ALL_TABS.map(t => t.id));
+
+  // Ordered tabs list (respects drag order)
+  const orderedTabs = tabOrder.map(id => ALL_TABS.find(t => t.id === id)).filter(Boolean) as TabDef[];
+  const visibleTabsList = orderedTabs.filter(t => visibleTabs.has(t.id));
 
   // Fetch revenue data from Financial Integration API to align values
   const { data: financialData } = useQuery({
@@ -157,96 +317,151 @@ export default function Sales() {
         </div>
       </div>
 
+      {/* Customizer slide animation */}
+      <style>{`
+        @keyframes fadeSlideDown {
+          from { opacity: 0; transform: translateY(-8px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+
       {/* Sales Navigation Tabs */}
       <Card className="w-full max-w-full overflow-hidden">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <div className="border-b px-4 overflow-x-auto">
-            <TabsList className="bg-transparent h-12 p-0 rounded-none min-w-max">
-              <TabsTrigger
-                value="overview"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
+          {/* Tab bar row: scrollable tabs + pinned gear icon on the right */}
+          <div className="border-b flex items-stretch">
+            {/* Scrollable tab list */}
+            <div className="flex-1 overflow-x-auto px-4">
+              <TabsList className="bg-transparent h-12 p-0 rounded-none min-w-max">
+                {visibleTabsList.map((tab, index) => (
+                  <TabsTrigger
+                    key={tab.id}
+                    value={tab.id}
+                    draggable
+                    onDragStart={e => { e.dataTransfer.effectAllowed = "move"; handleTabBarDragStart(index); }}
+                    onDragEnter={() => handleTabBarDragEnter(index, tab.id)}
+                    onDragEnd={handleTabBarDragEnd}
+                    onDragOver={e => e.preventDefault()}
+                    className={[
+                      "data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none",
+                      "rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap cursor-grab active:cursor-grabbing select-none transition-colors",
+                      dragOverTabId === tab.id && dragBarItem.current !== index
+                        ? "border-b-2 border-indigo-400 bg-indigo-50/60"
+                        : ""
+                    ].join(" ")}
+                  >
+                    {tab.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </div>
+
+            {/* Pinned customizer button — always visible at right edge of tab bar */}
+            <div
+              className="flex-shrink-0 flex items-center border-l border-gray-100 px-2 relative"
+              ref={customizerRef}
+            >
+              <button
+                onClick={() => setShowTabCustomizer(v => !v)}
+                title="Customize tabs"
+                className={`flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium transition-all ${
+                  showTabCustomizer
+                    ? "bg-indigo-600 text-white shadow-sm"
+                    : "text-gray-400 hover:text-indigo-600 hover:bg-indigo-50"
+                }`}
               >
-                Overview
-              </TabsTrigger>
-              <TabsTrigger
-                value="orders"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                Orders
-              </TabsTrigger>
-              <TabsTrigger
-                value="leads"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                Leads
-              </TabsTrigger>
-              <TabsTrigger
-                value="opportunities"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                Opportunities
-              </TabsTrigger>
-              <TabsTrigger
-                value="quotes"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                Quotes
-              </TabsTrigger>
-              <TabsTrigger
-                value="invoices"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                Invoices
-              </TabsTrigger>
-              <TabsTrigger
-                value="returns"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                Returns
-              </TabsTrigger>
-              <TabsTrigger
-                value="customers"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                Customers
-              </TabsTrigger>
-              <TabsTrigger
-                value="order-to-cash"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                Order-to-Cash
-              </TabsTrigger>
-              <TabsTrigger
-                value="configuration"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                Configuration
-              </TabsTrigger>
-              <TabsTrigger
-                value="customization"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                S&D Customization
-              </TabsTrigger>
-              <TabsTrigger
-                value="shipping-logistics"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                Shipping & Logistics
-              </TabsTrigger>
-              <TabsTrigger
-                value="revenue-recognition"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                Revenue Recognition
-              </TabsTrigger>
-              <TabsTrigger
-                value="customer-portal"
-                className="data-[state=active]:border-b-2 border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none h-12 px-4 flex-shrink-0 whitespace-nowrap"
-              >
-                Customer Portal
-              </TabsTrigger>
-            </TabsList>
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Tabs</span>
+                <span className={`inline-flex items-center justify-center rounded-full text-[10px] font-bold w-4 h-4 ${
+                  showTabCustomizer ? "bg-white/20 text-white" : "bg-indigo-100 text-indigo-600"
+                }`}>
+                  {visibleTabs.size}
+                </span>
+              </button>
+
+              {/* Customizer Panel — anchored to tab bar */}
+              {showTabCustomizer && (
+                <div
+                  className="absolute right-0 top-full mt-1 z-50 w-80 rounded-2xl border border-gray-200 bg-white shadow-2xl overflow-hidden"
+                  style={{ animation: "fadeSlideDown 0.18s ease" }}
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-indigo-600 to-purple-600">
+                    <div className="flex items-center gap-2 text-white">
+                      <LayoutDashboard className="h-4 w-4" />
+                      <span className="font-semibold text-sm">Customize Tabs</span>
+                      <span className="text-indigo-200 text-xs">({visibleTabs.size}/{ALL_TABS.length})</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={showAll}
+                        title="Show all"
+                        className="flex items-center gap-1 h-7 px-2 rounded-md text-indigo-100 hover:text-white hover:bg-indigo-500 text-xs transition-colors"
+                      >
+                        <CheckCheck className="h-3.5 w-3.5" /> All
+                      </button>
+                      <button
+                        onClick={resetOrder}
+                        title="Reset order"
+                        className="flex items-center gap-1 h-7 px-2 rounded-md text-indigo-100 hover:text-white hover:bg-indigo-500 text-xs transition-colors"
+                      >
+                        <GripVertical className="h-3.5 w-3.5" /> Reset
+                      </button>
+                      <button
+                        onClick={() => setShowTabCustomizer(false)}
+                        className="p-1 rounded-md text-indigo-200 hover:text-white hover:bg-indigo-500 transition-colors"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Draggable tab rows */}
+                  <div className="max-h-[420px] overflow-y-auto divide-y divide-gray-100">
+                    {orderedTabs.map((tab, index) => {
+                      const isOn = visibleTabs.has(tab.id);
+                      const isPinned = !!tab.pinned;
+                      return (
+                        <div
+                          key={tab.id}
+                          draggable
+                          onDragStart={() => handleDragStart(index)}
+                          onDragEnter={() => handleDragEnter(index)}
+                          onDragEnd={handleDragEnd}
+                          onDragOver={e => e.preventDefault()}
+                          className={`flex items-center justify-between px-3 py-2.5 transition-colors cursor-grab active:cursor-grabbing ${
+                            isOn ? "bg-white" : "bg-gray-50"
+                          } hover:bg-indigo-50 group`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <GripVertical className="h-4 w-4 text-gray-300 group-hover:text-indigo-400 flex-shrink-0 transition-colors" />
+                            <span className="text-base select-none">{tab.icon}</span>
+                            <div className="min-w-0">
+                              <p className={`text-sm font-medium truncate ${ isOn ? "text-gray-800" : "text-gray-400" }`}>
+                                {tab.label}
+                              </p>
+                              {isPinned && (
+                                <p className="text-[10px] text-indigo-400 font-medium">Always visible</p>
+                              )}
+                            </div>
+                          </div>
+                          <Switch
+                            checked={isOn}
+                            onCheckedChange={() => !isPinned && toggleTab(tab.id)}
+                            disabled={isPinned}
+                            className="data-[state=checked]:bg-indigo-600 flex-shrink-0 ml-3"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="px-4 py-2 bg-gray-50 border-t border-gray-100">
+                    <p className="text-[11px] text-gray-400 text-center">Drag ↕ to reorder · toggle to show/hide · auto-saved</p>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Overview Tab Content */}

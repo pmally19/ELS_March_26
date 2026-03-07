@@ -947,6 +947,17 @@ export default function CustomerMaster() {
     if (errors.length > 0) {
       throw new Error(`Address validation errors:\n${errors.join('\n')}`);
     }
+
+    // STEP 4: Sync relationships in the backend
+    try {
+      console.log('🔄 Syncing address relationships for customer', customerId);
+      await apiRequest(`/api/customers/${customerId}/relationships/sync`, {
+        method: 'POST'
+      });
+      console.log('✅ Synchronized address relationships successfully');
+    } catch (error) {
+      console.error('⚠️ Failed to sync address relationships:', error);
+    }
   };
 
   // Helper function to normalize address data for comparison (handles null/undefined and temporary numbers)
@@ -1182,7 +1193,7 @@ export default function CustomerMaster() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => apiRequest(`/api/master-data/customer/${id}`, {
+    mutationFn: (id: number) => apiRequest(`/ api / master - data / customer / ${id}`, {
       method: "DELETE"
     }),
     onSuccess: () => {
@@ -1196,7 +1207,7 @@ export default function CustomerMaster() {
 
   const toggleStatusMutation = useMutation({
     mutationFn: ({ id, is_active }: { id: number; is_active: boolean }) =>
-      apiRequest(`/api/master-data/customer/${id}`, {
+      apiRequest(`/ api / master - data / customer / ${id}`, {
         method: "PATCH",
         body: JSON.stringify({ is_active: !is_active })
       }).then(res => res.json()),
@@ -1645,7 +1656,7 @@ export default function CustomerMaster() {
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `customers-${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `customers - ${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1732,7 +1743,7 @@ export default function CustomerMaster() {
           disabled={isRefreshing}
           title="Refresh customer data"
         >
-          <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`h - 4 w - 4 ${isRefreshing ? 'animate-spin' : ''}`} />
         </Button>
       </div>
 
@@ -1795,7 +1806,7 @@ export default function CustomerMaster() {
                             <TableCell className="hidden md:table-cell">{customer.payment_terms || "N/A"}</TableCell>
                             <TableCell className="text-center">
                               <span
-                                className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${customer.is_active === true
+                                className={`inline - flex items - center px - 2 py - 0.5 rounded text - xs font - medium ${customer.is_active === true
                                   ? "bg-green-100 text-green-800"
                                   : "bg-gray-100 text-gray-800"
                                   }`}
@@ -2087,7 +2098,7 @@ export default function CustomerMaster() {
                                     // This allows for payment terms that might not be in the dropdown yet
                                     newPaymentTerms = String(defaultPaymentTerms);
                                   }
-                                  autoFilledFields.push(`Payment Terms: ${newPaymentTerms} (Auto-filled from Customer Type)`);
+                                  autoFilledFields.push(`Payment Terms: ${newPaymentTerms}(Auto - filled from Customer Type)`);
                                 }
                               }
 
@@ -2157,7 +2168,7 @@ export default function CustomerMaster() {
                                 setTimeout(() => {
                                   toast({
                                     title: "Fields Auto-filled",
-                                    description: `Auto-filled from customer type: ${autoFilledFields.join(", ")}. Don't forget to save!`,
+                                    description: `Auto - filled from customer type: ${autoFilledFields.join(", ")}.Don't forget to save!`,
                                   });
                                 }, 100);
                               } else if (editingCustomer) {
@@ -2191,8 +2202,8 @@ export default function CustomerMaster() {
                               </SelectItem>
                             ))}
                           </SelectContent>
-                        </Select>
-                      </div>
+                        </Select >
+                      </div >
                       <div>
                         <label className="text-sm font-medium">Description</label>
                         <Input
@@ -2201,7 +2212,7 @@ export default function CustomerMaster() {
                           placeholder="Customer description"
                         />
                       </div>
-                    </div>
+                    </div >
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-sm font-medium">Tax ID</label>
@@ -2292,19 +2303,19 @@ export default function CustomerMaster() {
                         />
                       </div>
                     </div>
-                  </TabsContent>
+                  </TabsContent >
 
                   {/* Address Tab */}
-                  <TabsContent value="address" className="space-y-4 pt-4">
+                  < TabsContent value="address" className="space-y-4 pt-4" >
                     <CustomerAddressManager
                       customerData={formData}
                       onUpdate={handleAddressUpdate}
                       isEditing={true}
                     />
-                  </TabsContent>
+                  </TabsContent >
 
                   {/* Company Code Data Tab */}
-                  <TabsContent value="company" className="space-y-4 pt-4">
+                  < TabsContent value="company" className="space-y-4 pt-4" >
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-sm font-medium">Company Code *</label>
@@ -2668,10 +2679,10 @@ export default function CustomerMaster() {
                         <span className="text-sm font-medium">Deletion Flag</span>
                       </div>
                     </div>
-                  </TabsContent>
+                  </TabsContent >
 
                   {/* Sales Area Data Tab */}
-                  <TabsContent value="sales" className="space-y-4 pt-4">
+                  < TabsContent value="sales" className="space-y-4 pt-4" >
                     <div className="grid grid-cols-1 gap-4">
                       <div>
                         <label className="text-sm font-medium">Sales Area</label>
@@ -3016,10 +3027,10 @@ export default function CustomerMaster() {
                         />
                       </div>
                     </div>
-                  </TabsContent>
+                  </TabsContent >
 
                   {/* Settings Tab */}
-                  <TabsContent value="settings" className="space-y-4 pt-4">
+                  < TabsContent value="settings" className="space-y-4 pt-4" >
                     <div className="grid grid-cols-2 gap-4">
                       <div className="flex items-center space-x-2">
                         <Switch
@@ -3145,8 +3156,8 @@ export default function CustomerMaster() {
                         </div>
                       </div>
                     </div>
-                  </TabsContent>
-                </Tabs>
+                  </TabsContent >
+                </Tabs >
 
                 <div className="flex gap-2 pt-4 border-t mt-4">
                   <Button type="button" variant="outline" onClick={() => resetForm()}>
@@ -3156,18 +3167,18 @@ export default function CustomerMaster() {
                     {editingCustomer ? "Update" : "Create"} Customer
                   </Button>
                 </div>
-              </form>
-            </DialogContent>
-          </Dialog>
-        </TabsContent>
+              </form >
+            </DialogContent >
+          </Dialog >
+        </TabsContent >
 
         <TabsContent value="import" className="space-y-6">
           <CustomerMasterExcelImport />
         </TabsContent>
-      </Tabs>
+      </Tabs >
 
       {/* Customer Details Dialog */}
-      <Dialog open={isCustomerDetailsOpen} onOpenChange={setIsCustomerDetailsOpen}>
+      < Dialog open={isCustomerDetailsOpen} onOpenChange={setIsCustomerDetailsOpen} >
         <DialogContent className="w-[95vw] sm:w-full sm:max-w-[90vw] md:max-w-4xl lg:max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
           {viewingCustomerDetails && (
             <>
@@ -3515,7 +3526,7 @@ export default function CustomerMaster() {
             </>
           )}
         </DialogContent>
-      </Dialog>
-    </div>
+      </Dialog >
+    </div >
   );
 }

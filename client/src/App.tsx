@@ -2018,7 +2018,7 @@ function Router() {
             <Route path="/tools/business-rule-testing" component={lazy(() => import("@/pages/BusinessRuleTesting"))} />
 
             {/* Reports, Upload and Settings */}
-            <Route path="/reports" component={lazy(() => import("./pages/ReportsFixed"))} />
+            <Route path="/reports" component={lazy(() => import("./pages/Reports"))} />
             <Route path="/enterprise-reports" component={EnterpriseReports} />
             <Route path="/upload" component={Upload} />
             <Route path="/settings" component={Settings} />

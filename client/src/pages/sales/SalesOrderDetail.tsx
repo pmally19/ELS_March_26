@@ -27,6 +27,13 @@ export default function SalesOrderDetail() {
         enabled: !!id,
     });
 
+    const orderNumForFlow = (orderResponse as any)?.data?.order_number || (orderResponse as any)?.data?.orderNumber;
+
+    const { data: documentFlowResponse, isLoading: isLoadingDocumentFlow } = useQuery({
+        queryKey: [`/api/order-to-cash/document-flow/SO/${orderNumForFlow}`],
+        enabled: !!orderNumForFlow,
+    });
+
     if (isLoading) {
         return (
             <div className="flex items-center justify-center h-screen">
@@ -185,6 +192,7 @@ export default function SalesOrderDetail() {
                                         <TableHead className="w-[80px]">Item</TableHead>
                                         <TableHead>Material</TableHead>
                                         <TableHead>Description</TableHead>
+                                        <TableHead>Category</TableHead>
                                         <TableHead className="text-right">Qty</TableHead>
                                         <TableHead className="w-[60px]">Unit</TableHead>
                                         <TableHead className="text-right">Net Price</TableHead>
@@ -195,7 +203,7 @@ export default function SalesOrderDetail() {
                                 <TableBody>
                                     {items.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={8} className="text-center py-6 text-muted-foreground">
+                                            <TableCell colSpan={9} className="text-center py-6 text-muted-foreground">
                                                 No items found
                                             </TableCell>
                                         </TableRow>
@@ -205,6 +213,7 @@ export default function SalesOrderDetail() {
                                                 <TableCell>{index + 1}</TableCell>
                                                 <TableCell className="font-medium">{item.material_code}</TableCell>
                                                 <TableCell>{item.material_description || item.material_name}</TableCell>
+                                                <TableCell>{item.item_category || 'N/A'}</TableCell>
                                                 <TableCell className="text-right">{item.ordered_quantity}</TableCell>
                                                 <TableCell>{item.unit_of_measure || item.unit}</TableCell>
                                                 <TableCell className="text-right">
@@ -314,17 +323,41 @@ export default function SalesOrderDetail() {
                             <CardDescription>Related documents in the value chain</CardDescription>
                         </CardHeader>
                         <CardContent>
-                            <div className="flex items-center space-x-4 text-sm">
-                                <div className="flex flex-col items-center">
+                            <div className="flex items-center space-x-4 text-sm overflow-x-auto pb-4">
+                                <div className="flex flex-col items-center flex-shrink-0">
                                     <div className="p-3 bg-primary/10 rounded-full mb-2">
                                         <FileText className="h-5 w-5 text-primary" />
                                     </div>
                                     <span className="font-medium">Sales Order</span>
-                                    <span className="text-xs text-muted-foreground">{order.orderNumber}</span>
+                                    <span className="text-xs text-muted-foreground">{order.orderNumber || order.order_number}</span>
                                 </div>
-                                <div className="h-0.5 w-10 bg-muted" />
-                                {/* Placeholder for flow */}
-                                <div className="text-muted-foreground italic">No further documents generated yet</div>
+
+                                {isLoadingDocumentFlow ? (
+                                    <>
+                                        <div className="h-0.5 w-10 bg-muted flex-shrink-0" />
+                                        <div className="text-muted-foreground italic flex-shrink-0 ml-4">Loading document flow...</div>
+                                    </>
+                                ) : (documentFlowResponse as any)?.documentFlow && (documentFlowResponse as any).documentFlow.length > 0 ? (
+                                    (documentFlowResponse as any).documentFlow.map((flow: any, index: number) => (
+                                        <div key={flow.id || index} className="flex flex-row items-center flex-shrink-0">
+                                            <div className="h-0.5 w-10 bg-muted mx-4" />
+                                            <div className="flex flex-col items-center">
+                                                <div className={`p-3 rounded-full mb-2 ${flow.target_document_type === 'DL' ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
+                                                    {flow.target_document_type === 'DL' ? <Truck className="h-5 w-5" /> : <FileText className="h-5 w-5" />}
+                                                </div>
+                                                <span className="font-medium">
+                                                    {flow.target_document_type === 'DL' ? 'Delivery' : flow.target_document_type === 'BL' ? 'Billing' : flow.target_document_type === 'INV' ? 'Invoice' : flow.target_document_type}
+                                                </span>
+                                                <span className="text-xs text-muted-foreground">{flow.target_document}</span>
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <>
+                                        <div className="h-0.5 w-10 bg-muted flex-shrink-0" />
+                                        <div className="text-muted-foreground italic flex-shrink-0 ml-4">No further documents generated yet</div>
+                                    </>
+                                )}
                             </div>
                         </CardContent>
                     </Card>

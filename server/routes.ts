@@ -73,6 +73,8 @@ import salesDistributionRoutes from "./routes/sales-distribution-routes";
 import sdCustomizationRoutes from "./routes/sd-customization-routes";
 import cashManagementRoutes from "./routes/transactions/cash-management";
 import orderToCashRoutes from "./routes/order-to-cash-routes";
+import billingRoutes from "./routes/billing-routes";
+import orderToCashBillingRoutes from "./routes/order-to-cash-billing";
 import shippingPointDeterminationRouter from "./routes/master-data/shipping-point-determination";
 
 import currencyRoutes from "./routes/currency-routes";
@@ -248,6 +250,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/purchase", purchaseCopyRoutes);
   app.use("/api/purchase", requisitionRoutes);
   app.use("/api/purchase/vendor-payments", vendorPaymentRoutes);
+
+  // Register SAP Billing routes (VF01/VF02/VF03/VF04 equivalent)
+  app.use("/api/billing", billingRoutes);
+  // Register O2C Billing Integration (VF01 from delivery, VF11 cancel, VBFA document flow, billing status per SO)
+  app.use("/api/order-to-cash", orderToCashBillingRoutes);
 
   // Register production routes
   app.use("/api/production", productionRoutes);
@@ -2409,15 +2416,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/customers", async (req: Request, res: Response) => {
     try {
       const result = await db.execute(sql`
-        SELECT 
-          id, customer_code, name, type, description, tax_id, industry, segment,
-          address, city, state, country, postal_code, region,
-          phone, alt_phone, email, website, currency, payment_terms, payment_method,
-          credit_limit, credit_rating, discount_group, price_group,
-          incoterms, shipping_method, delivery_terms, delivery_route,
-          sales_rep_id, parent_customer_id, status, is_b2b, is_b2c, is_vip,
-          notes, tags, company_code_id, is_active, created_at, updated_at,
-          created_by, updated_by, version, active
+        SELECT *
         FROM erp_customers
         WHERE is_active = true OR is_active IS NULL
         ORDER BY name ASC
@@ -2449,15 +2448,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const result = await db.execute(sql`
-        SELECT 
-          id, customer_code, name, type, description, tax_id, industry, segment,
-          address, city, state, country, postal_code, region,
-          phone, alt_phone, email, website, currency, payment_terms, payment_method,
-          credit_limit, credit_rating, discount_group, price_group,
-          incoterms, shipping_method, delivery_terms, delivery_route,
-          sales_rep_id, parent_customer_id, status, is_b2b, is_b2c, is_vip,
-          notes, tags, company_code_id, is_active, created_at, updated_at,
-          created_by, updated_by, version, active
+        SELECT *
         FROM erp_customers
         WHERE id = ${id}
       `);

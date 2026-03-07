@@ -10,7 +10,7 @@ const router = Router();
 router.get('/gl-accounts', async (req, res) => {
   try {
     console.log('Fetching GL accounts from database...');
-    
+
     // Check if gl_accounts table exists
     try {
       await db.execute(sql`SELECT 1 FROM gl_accounts LIMIT 1`);
@@ -18,17 +18,31 @@ router.get('/gl-accounts', async (req, res) => {
       console.log('gl_accounts table does not exist, returning empty array');
       return res.json([]);
     }
-    
-    // Query the actual gl_accounts table
+
+    // Query the actual gl_accounts table with semantic account_type labels
     const result = await db.execute(sql`
-      SELECT id, account_number, account_name, account_type, account_group,
-             balance_sheet_account, pl_account, is_active,
+      SELECT id, account_number, account_name,
+             CASE
+               WHEN pl_account = true THEN
+                 CASE
+                   WHEN CAST(account_number AS bigint) >= 10000 AND CAST(account_number AS bigint) < 12000 THEN 'REVENUE'
+                   ELSE 'EXPENSE'
+                 END
+               WHEN balance_sheet_account = true THEN
+                 CASE
+                   WHEN CAST(account_number AS bigint) < 3000 THEN 'ASSET'
+                   WHEN CAST(account_number AS bigint) < 4000 THEN 'LIABILITY'
+                   ELSE 'EQUITY'
+                 END
+               ELSE account_type
+             END as account_type,
+             account_group, balance_sheet_account, pl_account, is_active,
              created_at, updated_at
       FROM gl_accounts 
       WHERE is_active = true
       ORDER BY account_number
     `);
-    
+
     console.log(`Found ${result.rows.length} GL accounts`);
     res.json(result.rows);
   } catch (error: any) {
@@ -41,11 +55,11 @@ router.get('/gl-accounts', async (req, res) => {
 // GET /api/general-ledger/gl-entries - Fetch GL entries with enhanced fields and filtering
 router.get('/gl-entries', async (req, res) => {
   try {
-    const { 
-      document_number, 
-      fiscal_year, 
-      fiscal_period, 
-      source_document_type, 
+    const {
+      document_number,
+      fiscal_year,
+      fiscal_period,
+      source_document_type,
       source_module,
       start_date,
       end_date,
@@ -55,7 +69,7 @@ router.get('/gl-entries', async (req, res) => {
     } = req.query;
 
     console.log('Fetching GL entries from database with filters:', req.query);
-    
+
     // Check if gl_entries table exists
     try {
       await db.execute(sql`SELECT 1 FROM gl_entries LIMIT 1`);
@@ -63,7 +77,7 @@ router.get('/gl-entries', async (req, res) => {
       console.log('gl_entries table does not exist, returning empty array');
       return res.json({ entries: [], total: 0, limit: 100, offset: 0 });
     }
-    
+
     // Check if gl_accounts table exists for the JOIN
     let hasGlAccounts = false;
     try {
@@ -72,10 +86,10 @@ router.get('/gl-entries', async (req, res) => {
     } catch (e) {
       hasGlAccounts = false;
     }
-    
+
     const limitValue = parseInt(limit as string) || 100;
     const offsetValue = parseInt(offset as string) || 0;
-    
+
     let result;
     if (hasGlAccounts) {
       // Enhanced query with all new fields using drizzle sql template for proper parameterization
@@ -151,9 +165,9 @@ router.get('/gl-entries', async (req, res) => {
         OFFSET ${offsetValue}
       `);
     }
-    
+
     console.log(`Found ${result.rows.length} GL entries`);
-    
+
     // Get total count for pagination
     let countResult;
     if (hasGlAccounts) {
@@ -186,7 +200,7 @@ router.get('/gl-entries', async (req, res) => {
           ${end_date ? sql`AND posting_date <= ${end_date}` : sql``}
       `);
     }
-    
+
     const total = parseInt(countResult.rows[0]?.total || '0');
 
     res.json({
@@ -206,7 +220,7 @@ router.get('/gl-entries', async (req, res) => {
 router.get('/balance-summary', async (req, res) => {
   try {
     console.log('Calculating balance summary...');
-    
+
     // Check if gl_accounts table exists
     try {
       await db.execute(sql`SELECT 1 FROM gl_accounts LIMIT 1`);
@@ -214,7 +228,7 @@ router.get('/balance-summary', async (req, res) => {
       console.log('gl_accounts table does not exist, returning empty array');
       return res.json([]);
     }
-    
+
     const result = await db.execute(sql`
       SELECT 
         account_type,
@@ -224,7 +238,7 @@ router.get('/balance-summary', async (req, res) => {
       GROUP BY account_type
       ORDER BY account_type
     `);
-    
+
     res.json(result.rows);
   } catch (error: any) {
     console.error('Error calculating balance summary:', error);
@@ -237,11 +251,11 @@ router.get('/balance-summary', async (req, res) => {
 router.get('/trial-balance', async (req, res) => {
   try {
     console.log('Generating trial balance...');
-    
+
     // Check if required tables exist
     let hasGlAccounts = false;
     let hasGlEntries = false;
-    
+
     try {
       await db.execute(sql`SELECT 1 FROM gl_accounts LIMIT 1`);
       hasGlAccounts = true;
@@ -249,29 +263,43 @@ router.get('/trial-balance', async (req, res) => {
       console.log('gl_accounts table does not exist, returning empty array');
       return res.json([]);
     }
-    
+
     try {
       await db.execute(sql`SELECT 1 FROM gl_entries LIMIT 1`);
       hasGlEntries = true;
     } catch (e) {
       hasGlEntries = false;
     }
-    
+
     let result;
     if (hasGlEntries) {
-      // Full trial balance with entries
+      // Full trial balance with entries — emit semantic account_type labels
       result = await db.execute(sql`
         SELECT 
           ga.account_number,
           ga.account_name,
-          ga.account_type,
+          -- Map  account type codes to semantic labels used by the frontend
+          CASE
+            WHEN ga.pl_account = true THEN
+              CASE
+                WHEN CAST(ga.account_number AS bigint) >= 10000 AND CAST(ga.account_number AS bigint) < 12000 THEN 'REVENUE'
+                ELSE 'EXPENSE'
+              END
+            WHEN ga.balance_sheet_account = true THEN
+              CASE
+                WHEN CAST(ga.account_number AS bigint) < 3000 THEN 'ASSET'
+                WHEN CAST(ga.account_number AS bigint) < 4000 THEN 'LIABILITY'
+                ELSE 'EQUITY'
+              END
+            ELSE ga.account_type
+          END as account_type,
           COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'D' THEN ge.amount ELSE 0 END), 0) as debit_total,
           COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'C' THEN ge.amount ELSE 0 END), 0) as credit_total,
           COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'D' THEN ge.amount ELSE -ge.amount END), 0) as balance
         FROM gl_accounts ga
         LEFT JOIN gl_entries ge ON ga.id = ge.gl_account_id
         WHERE ga.is_active = true
-        GROUP BY ga.id, ga.account_number, ga.account_name, ga.account_type
+        GROUP BY ga.id, ga.account_number, ga.account_name, ga.account_type, ga.balance_sheet_account, ga.pl_account
         ORDER BY ga.account_number
       `);
     } else {
@@ -280,7 +308,20 @@ router.get('/trial-balance', async (req, res) => {
         SELECT 
           ga.account_number,
           ga.account_name,
-          ga.account_type,
+          CASE
+            WHEN ga.pl_account = true THEN
+              CASE
+                WHEN CAST(ga.account_number AS bigint) >= 10000 AND CAST(ga.account_number AS bigint) < 12000 THEN 'REVENUE'
+                ELSE 'EXPENSE'
+              END
+            WHEN ga.balance_sheet_account = true THEN
+              CASE
+                WHEN CAST(ga.account_number AS bigint) < 3000 THEN 'ASSET'
+                WHEN CAST(ga.account_number AS bigint) < 4000 THEN 'LIABILITY'
+                ELSE 'EQUITY'
+              END
+            ELSE ga.account_type
+          END as account_type,
           0 as debit_total,
           0 as credit_total,
           0 as balance
@@ -289,7 +330,7 @@ router.get('/trial-balance', async (req, res) => {
         ORDER BY ga.account_number
       `);
     }
-    
+
     res.json(result.rows);
   } catch (error: any) {
     console.error('Error generating trial balance:', error);
@@ -301,9 +342,9 @@ router.get('/trial-balance', async (req, res) => {
 // POST /api/general-ledger/postings - Create GL posting
 router.post('/postings', async (req, res) => {
   try {
-    const { 
-      document_number, 
-      entries, 
+    const {
+      document_number,
+      entries,
       document_type,
       company_code,
       posting_date,
@@ -311,26 +352,26 @@ router.post('/postings', async (req, res) => {
       reference,
       currency
     } = req.body;
-    
+
     console.log('Creating GL posting:', { document_number, entries });
-    
+
     if (!entries || !Array.isArray(entries) || entries.length === 0) {
-      return res.status(400).json({ 
-        message: 'Entries array is required' 
+      return res.status(400).json({
+        message: 'Entries array is required'
       });
     }
-    
+
     // Validate that debits equal credits
     const totalDebits = entries
       .filter(e => e.debit_credit_indicator === 'D')
       .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
-    
+
     const totalCredits = entries
       .filter(e => e.debit_credit_indicator === 'C')
       .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
-    
+
     if (Math.abs(totalDebits - totalCredits) > 0.01) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: 'Debits must equal credits',
         debits: totalDebits,
         credits: totalCredits
@@ -477,10 +518,10 @@ router.post('/postings', async (req, res) => {
         )
       `);
     });
-    
+
     await Promise.all(insertPromises);
-    
-    res.status(201).json({ 
+
+    res.status(201).json({
       success: true,
       message: 'GL posting created successfully',
       document_number: result.documentNumber,
@@ -489,10 +530,10 @@ router.post('/postings', async (req, res) => {
     });
   } catch (error) {
     console.error('Error creating GL posting:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Failed to create GL posting',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -502,31 +543,31 @@ router.get('/accounts/:id', async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Fetching account details for ID: ${id}`);
-    
+
     const accountResult = await db.execute(sql`
       SELECT * FROM gl_accounts WHERE id = ${id}
     `);
-    
+
     if (accountResult.rows.length === 0) {
       return res.status(404).json({ message: 'Account not found' });
     }
-    
+
     const entriesResult = await db.execute(sql`
       SELECT * FROM gl_entries 
       WHERE gl_account_id = ${id}
       ORDER BY posting_date DESC, id DESC
       LIMIT 100
     `);
-    
+
     res.json({
       account: accountResult.rows[0],
       entries: entriesResult.rows
     });
   } catch (error) {
     console.error('Error fetching account details:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       message: 'Failed to fetch account details',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -536,11 +577,11 @@ router.get('/profit-loss', async (req, res) => {
   try {
     const { startDate, endDate, companyCode } = req.query;
     console.log('Generating Profit & Loss report...', { startDate, endDate, companyCode });
-    
+
     // Check if required tables exist
     let hasGlAccounts = false;
     let hasGlEntries = false;
-    
+
     try {
       await db.execute(sql`SELECT 1 FROM gl_accounts LIMIT 1`);
       hasGlAccounts = true;
@@ -556,22 +597,22 @@ router.get('/profit-loss', async (req, res) => {
         period: { startDate: startDate || null, endDate: endDate || null }
       });
     }
-    
+
     try {
       await db.execute(sql`SELECT 1 FROM gl_entries LIMIT 1`);
       hasGlEntries = true;
     } catch (e) {
       hasGlEntries = false;
     }
-    
+
     let revenueResult, expensesResult;
-    
+
     if (hasGlEntries) {
       // Build date filter condition
       let dateCondition = '';
       const params: any[] = [];
       let paramIndex = 1;
-      
+
       if (startDate && endDate) {
         dateCondition = `AND ge.posting_date >= $${paramIndex} AND ge.posting_date <= $${paramIndex + 1}`;
         params.push(startDate, endDate);
@@ -585,7 +626,7 @@ router.get('/profit-loss', async (req, res) => {
         params.push(endDate);
         paramIndex += 1;
       }
-      
+
       // Revenue query - REVENUE accounts (credit entries increase revenue)
       const revenueQuery = `
         SELECT 
@@ -605,7 +646,7 @@ router.get('/profit-loss', async (req, res) => {
                COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'D' THEN ge.amount ELSE 0 END), 0) != 0
         ORDER BY ga.account_number
       `;
-      
+
       // Expenses query - EXPENSE accounts (debit entries increase expenses)
       const expensesQuery = `
         SELECT 
@@ -625,7 +666,7 @@ router.get('/profit-loss', async (req, res) => {
                COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'C' THEN ge.amount ELSE 0 END), 0) != 0
         ORDER BY ga.account_number
       `;
-      
+
       // Execute queries using pool
       if (params.length > 0) {
         revenueResult = await pool.query(revenueQuery, params);
@@ -649,7 +690,7 @@ router.get('/profit-loss', async (req, res) => {
           AND pl_account = true
         ORDER BY account_number
       `);
-      
+
       expensesResult = await pool.query(`
         SELECT 
           account_number,
@@ -664,7 +705,7 @@ router.get('/profit-loss', async (req, res) => {
         ORDER BY account_number
       `);
     }
-    
+
     const revenue = revenueResult.rows.map((row: any) => ({
       accountNumber: row.account_number,
       accountName: row.account_name,
@@ -672,7 +713,7 @@ router.get('/profit-loss', async (req, res) => {
       accountGroup: row.account_group || '',
       amount: parseFloat(row.net_amount || 0)
     }));
-    
+
     const expenses = expensesResult.rows.map((row: any) => ({
       accountNumber: row.account_number,
       accountName: row.account_name,
@@ -680,11 +721,11 @@ router.get('/profit-loss', async (req, res) => {
       accountGroup: row.account_group || '',
       amount: parseFloat(row.net_amount || 0)
     }));
-    
+
     const totalRevenue = revenue.reduce((sum: number, item: any) => sum + item.amount, 0);
     const totalExpenses = expenses.reduce((sum: number, item: any) => sum + item.amount, 0);
     const netIncome = totalRevenue - totalExpenses;
-    
+
     res.json({
       success: true,
       revenue,
@@ -700,10 +741,10 @@ router.get('/profit-loss', async (req, res) => {
     });
   } catch (error: any) {
     console.error('Error generating Profit & Loss report:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Failed to generate Profit & Loss report',
-      error: error.message 
+      error: error.message
     });
   }
 });

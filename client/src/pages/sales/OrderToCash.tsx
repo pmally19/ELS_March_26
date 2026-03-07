@@ -5175,7 +5175,9 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
         storage_location_name: '',
         storage_location_code: '',
         item_category: '',
-        item_category_group: ''
+        item_category_group: '',
+        shipping_point_id: '',
+        shipping_point_code: ''
       }]
     }));
   };
@@ -5350,7 +5352,7 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
       company_code_id: orderData.company_code_id ? parseInt(orderData.company_code_id) : null,
       items: orderData.items.map((item, index) => ({
         ...item,
-        manual_conditions: manualPriceOverrides[index] || undefined,
+        manual_conditions: manualPriceOverrides || undefined,
         material_id: parseInt(item.material_id),
         quantity: parseInt(item.quantity),
         unit_price: parseFloat(item.unit_price),
@@ -5405,6 +5407,7 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 const updatedData: any = {
                   customer_id: value,
                   customer_name: customer?.name || customer?.customer_name || '',
+                  customer_pricing_procedure: customer?.customer_pricing_procedure || null,
                 };
 
                 // Track which fields were auto-filled for UI indication
@@ -6287,40 +6290,7 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Label htmlFor="shipping_point">
-                Shipping Point
-                {autoFilledFields.has('shipping_point_id') && (
-                  <span className="ml-2 text-xs text-green-600 font-normal">(Auto-filled)</span>
-                )}
-              </Label>
-              <Select
-                value={orderData.shipping_point_id?.toString() || ""}
-                onValueChange={(value) => {
-                  setAutoFilledFields(prev => { const u = new Set(prev); u.delete('shipping_point_id'); return u; });
-                  const selectedPoint = shippingPointList.find((sp: any) => sp.id?.toString() === value || sp.code === value);
-                  setOrderData(prev => ({
-                    ...prev,
-                    shipping_point_id: value,
-                    shipping_point_code: selectedPoint ? selectedPoint.code : prev.shipping_point_code
-                  }));
-                }}
-              >
-                <SelectTrigger className={autoFilledFields.has('shipping_point_id') ? 'bg-green-50 border-green-300' : ''}>
-                  <SelectValue placeholder="Select shipping point" />
-                </SelectTrigger>
-                <SelectContent>
-                  {shippingPointList.map((sp: any) => (
-                    <SelectItem key={`sp-${sp.id || sp.code}`} value={sp.id?.toString() || sp.code}>
-                      {sp.code} - {sp.name}
-                    </SelectItem>
-                  ))}
-                  {shippingPointList.length === 0 && (
-                    <SelectItem value="none" disabled>No shipping points available</SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Shipping point is now per-item — see line items table below */}
             <div>
               <Label htmlFor="priority">Priority</Label>
               <Select
@@ -6419,9 +6389,9 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
               </div>
             </div>
 
-            {/* Column Headers */}
-            <div className="grid gap-x-2 mb-1 px-2" style={{ gridTemplateColumns: '2.5fr 0.6fr 0.7fr 0.9fr 1fr 1fr 1fr 0.8fr 0.5fr' }}>
-              {['Material', 'Qty', 'Unit', 'Unit Price', 'Plant', 'Storage Loc.', 'Item Cat.', 'Line Total', ''].map((h) => (
+            {/* Column Headers — 10 cols: Material/Qty/Unit/UnitPrice/Plant/StorageLoc/ItemCat/ShipPt/LineTotal/Remove */}
+            <div className="grid gap-x-2 mb-1 px-2" style={{ gridTemplateColumns: '2.2fr 0.6fr 0.6fr 0.8fr 0.9fr 0.9fr 0.9fr 0.9fr 0.8fr 0.4fr' }}>
+              {['Material', 'Qty', 'Unit', 'Unit Price', 'Plant', 'Storage Loc.', 'Item Cat.', 'Ship.Pt.', 'Line Total', ''].map((h) => (
                 <span key={h} className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</span>
               ))}
             </div>
@@ -6429,7 +6399,7 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
             <div className="space-y-2">
               {orderData.items.map((item, index) => (
                 <div key={index} className="grid gap-x-2 items-center bg-white border border-gray-200 rounded-lg px-2 py-2 hover:border-blue-300 transition-colors"
-                  style={{ gridTemplateColumns: '2.5fr 0.6fr 0.7fr 0.9fr 1fr 1fr 1fr 0.8fr 0.5fr' }}>
+                  style={{ gridTemplateColumns: '2.2fr 0.6fr 0.6fr 0.8fr 0.9fr 0.9fr 0.9fr 0.9fr 0.8fr 0.4fr' }}>
 
                   {/* Material */}
                   <Select onValueChange={(value) => {
@@ -6561,6 +6531,31 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                       <SelectItem value="KLN">KLN - Consignment</SelectItem>
                       {item.item_category && !['TAN', 'TACP', 'TAB', 'TANN', 'KLN'].includes(item.item_category) && (
                         <SelectItem value={item.item_category}>{item.item_category} (Auto)</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Shipping Point (SAP: VSTEL — item level, not header) */}
+                  <Select
+                    value={item.shipping_point_id?.toString() || '__none__'}
+                    onValueChange={(v) => {
+                      const sp = shippingPointList.find((s: any) => s.id?.toString() === v || s.code === v);
+                      updateItem(index, 'shipping_point_id', v === '__none__' ? '' : v);
+                      updateItem(index, 'shipping_point_code', sp ? sp.code : '');
+                    }}
+                  >
+                    <SelectTrigger className={`h-8 text-xs ${item.shipping_point_id ? 'bg-teal-50 border-teal-300 text-teal-800' : ''}`}>
+                      <SelectValue placeholder="—" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— None —</SelectItem>
+                      {shippingPointList.map((sp: any) => (
+                        <SelectItem key={`sp-${sp.id || sp.code}-${index}`} value={sp.id?.toString() || sp.code}>
+                          {sp.code} - {sp.name}
+                        </SelectItem>
+                      ))}
+                      {shippingPointList.length === 0 && (
+                        <SelectItem value="no-sp" disabled>No shipping points</SelectItem>
                       )}
                     </SelectContent>
                   </Select>

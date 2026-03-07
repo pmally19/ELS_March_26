@@ -568,9 +568,55 @@ router.post('/:procedureCode/preview', async (req, res) => {
       } catch { return undefined; }
     };
 
+    // ── Helper: resolve destination location for a given customer_id ─────────────────
+    let destinationCountry: string | undefined = undefined;
+    let destinationState: string | undefined = undefined;
+    if (customerId) {
+      try {
+        const queryStr = `
+          SELECT ca.state, 
+                 COALESCE((SELECT code FROM states s WHERE s.name ILIKE ca.state OR s.code ILIKE ca.state LIMIT 1), ca.state) as state_code,
+                 COALESCE(c.code, ca.country) as country_code 
+          FROM customer_addresses ca
+          LEFT JOIN countries c ON c.name ILIKE ca.country OR c.code = ca.country
+          WHERE ca.customer_id = $1 
+          ORDER BY CASE WHEN ca.address_type = 'ship_to' THEN 1 ELSE 2 END ASC, ca.is_primary DESC, ca.id DESC 
+          LIMIT 1
+        `;
+        const cRes = await pool.query(queryStr, [parseInt(String(customerId))]);
+        if (cRes.rows.length > 0) {
+          destinationCountry = cRes.rows[0].country_code;
+          destinationState = cRes.rows[0].state_code || cRes.rows[0].state;
+        }
+      } catch (err) { console.error('Preview Dest Error', err); }
+    }
+
+    // ── Helper: resolve departure location from a plant_id ─────────────────
+    const getDepartureLocation = async (plantId: number | string | undefined | null): Promise<{ country?: string, state?: string }> => {
+      if (!plantId) return {};
+      try {
+        const queryStr = `
+          SELECT p.country as country_code, 
+                 COALESCE((SELECT code FROM states s WHERE s.name ILIKE p.state OR s.code ILIKE p.state LIMIT 1), p.state) as state_code,
+                 p.state
+          FROM plants p
+          WHERE p.id = $1 LIMIT 1
+        `;
+        const pRes = await pool.query(queryStr, [parseInt(String(plantId))]);
+        if (pRes.rows.length > 0) {
+          return {
+            country: pRes.rows[0].country_code || undefined,
+            state: pRes.rows[0].state_code || pRes.rows[0].state || undefined
+          };
+        }
+        return {};
+      } catch (err) { console.error('Preview Dept Error', err); return {}; }
+    };
+
     const firstMaterialGroup = await getMaterialGroup(
       firstItem.material_id ? parseInt(firstItem.material_id) : undefined
     );
+    const firstDepartureLoc = await getDepartureLocation(firstItem.plant_id);
 
     const baseValue = parseFloat(firstItem.unit_price || 0) * parseFloat(firstItem.quantity || 1);
 
@@ -583,6 +629,10 @@ router.post('/:procedureCode/preview', async (req, res) => {
       divisionId: divisionId ? parseInt(divisionId) : undefined,
       quantity: parseFloat(firstItem.quantity || 1),
       manualOverrides: manualOverrides as Record<string, string>,
+      departureCountry: firstDepartureLoc.country,
+      departureState: firstDepartureLoc.state,
+      destinationCountry,
+      destinationState,
     };
 
     const result = await pricingCalculationService.calculatePricing(
@@ -611,6 +661,8 @@ router.post('/:procedureCode/preview', async (req, res) => {
           item.material_id ? parseInt(item.material_id) : undefined
         );
 
+        const itemDepartureLoc = await getDepartureLocation(item.plant_id);
+
         const itemResult = await pricingCalculationService.calculatePricing(
           procedureCode,
           itemBase,
@@ -623,6 +675,10 @@ router.post('/:procedureCode/preview', async (req, res) => {
             divisionId: divisionId ? parseInt(divisionId) : undefined,
             quantity: parseFloat(item.quantity || 1),
             manualOverrides: manualOverrides as Record<string, string>,
+            departureCountry: itemDepartureLoc.country,
+            departureState: itemDepartureLoc.state,
+            destinationCountry,
+            destinationState,
           }
         );
 
@@ -643,8 +699,21 @@ router.post('/:procedureCode/preview', async (req, res) => {
       }
     }
 
+    // Filter out unconfigured or irrelevant conditions (0.00 value and 0.00 rate) unless they are subtotals
+    const filteredConditions = aggregatedConditions.filter(c => {
+      if (c.isSubtotal) return true; // Always keep subtotals
+      if (!c.conditionType) return true; // Keep structural steps without specific conditions
+
+      // If a condition (like IGST or VPRS) evaluates to exactly 0 rate and 0 value,
+      // it means no record was found or it mathematically zeroed out.
+      // The user wants these hidden from the UI cleanly.
+      if (c.rate === 0 && c.calculatedValue === 0) return false;
+
+      return true;
+    });
+
     res.json({
-      conditions: aggregatedConditions,
+      conditions: filteredConditions,
       subtotal: totalSubtotal,
       discountTotal: totalDiscount,
       taxTotal: totalTax,

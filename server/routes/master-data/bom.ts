@@ -126,9 +126,19 @@ router.get('/material/:materialId/components', async (req, res) => {
         COALESCE(bc.component_unit, m.base_uom, 'EA') as uom,
         COALESCE(m.base_unit_price, 0)::numeric as estimated_price,
         false as is_assembly,
-        bc.operation_number as notes
+        bc.operation_number as notes,
+        sb.plant_code,
+        sb.storage_location,
+        COALESCE(sb.available_quantity, 0) as available_quantity
       FROM bom_components bc
       LEFT JOIN materials m ON bc.material_id = m.id
+      LEFT JOIN LATERAL (
+        SELECT plant_code, storage_location, available_quantity
+        FROM stock_balances
+        WHERE material_code = m.code
+        ORDER BY available_quantity DESC
+        LIMIT 1
+      ) sb ON true
       WHERE bc.bom_id = ${bom.bom_id}
       ORDER BY bc.component_number
     `);
@@ -144,7 +154,10 @@ router.get('/material/:materialId/components', async (req, res) => {
       uom: comp.uom,
       estimatedPrice: parseFloat(comp.estimated_price) || 0,
       isAssembly: comp.is_assembly || false,
-      notes: comp.notes
+      notes: comp.notes,
+      plantCode: comp.plant_code || 'N/A',
+      storageLocation: comp.storage_location || 'N/A',
+      availableQuantity: parseFloat(comp.available_quantity) || 0
     }));
 
     return res.json({
@@ -389,7 +402,7 @@ router.post('/:bomId/items', async (req, res) => {
       material_code: material?.code || null,
       material_name: material?.name || material?.description || material?.code || null,
       quantity: parseFloat(createdItem.component_quantity),
-      unit_cost: parseFloat(material.base_unit_price || 0),
+      unit_cost: parseFloat(material?.base_unit_price || 0),
       is_active: true,
       created_at: new Date().toISOString()
     };
@@ -438,10 +451,10 @@ router.patch('/items/:id', async (req, res) => {
       id: updatedItem.id,
       bom_id: updatedItem.bom_id,
       material_id: updatedItem.material_id,
-      material_code: material?.code,
-      material_name: material?.name,
+      material_code: material?.code || null,
+      material_name: material?.name || null,
       quantity: parseFloat(updatedItem.component_quantity),
-      unit_cost: parseFloat(material.base_unit_price || 0),
+      unit_cost: parseFloat(material?.base_unit_price || 0),
       is_active: true
     };
 

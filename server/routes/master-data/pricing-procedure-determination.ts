@@ -53,7 +53,8 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ error: 'All fields are required' });
         }
 
-        // Check existing rule
+        // Removed Check Existing Rule as per request to allow multiple procedures for the same combination
+        /*
         const existing = await pool.query(`
       SELECT id FROM pricing_procedure_determinations 
       WHERE sales_organization_id = $1 
@@ -67,6 +68,7 @@ router.post('/', async (req, res) => {
         if (existing.rows.length > 0) {
             return res.status(400).json({ error: 'Determination rule already exists for this combination' });
         }
+        */
 
         const result = await pool.query(`
       INSERT INTO pricing_procedure_determinations (

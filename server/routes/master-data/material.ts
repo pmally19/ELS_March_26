@@ -188,8 +188,9 @@ router.get('/top-selling', async (req, res) => {
         m.name,
         m.type,
         m.base_uom,
-        m.base_unit_price,
-        COALESCE(SUM(soi.ordered_quantity), 0) as total_sold,
+        m.base_unit_price as price,
+        m.material_group as category,
+        CAST(COALESCE(SUM(soi.ordered_quantity), 0) AS INTEGER) as "unitsSold",
         COALESCE(SUM(soi.net_amount), 0) as total_revenue,
         COUNT(DISTINCT soi.sales_order_id) as order_count
       FROM materials m
@@ -198,8 +199,8 @@ router.get('/top-selling', async (req, res) => {
       WHERE m.is_active = true
         AND m."_deletedAt" IS NULL
         AND (so.status IS NULL OR so.status NOT IN ('Cancelled', 'Rejected'))
-      GROUP BY m.id, m.code, m.name, m.type, m.base_uom, m.base_unit_price
-      ORDER BY total_sold DESC, total_revenue DESC
+      GROUP BY m.id, m.code, m.name, m.type, m.base_uom, m.base_unit_price, m.material_group
+      ORDER BY "unitsSold" DESC, total_revenue DESC
       LIMIT $1
     `, [limit]);
 

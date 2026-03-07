@@ -15,24 +15,31 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import Header from "@/components/layout/Header";
-import { 
-  Plus, Save, Play, Download, Edit2, Trash2, Copy, 
-  BarChart3, LineChart, PieChart, AreaChart, ScatterChart,
-  TrendingUp, TrendingDown, Calculator, Database, 
+import {
+  Plus, Save, Play, Download, Edit2, Trash2, Copy,
+  BarChart3, LineChart as LineChartIcon, PieChart as PieChartIcon, AreaChart as AreaChartIcon, ScatterChart as ScatterChartIcon,
+  TrendingUp, TrendingDown, Calculator, Database,
   FileText, Filter, Settings, Eye, RefreshCw,
   Table as TableIcon, Zap, Target, Activity,
-  DollarSign, Package, Link as LinkIcon, ArrowLeft
+  DollarSign, Package, Link as LinkIcon, ArrowLeft, Undo2
 } from "lucide-react";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer as RechartsResponsiveContainer,
+  LineChart, Line, PieChart, Pie, Cell, AreaChart, Area, ScatterChart, Scatter
+} from "recharts";
+
+// Colors for charts
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#8dd1e1'];
 
 // Chart type configurations
 const CHART_TYPES = [
   { id: "bar", name: "Bar Chart", icon: BarChart3, category: "basic" },
-  { id: "line", name: "Line Chart", icon: LineChart, category: "basic" },
-  { id: "pie", name: "Pie Chart", icon: PieChart, category: "basic" },
-  { id: "area", name: "Area Chart", icon: AreaChart, category: "basic" },
-  { id: "scatter", name: "Scatter Plot", icon: ScatterChart, category: "basic" },
+  { id: "line", name: "Line Chart", icon: LineChartIcon, category: "basic" },
+  { id: "pie", name: "Pie Chart", icon: PieChartIcon, category: "basic" },
+  { id: "area", name: "Area Chart", icon: AreaChartIcon, category: "basic" },
+  { id: "scatter", name: "Scatter Plot", icon: ScatterChartIcon, category: "basic" },
   { id: "column", name: "Column Chart", icon: BarChart3, category: "basic" },
   { id: "doughnut", name: "Doughnut Chart", icon: PieChart, category: "basic" },
   { id: "radar", name: "Radar Chart", icon: Target, category: "advanced" },
@@ -101,6 +108,193 @@ interface ReportResult {
   execution_time: number;
 }
 
+type ZoneId = 'header' | 'main' | 'summary' | 'footer';
+
+interface ReportElement {
+  id: string;
+  type: string;
+  label: string;
+  dataSource?: string;
+  field?: string;
+  width?: string;
+  height?: string;
+  backgroundColor?: string;
+  border?: string;
+}
+
+// Custom Renderer Component for Live Canvas Elements
+const CustomChartRenderer = ({ element }: { element: ReportElement }) => {
+  // If not configured, show placeholder
+  if (!element.dataSource || !element.field) {
+    if (element.type === 'kpi') {
+      return (
+        <div className="flex flex-col items-center justify-center h-full w-full">
+          <Activity className="h-6 w-6 text-purple-500 mb-2" />
+          <h4 className="font-semibold text-lg">{element.label}</h4>
+          <p className="text-xs text-muted-foreground mt-2">Unconfigured</p>
+        </div>
+      );
+    }
+    return (
+      <div className="flex flex-col items-center justify-center h-full w-full">
+        <h4 className="text-lg font-medium">{element.label} Element</h4>
+        <p className="text-sm text-muted-foreground mt-1">Select to configure properties</p>
+      </div>
+    );
+  }
+
+  // Generate a grouping query to fetch data for the chart
+  const querySql = `
+    SELECT 
+      ${element.field} as name, 
+      COUNT(*) as value 
+    FROM ${element.dataSource} 
+    WHERE ${element.field} IS NOT NULL
+    GROUP BY ${element.field} 
+    ORDER BY value DESC 
+    LIMIT 10
+  `;
+
+  const { data: result, isLoading, error } = useQuery<ReportResult>({
+    queryKey: ['report-element', element.id, element.dataSource, element.field],
+    queryFn: async () => {
+      const res = await apiRequest("/api/reports/execute", {
+        method: "POST",
+        body: JSON.stringify({ query: querySql })
+      });
+      return await res.json();
+    },
+    // Only run if properly bound
+    enabled: !!element.dataSource && !!element.field
+  });
+
+  if (isLoading) return <div className="flex items-center justify-center h-full"><RefreshCw className="h-6 w-6 animate-spin text-gray-400" /></div>;
+  if (error) return <div className="text-red-500 text-sm p-4 text-center">Error loading data. Check binding.</div>;
+  if (!result || !result.data || result.data.length === 0) return <div className="text-gray-500 text-sm text-center">No data found</div>;
+
+  // KPI Card
+  if (element.type === 'kpi') {
+    const totalCount = result.data.reduce((sum, row) => sum + Number(row.value), 0);
+    return (
+      <div className="flex flex-col items-center justify-center h-full w-full px-2">
+        <h4 className="text-sm font-medium text-gray-500 mb-1">{element.label} ({element.field})</h4>
+        <div className="text-3xl font-bold text-gray-900">
+          {totalCount.toLocaleString()}
+        </div>
+      </div>
+    );
+  }
+
+  // Text Box connected to data (shows top result)
+  if (element.type === 'text') {
+    return (
+      <div className="flex items-center justify-center w-full h-full p-2">
+        <span className="font-semibold text-lg">{element.label}: {result.data[0]?.name} ({result.data[0]?.value})</span>
+      </div>
+    );
+  }
+
+  // Data Table component
+  if (element.type === 'table') {
+    return (
+      <ScrollArea className="h-full w-full">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Category</TableHead>
+              <TableHead className="text-right">Count</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {result.data.map((row, i) => (
+              <TableRow key={i}>
+                <TableCell className="font-medium">{row.name}</TableCell>
+                <TableCell className="text-right">{row.value}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </ScrollArea>
+    );
+  }
+
+  // Parse data values to numbers since Postgres COUNT() returns strings
+  const chartData = result.data.map(row => ({
+    ...row,
+    value: Number(row.value)
+  }));
+
+  // Common wrapper for Recharts
+  return (
+    <div className="w-full h-full pt-6 pb-2 px-2 flex flex-col">
+      <h4 className="text-sm font-semibold text-center mb-4">{element.label} by {element.field}</h4>
+      <div className="flex-1 min-h-0 w-full">
+        <RechartsResponsiveContainer width="100%" height="100%">
+          {element.type === 'bar' || element.type === 'column' ? (
+            <BarChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" fontSize={12} tickFormatter={(val) => String(val).substring(0, 10)} />
+              <YAxis fontSize={12} />
+              <RechartsTooltip />
+              <Bar dataKey="value" fill="#8884d8" radius={[4, 4, 0, 0]}>
+                {chartData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Bar>
+            </BarChart>
+          ) : element.type === 'line' ? (
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" fontSize={12} />
+              <YAxis fontSize={12} />
+              <RechartsTooltip />
+              <Line type="monotone" dataKey="value" stroke="#8884d8" strokeWidth={2} />
+            </LineChart>
+          ) : element.type === 'pie' || element.type === 'doughnut' ? (
+            <PieChart>
+              <Pie
+                data={chartData}
+                cx="50%"
+                cy="50%"
+                innerRadius={element.type === 'doughnut' ? 60 : 0}
+                outerRadius={80}
+                fill="#8884d8"
+                paddingAngle={5}
+                dataKey="value"
+                nameKey="name"
+                label={({ name, percent }) => `${String(name).substring(0, 8)} (${(percent * 100).toFixed(0)}%)`}
+                labelLine={false}
+              >
+                {chartData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <RechartsTooltip />
+            </PieChart>
+          ) : element.type === 'area' ? (
+            <AreaChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" fontSize={12} />
+              <YAxis fontSize={12} />
+              <RechartsTooltip />
+              <Area type="monotone" dataKey="value" stroke="#8884d8" fillOpacity={0.3} fill="#8884d8" />
+            </AreaChart>
+          ) : (
+            // Fallback for unsupported chart types 
+            <BarChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" fontSize={12} />
+              <YAxis fontSize={12} />
+              <RechartsTooltip />
+              <Bar dataKey="value" fill="#8884d8" />
+            </BarChart>
+          )}
+        </RechartsResponsiveContainer>
+      </div>
+    </div>
+  );
+};
+
 export default function Reports() {
   const [activeTab, setActiveTab] = useState("builder");
   const [selectedTables, setSelectedTables] = useState<string[]>([]);
@@ -122,8 +316,113 @@ export default function Reports() {
   const [reportSearchTerm, setReportSearchTerm] = useState("");
   const [selectedReports, setSelectedReports] = useState<number[]>([]);
   const [resultsSearchTerm, setResultsSearchTerm] = useState("");
+  const [selectedView, setSelectedView] = useState("financeview");
+  const [viewData, setViewData] = useState<any>(null);
+  const [enterpriseSummary, setEnterpriseSummary] = useState<any>(null);
+
+  // Drag and Drop State
+  const [zones, setZones] = useState<Record<ZoneId, ReportElement[]>>({
+    header: [],
+    main: [],
+    summary: [],
+    footer: []
+  });
+  const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+
+  // Undo History state
+  const [history, setHistory] = useState<Record<ZoneId, ReportElement[]>[]>([]);
+
+  const handleUndo = () => {
+    if (history.length > 0) {
+      const previousState = history[history.length - 1];
+      setZones(previousState);
+      setHistory(prev => prev.slice(0, -1));
+      setSelectedElementId(null);
+    }
+  };
+
+  // Properties binding
+  const selectedElement = Object.values(zones)
+    .flat()
+    .find(el => el.id === selectedElementId);
+
+  // Use the selected element's data source and field for the properties panel, fallback to generic state if nothing selected
+  const designerDataSource = selectedElement?.dataSource || "";
+  const designerField = selectedElement?.field || "";
+
+  const setDesignerDataSource = (val: string) => {
+    if (selectedElementId) {
+      updateElementProperty(selectedElementId, "dataSource", val);
+      updateElementProperty(selectedElementId, "field", ""); // Reset field when source changes
+    }
+  };
+
+  const setDesignerField = (val: string) => {
+    if (selectedElementId) {
+      updateElementProperty(selectedElementId, "field", val);
+    }
+  };
+
+  const updateElementProperty = (id: string, property: keyof ReportElement, value: any) => {
+    setZones(prev => {
+      // Save history for properties (simplified)
+      setHistory(prevStack => {
+        // Prevent stacking duplicate history states if rapid edits occur
+        if (prevStack.length > 0 && JSON.stringify(prevStack[prevStack.length - 1]) === JSON.stringify(prev)) {
+          return prevStack;
+        }
+        return [...prevStack, prev];
+      });
+      const newZones = { ...prev };
+      for (const zone of Object.keys(newZones) as ZoneId[]) {
+        newZones[zone] = newZones[zone].map(el =>
+          el.id === id ? { ...el, [property]: value } : el
+        );
+      }
+      return newZones;
+    });
+  };
+
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Drag and Drop Handlers
+  const handleDragStart = (e: React.DragEvent, type: string, label: string) => {
+    e.dataTransfer.setData("application/json", JSON.stringify({ type, label }));
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault(); // Necessary to allow dropping
+  };
+
+  const handleDrop = (e: React.DragEvent, zoneId: ZoneId) => {
+    e.preventDefault();
+    try {
+      const data = JSON.parse(e.dataTransfer.getData("application/json"));
+      if (data && data.type) {
+        const newElement: ReportElement = {
+          id: `el_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: data.type,
+          label: data.label,
+          width: "100%",
+          height: data.type === "header" || data.type === "footer" ? "auto" : "300px",
+          backgroundColor: "transparent",
+          border: "none",
+        };
+
+        setZones(prev => {
+          setHistory(prevStack => [...prevStack, prev]);
+          return {
+            ...prev,
+            [zoneId]: [...prev[zoneId], newElement]
+          };
+        });
+        setSelectedElementId(newElement.id);
+      }
+    } catch (err) {
+      console.error("Drop parsing error", err);
+    }
+  };
 
   // Fetch saved reports
   const { data: reports = [], isLoading: reportsLoading } = useQuery<Report[]>({
@@ -146,7 +445,7 @@ export default function Reports() {
     ...tableSchemas,
     'Enterprise Views': {
       'financeview': 'Financial transactions with master data integration',
-      'materialflowview': 'Material movements with value stream tracking', 
+      'materialflowview': 'Material movements with value stream tracking',
       'inventoryflowview': 'Inventory analytics by material and location',
       'financialmaterialintegrationview': 'Complete business process integration'
     }
@@ -174,7 +473,7 @@ export default function Reports() {
         method: "POST",
         body: JSON.stringify({ query })
       });
-      return response as unknown as ReportResult;
+      return response.json() as Promise<ReportResult>;
     },
     onSuccess: (result: ReportResult) => {
       setReportResult(result);
@@ -199,14 +498,14 @@ export default function Reports() {
     }
 
     let query = "SELECT ";
-    
+
     // Add columns
     if (selectedColumns.length > 0) {
       query += selectedColumns.join(", ");
     } else {
       query += "*";
     }
-    
+
     // Add custom formula if provided
     if (customFormula.trim()) {
       if (selectedColumns.length > 0) {
@@ -214,26 +513,26 @@ export default function Reports() {
       }
       query += `(${customFormula}) AS custom_calculation`;
     }
-    
+
     // Add FROM clause
     query += `\nFROM ${selectedTables[0]}`;
-    
+
     // Add JOINs
     joinConditions.forEach((join, index) => {
       if (index + 1 < selectedTables.length) {
         query += `\n${join.type || "INNER"} JOIN ${selectedTables[index + 1]} ON ${join.condition}`;
       }
     });
-    
+
     // Add WHERE clause
     if (whereConditions.length > 0) {
       query += "\nWHERE ";
-      const conditions = whereConditions.map(condition => 
+      const conditions = whereConditions.map(condition =>
         `${condition.column} ${condition.operator} ${condition.value}`
       );
       query += conditions.join(" AND ");
     }
-    
+
     setSqlQuery(query);
     return query;
   };
@@ -249,7 +548,7 @@ export default function Reports() {
       });
       return;
     }
-    
+
     setIsExecuting(true);
     executeQueryMutation.mutate(query, {
       onSettled: () => setIsExecuting(false)
@@ -282,6 +581,46 @@ export default function Reports() {
     createReportMutation.mutate(reportData);
   };
 
+  // Export results to CSV
+  const exportToCsv = () => {
+    if (!reportResult || !reportResult.data || reportResult.data.length === 0) {
+      toast({
+        title: "No Data to Export",
+        description: "Please run a query first to get results.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const columns = reportResult.columns;
+    const rows = reportResult.data;
+
+    // Build CSV content
+    const header = columns.map(col => `"${col.replace(/"/g, '""')}"`).join(',');
+    const body = rows.map(row =>
+      columns.map(col => {
+        const val = row[col] === null || row[col] === undefined ? '' : String(row[col]);
+        return `"${val.replace(/"/g, '""')}"`;
+      }).join(',')
+    ).join('\n');
+
+    const csvContent = `${header}\n${body}`;
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `${reportName || 'report'}_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    toast({
+      title: "Export Complete",
+      description: `Exported ${rows.length} rows as CSV.`,
+    });
+  };
+
   // Add table to selection
   const addTable = (tableName: string) => {
     if (!selectedTables.includes(tableName)) {
@@ -312,7 +651,7 @@ export default function Reports() {
     setSqlQuery(report.sql_query);
     setSelectedChartType(report.chart_config?.type || "bar");
     setChartConfig(report.chart_config || {});
-    
+
     // Execute the report query
     executeQueryMutation.mutate(report.sql_query);
   };
@@ -347,8 +686,6 @@ export default function Reports() {
 
   return (
     <>
-      <Header title="Custom Reports" />
-      
       <div className="flex flex-col gap-6 mt-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -386,148 +723,148 @@ export default function Reports() {
           </TabsList>
 
           <TabsContent value="enterprise" className="space-y-6">
-          {/* Enterprise Summary Cards */}
-          {enterpriseSummary && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Financial Records</CardTitle>
-                  <DollarSign className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{enterpriseSummary.finance_records}</div>
-                  <p className="text-xs text-muted-foreground">
-                    Revenue: ${parseFloat(enterpriseSummary.total_revenue || 0).toLocaleString()}
-                  </p>
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Material Movements</CardTitle>
-                  <Package className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{enterpriseSummary.material_records}</div>
-                  <p className="text-xs text-muted-foreground">
-                    Value: ${parseFloat(enterpriseSummary.total_material_value || 0).toLocaleString()}
-                  </p>
-                </CardContent>
-              </Card>
+            {/* Enterprise Summary Cards */}
+            {enterpriseSummary && (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Financial Records</CardTitle>
+                    <DollarSign className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{enterpriseSummary.finance_records}</div>
+                    <p className="text-xs text-muted-foreground">
+                      Revenue: ${parseFloat(enterpriseSummary.total_revenue || 0).toLocaleString()}
+                    </p>
+                  </CardContent>
+                </Card>
 
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Inventory Analytics</CardTitle>
-                  <Activity className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{enterpriseSummary.inventory_records}</div>
-                  <p className="text-xs text-muted-foreground">Inventory summaries</p>
-                </CardContent>
-              </Card>
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Material Movements</CardTitle>
+                    <Package className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{enterpriseSummary.material_records}</div>
+                    <p className="text-xs text-muted-foreground">
+                      Value: ${parseFloat(enterpriseSummary.total_material_value || 0).toLocaleString()}
+                    </p>
+                  </CardContent>
+                </Card>
 
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Integration Records</CardTitle>
-                  <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{enterpriseSummary.integration_records}</div>
-                  <p className="text-xs text-muted-foreground">Cross-module flows</p>
-                </CardContent>
-              </Card>
-            </div>
-          )}
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Inventory Analytics</CardTitle>
+                    <Activity className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{enterpriseSummary.inventory_records}</div>
+                    <p className="text-xs text-muted-foreground">Inventory summaries</p>
+                  </CardContent>
+                </Card>
 
-          {/* View Selection */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Enterprise Reporting Views</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Select a view to explore comprehensive business data with master data integration
-              </p>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <Select value={selectedView} onValueChange={setSelectedView}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select enterprise view" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="financeview">
-                      <div className="flex items-center gap-2">
-                        <DollarSign className="h-4 w-4" />
-                        Finance View - Financial reporting with master data
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="materialflowview">
-                      <div className="flex items-center gap-2">
-                        <Package className="h-4 w-4" />
-                        Material Flow View - Material movement analytics
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="inventoryflowview">
-                      <div className="flex items-center gap-2">
-                        <Activity className="h-4 w-4" />
-                        Inventory Flow View - Inventory management analytics
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="financialmaterialintegrationview">
-                      <div className="flex items-center gap-2">
-                        <TrendingUp className="h-4 w-4" />
-                        Integration View - Complete business process integration
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Integration Records</CardTitle>
+                    <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{enterpriseSummary.integration_records}</div>
+                    <p className="text-xs text-muted-foreground">Cross-module flows</p>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
 
-                {/* View Data Display */}
-                {viewData && (
-                  <div className="mt-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-semibold">
-                        {selectedView.charAt(0).toUpperCase() + selectedView.slice(1)} Data
-                      </h3>
-                      <Badge variant="secondary">{viewData.total} records</Badge>
-                    </div>
-                    
-                    <div className="border rounded-lg overflow-hidden">
-                      <ScrollArea className="h-96">
-                        <table className="w-full text-sm">
-                          <thead className="bg-muted">
-                            <tr>
-                              {viewData.data?.[0] && Object.keys(viewData.data[0]).map((key) => (
-                                <th key={key} className="text-left p-3 font-medium">
-                                  {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {viewData.data?.map((row, index) => (
-                              <tr key={index} className="border-t hover:bg-muted/50">
-                                {Object.values(row).map((value, cellIndex) => (
-                                  <td key={cellIndex} className="p-3">
-                                    {typeof value === 'number' && value > 1000 ? 
-                                      value.toLocaleString() : 
-                                      String(value || '-')
-                                    }
-                                  </td>
+            {/* View Selection */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Enterprise Reporting Views</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Select a view to explore comprehensive business data with master data integration
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <Select value={selectedView} onValueChange={setSelectedView}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select enterprise view" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="financeview">
+                        <div className="flex items-center gap-2">
+                          <DollarSign className="h-4 w-4" />
+                          Finance View - Financial reporting with master data
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="materialflowview">
+                        <div className="flex items-center gap-2">
+                          <Package className="h-4 w-4" />
+                          Material Flow View - Material movement analytics
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="inventoryflowview">
+                        <div className="flex items-center gap-2">
+                          <Activity className="h-4 w-4" />
+                          Inventory Flow View - Inventory management analytics
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="financialmaterialintegrationview">
+                        <div className="flex items-center gap-2">
+                          <TrendingUp className="h-4 w-4" />
+                          Integration View - Complete business process integration
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  {/* View Data Display */}
+                  {viewData && (
+                    <div className="mt-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-semibold">
+                          {selectedView.charAt(0).toUpperCase() + selectedView.slice(1)} Data
+                        </h3>
+                        <Badge variant="secondary">{viewData.total} records</Badge>
+                      </div>
+
+                      <div className="border rounded-lg overflow-hidden">
+                        <ScrollArea className="h-96">
+                          <table className="w-full text-sm">
+                            <thead className="bg-muted">
+                              <tr>
+                                {viewData.data?.[0] && Object.keys(viewData.data[0]).map((key) => (
+                                  <th key={key} className="text-left p-3 font-medium">
+                                    {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                  </th>
                                 ))}
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </ScrollArea>
+                            </thead>
+                            <tbody>
+                              {viewData.data?.map((row, index) => (
+                                <tr key={index} className="border-t hover:bg-muted/50">
+                                  {Object.values(row).map((value, cellIndex) => (
+                                    <td key={cellIndex} className="p-3">
+                                      {typeof value === 'number' && value > 1000 ?
+                                        value.toLocaleString() :
+                                        String(value || '-')
+                                      }
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </ScrollArea>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-        <TabsContent value="builder" className="space-y-6">
+          <TabsContent value="builder" className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Table Selection */}
               <Card>
@@ -548,39 +885,51 @@ export default function Reports() {
                         className="w-full"
                       />
                     </div>
-                    
-                    <ScrollArea className="h-64">
+
+                    <ScrollArea className="h-96">
                       <Table>
                         <TableHeader>
                           <TableRow>
                             <TableHead className="w-12">Select</TableHead>
                             <TableHead>Table Name</TableHead>
+                            <TableHead className="text-right text-muted-foreground text-xs">Columns</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {DATABASE_TABLES
-                            .filter(table => table.toLowerCase().includes(tableSearchTerm.toLowerCase()))
-                            .map((table) => (
-                            <TableRow key={table}>
-                              <TableCell>
-                                <Checkbox
-                                  checked={selectedTables.includes(table)}
-                                  onCheckedChange={(checked) => {
-                                    if (checked) {
-                                      addTable(table);
-                                    } else {
-                                      removeTable(table);
-                                    }
-                                  }}
-                                />
+                          {Object.keys(tableSchemas).length === 0 && (
+                            <TableRow>
+                              <TableCell colSpan={3} className="text-center text-muted-foreground py-4">
+                                Loading tables...
                               </TableCell>
-                              <TableCell className="font-mono text-sm">{table}</TableCell>
                             </TableRow>
-                          ))}
+                          )}
+                          {Object.keys(tableSchemas)
+                            .filter(table => table.toLowerCase().includes(tableSearchTerm.toLowerCase()))
+                            .sort()
+                            .map((table) => (
+                              <TableRow key={table}>
+                                <TableCell>
+                                  <Checkbox
+                                    checked={selectedTables.includes(table)}
+                                    onCheckedChange={(checked) => {
+                                      if (checked) {
+                                        addTable(table);
+                                      } else {
+                                        removeTable(table);
+                                      }
+                                    }}
+                                  />
+                                </TableCell>
+                                <TableCell className="font-mono text-sm">{table}</TableCell>
+                                <TableCell className="text-right text-xs text-muted-foreground">
+                                  {(tableSchemas[table] || []).length}
+                                </TableCell>
+                              </TableRow>
+                            ))}
                         </TableBody>
                       </Table>
                     </ScrollArea>
-                    
+
                     {selectedTables.length > 0 && (
                       <div className="pt-4 border-t">
                         <Label className="text-sm font-medium">Selected Tables ({selectedTables.length}):</Label>
@@ -629,9 +978,9 @@ export default function Reports() {
                           const filteredColumns = (tableSchemas[table] || []).filter((column: string) =>
                             column.toLowerCase().includes(columnSearchTerm.toLowerCase())
                           );
-                          
+
                           if (filteredColumns.length === 0 && columnSearchTerm) return null;
-                          
+
                           return (
                             <div key={table} className="mb-4">
                               <Label className="font-medium text-blue-600 mb-2 block">{table}</Label>
@@ -690,9 +1039,9 @@ export default function Reports() {
                         </div>
                       </div>
                     )}
-                    
+
                     <Separator />
-                    
+
                     <div>
                       <Label className="flex items-center gap-2">
                         <Calculator className="h-4 w-4" />
@@ -862,7 +1211,7 @@ export default function Reports() {
                     />
                     <Label htmlFor="sql-editor-mode">Enable manual SQL editing</Label>
                   </div>
-                  
+
                   <Textarea
                     value={sqlQuery}
                     onChange={(e) => setSqlQuery(e.target.value)}
@@ -870,7 +1219,7 @@ export default function Reports() {
                     className="font-mono text-sm min-h-64"
                     disabled={!showSqlEditor}
                   />
-                  
+
                   <div className="flex flex-wrap gap-2">
                     <Badge variant="outline">Available Tables:</Badge>
                     {DATABASE_TABLES.slice(0, 8).map((table) => (
@@ -904,7 +1253,12 @@ export default function Reports() {
                         <Label className="font-semibold text-blue-600">Data Fields</Label>
                         <div className="mt-2 space-y-2">
                           {selectedColumns.map((column) => (
-                            <div key={column} className="p-2 border rounded cursor-move hover:bg-blue-50 transition-colors">
+                            <div
+                              key={column}
+                              draggable
+                              onDragStart={(e) => handleDragStart(e, 'field', column)}
+                              className="p-2 border rounded cursor-move hover:bg-blue-50 transition-colors"
+                            >
                               <div className="flex items-center gap-2">
                                 <Database className="h-4 w-4 text-blue-500" />
                                 <span className="text-sm font-mono">{column}</span>
@@ -921,7 +1275,12 @@ export default function Reports() {
                         <Label className="font-semibold text-green-600">Chart Components</Label>
                         <div className="mt-2 grid grid-cols-1 gap-2">
                           {CHART_TYPES.slice(0, 8).map((chart) => (
-                            <div key={chart.id} className="p-2 border rounded cursor-move hover:bg-green-50 transition-colors">
+                            <div
+                              key={chart.id}
+                              draggable
+                              onDragStart={(e) => handleDragStart(e, chart.id, chart.name)}
+                              className="p-2 border rounded cursor-move hover:bg-green-50 transition-colors"
+                            >
                               <div className="flex items-center gap-2">
                                 <chart.icon className="h-4 w-4 text-green-500" />
                                 <span className="text-sm">{chart.name}</span>
@@ -937,19 +1296,28 @@ export default function Reports() {
                       <div>
                         <Label className="font-semibold text-purple-600">Report Components</Label>
                         <div className="mt-2 space-y-2">
-                          <div className="p-2 border rounded cursor-move hover:bg-purple-50 transition-colors">
+                          <div
+                            draggable onDragStart={(e) => handleDragStart(e, 'text', 'Text Box')}
+                            className="p-2 border rounded cursor-move hover:bg-purple-50 transition-colors"
+                          >
                             <div className="flex items-center gap-2">
                               <FileText className="h-4 w-4 text-purple-500" />
                               <span className="text-sm">Text Box</span>
                             </div>
                           </div>
-                          <div className="p-2 border rounded cursor-move hover:bg-purple-50 transition-colors">
+                          <div
+                            draggable onDragStart={(e) => handleDragStart(e, 'table', 'Data Table')}
+                            className="p-2 border rounded cursor-move hover:bg-purple-50 transition-colors"
+                          >
                             <div className="flex items-center gap-2">
                               <TableIcon className="h-4 w-4 text-purple-500" />
                               <span className="text-sm">Data Table</span>
                             </div>
                           </div>
-                          <div className="p-2 border rounded cursor-move hover:bg-purple-50 transition-colors">
+                          <div
+                            draggable onDragStart={(e) => handleDragStart(e, 'kpi', 'Summary Card')}
+                            className="p-2 border rounded cursor-move hover:bg-purple-50 transition-colors"
+                          >
                             <div className="flex items-center gap-2">
                               <Calculator className="h-4 w-4 text-purple-500" />
                               <span className="text-sm">Summary Card</span>
@@ -968,6 +1336,10 @@ export default function Reports() {
                   <CardTitle className="flex items-center justify-between">
                     <span>Report Canvas</span>
                     <div className="flex items-center gap-2">
+                      <Button size="sm" variant="outline" onClick={handleUndo} disabled={history.length === 0}>
+                        <Undo2 className="h-4 w-4 mr-2" />
+                        Undo
+                      </Button>
                       <Button size="sm" variant="outline">
                         <Eye className="h-4 w-4 mr-2" />
                         Preview
@@ -984,36 +1356,112 @@ export default function Reports() {
                   <div className="border-2 border-dashed border-gray-300 rounded-lg h-[600px] p-4 bg-gray-50">
                     <div className="grid grid-cols-12 gap-2 h-full">
                       {/* Report Header */}
-                      <div className="col-span-12 border-2 border-blue-200 rounded p-4 bg-white min-h-[80px] flex items-center justify-center">
-                        <div className="text-center">
-                          <h3 className="text-lg font-semibold text-gray-700">Report Header</h3>
-                          <p className="text-sm text-gray-500">Drop title and header elements here</p>
-                        </div>
+                      <div
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDrop(e, 'header')}
+                        className={`col-span-12 border-2 ${zones.header.length ? 'border-blue-400' : 'border-blue-200 border-dashed'} rounded p-4 bg-white min-h-[80px] flex flex-col items-center justify-center relative overflow-hidden`}
+                      >
+                        {zones.header.length === 0 ? (
+                          <div className="text-center pointer-events-none">
+                            <h3 className="text-lg font-semibold text-gray-700">Report Header</h3>
+                            <p className="text-sm text-gray-500">Drop title and header elements here</p>
+                          </div>
+                        ) : (
+                          <div className="w-full flex gap-4">
+                            {zones.header.map((el) => (
+                              <div
+                                key={el.id}
+                                onClick={(e) => { e.stopPropagation(); setSelectedElementId(el.id); }}
+                                className={`flex-1 p-4 border rounded ${selectedElementId === el.id ? 'ring-2 ring-blue-500' : ''}`}
+                                style={{ backgroundColor: el.backgroundColor, border: el.border !== 'none' ? el.border : undefined }}
+                              >
+                                <CustomChartRenderer element={el} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      
+
                       {/* Main Content Area */}
-                      <div className="col-span-8 border-2 border-green-200 rounded p-4 bg-white min-h-[400px] flex items-center justify-center">
-                        <div className="text-center">
-                          <TableIcon className="h-12 w-12 text-green-500 mx-auto mb-2" />
-                          <h3 className="text-lg font-semibold text-gray-700">Main Content</h3>
-                          <p className="text-sm text-gray-500">Drop charts and tables here</p>
-                        </div>
+                      <div
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDrop(e, 'main')}
+                        className={`col-span-8 border-2 ${zones.main.length ? 'border-green-400' : 'border-green-200 border-dashed'} rounded p-4 bg-white min-h-[400px] flex flex-col items-center justify-center relative`}
+                      >
+                        {zones.main.length === 0 ? (
+                          <div className="text-center pointer-events-none">
+                            <TableIcon className="h-12 w-12 text-green-500 mx-auto mb-2" />
+                            <h3 className="text-lg font-semibold text-gray-700">Main Content</h3>
+                            <p className="text-sm text-gray-500">Drop charts and tables here</p>
+                          </div>
+                        ) : (
+                          <div className="w-full h-full flex flex-col gap-4">
+                            {zones.main.map((el) => (
+                              <div
+                                key={el.id}
+                                onClick={(e) => { e.stopPropagation(); setSelectedElementId(el.id); }}
+                                className={`w-full p-4 border rounded relative flex items-center justify-center ${selectedElementId === el.id ? 'ring-2 ring-blue-500' : ''}`}
+                                style={{ height: el.height, backgroundColor: el.backgroundColor, border: el.border !== 'none' ? el.border : undefined }}
+                              >
+                                <CustomChartRenderer element={el} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      
+
                       {/* Side Panel */}
-                      <div className="col-span-4 border-2 border-purple-200 rounded p-4 bg-white min-h-[400px] flex items-center justify-center">
-                        <div className="text-center">
-                          <Calculator className="h-8 w-8 text-purple-500 mx-auto mb-2" />
-                          <h3 className="text-base font-semibold text-gray-700">Summary Panel</h3>
-                          <p className="text-xs text-gray-500">Drop KPI cards here</p>
-                        </div>
+                      <div
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDrop(e, 'summary')}
+                        className={`col-span-4 border-2 ${zones.summary.length ? 'border-purple-400' : 'border-purple-200 border-dashed'} rounded p-4 bg-white min-h-[400px] flex flex-col items-center justify-start relative`}
+                      >
+                        {zones.summary.length === 0 ? (
+                          <div className="text-center pointer-events-none mt-20">
+                            <Calculator className="h-8 w-8 text-purple-500 mx-auto mb-2" />
+                            <h3 className="text-base font-semibold text-gray-700">Summary Panel</h3>
+                            <p className="text-xs text-gray-500">Drop KPI cards here</p>
+                          </div>
+                        ) : (
+                          <div className="w-full flex flex-col gap-4">
+                            {zones.summary.map((el) => (
+                              <div
+                                key={el.id}
+                                onClick={(e) => { e.stopPropagation(); setSelectedElementId(el.id); }}
+                                className={`w-full p-4 border rounded ${selectedElementId === el.id ? 'ring-2 ring-blue-500' : ''}`}
+                                style={{ backgroundColor: el.backgroundColor, border: el.border !== 'none' ? el.border : undefined }}
+                              >
+                                <CustomChartRenderer element={el} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      
+
                       {/* Footer */}
-                      <div className="col-span-12 border-2 border-orange-200 rounded p-2 bg-white min-h-[60px] flex items-center justify-center">
-                        <div className="text-center">
-                          <p className="text-sm text-gray-500">Report Footer - Drop footer elements here</p>
-                        </div>
+                      <div
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDrop(e, 'footer')}
+                        className={`col-span-12 border-2 ${zones.footer.length ? 'border-orange-400' : 'border-orange-200 border-dashed'} rounded p-2 bg-white min-h-[60px] flex items-center justify-center relative`}
+                      >
+                        {zones.footer.length === 0 ? (
+                          <div className="text-center pointer-events-none">
+                            <p className="text-sm text-gray-500">Report Footer - Drop footer elements here</p>
+                          </div>
+                        ) : (
+                          <div className="w-full flex justify-between px-4">
+                            {zones.footer.map((el) => (
+                              <div
+                                key={el.id}
+                                onClick={(e) => { e.stopPropagation(); setSelectedElementId(el.id); }}
+                                className={`p-2 border rounded ${selectedElementId === el.id ? 'ring-2 ring-blue-500' : ''}`}
+                                style={{ backgroundColor: el.backgroundColor, border: el.border !== 'none' ? el.border : undefined }}
+                              >
+                                <CustomChartRenderer element={el} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1034,7 +1482,11 @@ export default function Reports() {
                     <div className="space-y-4">
                       <div>
                         <Label>Element Type</Label>
-                        <Select>
+                        <Select
+                          value={selectedElement?.type || ""}
+                          onValueChange={(val) => selectedElementId && updateElementProperty(selectedElementId, "type", val)}
+                          disabled={!selectedElementId}
+                        >
                           <SelectTrigger>
                             <SelectValue placeholder="Select element" />
                           </SelectTrigger>
@@ -1043,28 +1495,50 @@ export default function Reports() {
                             <SelectItem value="table">Table</SelectItem>
                             <SelectItem value="text">Text Box</SelectItem>
                             <SelectItem value="kpi">KPI Card</SelectItem>
+                            {CHART_TYPES.map(chart => (
+                              <SelectItem key={chart.id} value={chart.id}>{chart.name}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
 
                       <div>
                         <Label>Width</Label>
-                        <Input placeholder="100%" />
+                        <Input
+                          placeholder="100%"
+                          value={selectedElement?.width || ""}
+                          onChange={(e) => selectedElementId && updateElementProperty(selectedElementId, "width", e.target.value)}
+                          disabled={!selectedElementId}
+                        />
                       </div>
 
                       <div>
                         <Label>Height</Label>
-                        <Input placeholder="300px" />
+                        <Input
+                          placeholder="300px"
+                          value={selectedElement?.height || ""}
+                          onChange={(e) => selectedElementId && updateElementProperty(selectedElementId, "height", e.target.value)}
+                          disabled={!selectedElementId}
+                        />
                       </div>
 
                       <div>
                         <Label>Background Color</Label>
-                        <Input type="color" defaultValue="#ffffff" />
+                        <Input
+                          type="color"
+                          value={selectedElement?.backgroundColor || "#ffffff"}
+                          onChange={(e) => selectedElementId && updateElementProperty(selectedElementId, "backgroundColor", e.target.value)}
+                          disabled={!selectedElementId}
+                        />
                       </div>
 
                       <div>
                         <Label>Border</Label>
-                        <Select>
+                        <Select
+                          value={selectedElement?.border || "none"}
+                          onValueChange={(val) => selectedElementId && updateElementProperty(selectedElementId, "border", val)}
+                          disabled={!selectedElementId}
+                        >
                           <SelectTrigger>
                             <SelectValue placeholder="Border style" />
                           </SelectTrigger>
@@ -1078,18 +1552,20 @@ export default function Reports() {
                       </div>
 
                       <Separator />
-
                       <div>
                         <Label className="font-semibold">Data Binding</Label>
                         <div className="mt-2 space-y-2">
                           <div>
                             <Label className="text-xs">Data Source</Label>
-                            <Select>
+                            <Select
+                              value={designerDataSource}
+                              onValueChange={(val) => { setDesignerDataSource(val); setDesignerField(""); }}
+                            >
                               <SelectTrigger>
                                 <SelectValue placeholder="Select table" />
                               </SelectTrigger>
                               <SelectContent>
-                                {selectedTables.map(table => (
+                                {Object.keys(tableSchemas).sort().map(table => (
                                   <SelectItem key={table} value={table}>{table}</SelectItem>
                                 ))}
                               </SelectContent>
@@ -1097,12 +1573,16 @@ export default function Reports() {
                           </div>
                           <div>
                             <Label className="text-xs">Field</Label>
-                            <Select>
+                            <Select
+                              value={designerField}
+                              onValueChange={setDesignerField}
+                              disabled={!designerDataSource}
+                            >
                               <SelectTrigger>
-                                <SelectValue placeholder="Select field" />
+                                <SelectValue placeholder={designerDataSource ? "Select field" : "Select table first"} />
                               </SelectTrigger>
                               <SelectContent>
-                                {selectedColumns.map(column => (
+                                {(tableSchemas[designerDataSource] || []).map(column => (
                                   <SelectItem key={column} value={column}>{column}</SelectItem>
                                 ))}
                               </SelectContent>
@@ -1128,7 +1608,7 @@ export default function Reports() {
                       <RefreshCw className="h-4 w-4 mr-2" />
                       Refresh Data
                     </Button>
-                    <Button size="sm" variant="outline">
+                    <Button size="sm" variant="outline" onClick={() => window.print()}>
                       <Download className="h-4 w-4 mr-2" />
                       Export PDF
                     </Button>
@@ -1169,7 +1649,7 @@ export default function Reports() {
                           </div>
                         </CardContent>
                       </Card>
-                      
+
                       <Card className="bg-green-50 border-green-200">
                         <CardContent className="p-4">
                           <div className="flex items-center justify-between">
@@ -1181,7 +1661,7 @@ export default function Reports() {
                           </div>
                         </CardContent>
                       </Card>
-                      
+
                       <Card className="bg-purple-50 border-purple-200">
                         <CardContent className="p-4">
                           <div className="flex items-center justify-between">
@@ -1193,7 +1673,7 @@ export default function Reports() {
                           </div>
                         </CardContent>
                       </Card>
-                      
+
                       <Card className="bg-orange-50 border-orange-200">
                         <CardContent className="p-4">
                           <div className="flex items-center justify-between">
@@ -1354,17 +1834,17 @@ export default function Reports() {
                       <Label>Chart Title</Label>
                       <Input
                         value={chartConfig.title || ""}
-                        onChange={(e) => setChartConfig({...chartConfig, title: e.target.value})}
+                        onChange={(e) => setChartConfig({ ...chartConfig, title: e.target.value })}
                         placeholder="Enter chart title"
                       />
                     </div>
-                    
+
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <Label>X-Axis Label</Label>
                         <Input
                           value={chartConfig.xLabel || ""}
-                          onChange={(e) => setChartConfig({...chartConfig, xLabel: e.target.value})}
+                          onChange={(e) => setChartConfig({ ...chartConfig, xLabel: e.target.value })}
                           placeholder="X-axis label"
                         />
                       </div>
@@ -1372,7 +1852,7 @@ export default function Reports() {
                         <Label>Y-Axis Label</Label>
                         <Input
                           value={chartConfig.yLabel || ""}
-                          onChange={(e) => setChartConfig({...chartConfig, yLabel: e.target.value})}
+                          onChange={(e) => setChartConfig({ ...chartConfig, yLabel: e.target.value })}
                           placeholder="Y-axis label"
                         />
                       </div>
@@ -1383,7 +1863,7 @@ export default function Reports() {
                         <Label>Color Scheme</Label>
                         <Select
                           value={chartConfig.colorScheme || "default"}
-                          onValueChange={(value) => setChartConfig({...chartConfig, colorScheme: value})}
+                          onValueChange={(value) => setChartConfig({ ...chartConfig, colorScheme: value })}
                         >
                           <SelectTrigger>
                             <SelectValue />
@@ -1402,7 +1882,7 @@ export default function Reports() {
                         <Label>Animation</Label>
                         <Select
                           value={chartConfig.animation || "smooth"}
-                          onValueChange={(value) => setChartConfig({...chartConfig, animation: value})}
+                          onValueChange={(value) => setChartConfig({ ...chartConfig, animation: value })}
                         >
                           <SelectTrigger>
                             <SelectValue />
@@ -1422,7 +1902,7 @@ export default function Reports() {
                         <Checkbox
                           id="show-legend"
                           checked={chartConfig.showLegend !== false}
-                          onCheckedChange={(checked) => setChartConfig({...chartConfig, showLegend: checked === true})}
+                          onCheckedChange={(checked) => setChartConfig({ ...chartConfig, showLegend: checked === true })}
                         />
                         <Label htmlFor="show-legend">Show Legend</Label>
                       </div>
@@ -1430,7 +1910,7 @@ export default function Reports() {
                         <Checkbox
                           id="show-grid"
                           checked={chartConfig.showGrid !== false}
-                          onCheckedChange={(checked) => setChartConfig({...chartConfig, showGrid: checked === true})}
+                          onCheckedChange={(checked) => setChartConfig({ ...chartConfig, showGrid: checked === true })}
                         />
                         <Label htmlFor="show-grid">Show Grid Lines</Label>
                       </div>
@@ -1438,7 +1918,7 @@ export default function Reports() {
                         <Checkbox
                           id="show-values"
                           checked={chartConfig.showValues === true}
-                          onCheckedChange={(checked) => setChartConfig({...chartConfig, showValues: checked === true})}
+                          onCheckedChange={(checked) => setChartConfig({ ...chartConfig, showValues: checked === true })}
                         />
                         <Label htmlFor="show-values">Show Data Values</Label>
                       </div>
@@ -1455,14 +1935,14 @@ export default function Reports() {
                 <CardTitle className="flex items-center justify-between">
                   <span>Saved Reports</span>
                   <div className="flex items-center gap-2">
-                    <Input 
-                      placeholder="Search reports..." 
+                    <Input
+                      placeholder="Search reports..."
                       className="w-64"
                       value={reportSearchTerm}
                       onChange={(e) => setReportSearchTerm(e.target.value)}
                     />
-                    <Button 
-                      size="sm" 
+                    <Button
+                      size="sm"
                       onClick={executeSelectedReports}
                       disabled={selectedReports.length === 0}
                       variant="default"
@@ -1498,77 +1978,77 @@ export default function Reports() {
                       </TableHeader>
                       <TableBody>
                         {reports
-                          .filter((report: Report) => 
+                          .filter((report: Report) =>
                             report.name.toLowerCase().includes(reportSearchTerm.toLowerCase()) ||
                             report.description.toLowerCase().includes(reportSearchTerm.toLowerCase())
                           )
                           .map((report: Report) => (
-                          <TableRow key={report.id} className="hover:bg-muted/50">
-                            <TableCell>
-                              <Checkbox 
-                                checked={selectedReports.includes(report.id)}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setSelectedReports([...selectedReports, report.id]);
-                                  } else {
-                                    setSelectedReports(selectedReports.filter(id => id !== report.id));
-                                  }
-                                }}
-                              />
-                            </TableCell>
-                            <TableCell className="font-medium">{report.name}</TableCell>
-                            <TableCell className="text-sm text-muted-foreground">{report.description}</TableCell>
-                            <TableCell>
-                              <Badge variant="secondary">{report.category}</Badge>
-                            </TableCell>
-                            <TableCell className="text-sm">
-                              {new Date(report.updated_at).toLocaleDateString()}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-1">
-                                <Button 
-                                  size="sm" 
-                                  variant="ghost" 
-                                  title="View Report"
-                                  onClick={() => {
-                                    loadReport(report);
-                                    setActiveTab("preview");
+                            <TableRow key={report.id} className="hover:bg-muted/50">
+                              <TableCell>
+                                <Checkbox
+                                  checked={selectedReports.includes(report.id)}
+                                  onCheckedChange={(checked) => {
+                                    if (checked) {
+                                      setSelectedReports([...selectedReports, report.id]);
+                                    } else {
+                                      setSelectedReports(selectedReports.filter(id => id !== report.id));
+                                    }
                                   }}
-                                >
-                                  <Eye className="h-3 w-3" />
-                                </Button>
-                                <Button 
-                                  size="sm" 
-                                  variant="ghost" 
-                                  title="Edit Report"
-                                  onClick={() => {
-                                    loadReport(report);
-                                    setActiveTab("designer");
-                                  }}
-                                >
-                                  <Edit2 className="h-3 w-3" />
-                                </Button>
-                                <Button 
-                                  size="sm" 
-                                  variant="ghost" 
-                                  title="Execute Query"
-                                  onClick={() => loadReport(report)}
-                                >
-                                  <Play className="h-3 w-3" />
-                                </Button>
-                                <Button size="sm" variant="ghost" title="Duplicate Report">
-                                  <Copy className="h-3 w-3" />
-                                </Button>
-                                <Button size="sm" variant="ghost" title="Download Report">
-                                  <Download className="h-3 w-3" />
-                                </Button>
-                                <Button size="sm" variant="ghost" title="Delete Report">
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                                />
+                              </TableCell>
+                              <TableCell className="font-medium">{report.name}</TableCell>
+                              <TableCell className="text-sm text-muted-foreground">{report.description}</TableCell>
+                              <TableCell>
+                                <Badge variant="secondary">{report.category}</Badge>
+                              </TableCell>
+                              <TableCell className="text-sm">
+                                {new Date(report.updated_at).toLocaleDateString()}
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    title="View Report"
+                                    onClick={() => {
+                                      loadReport(report);
+                                      setActiveTab("preview");
+                                    }}
+                                  >
+                                    <Eye className="h-3 w-3" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    title="Edit Report"
+                                    onClick={() => {
+                                      loadReport(report);
+                                      setActiveTab("designer");
+                                    }}
+                                  >
+                                    <Edit2 className="h-3 w-3" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    title="Execute Query"
+                                    onClick={() => loadReport(report)}
+                                  >
+                                    <Play className="h-3 w-3" />
+                                  </Button>
+                                  <Button size="sm" variant="ghost" title="Duplicate Report">
+                                    <Copy className="h-3 w-3" />
+                                  </Button>
+                                  <Button size="sm" variant="ghost" title="Download Report">
+                                    <Download className="h-3 w-3" />
+                                  </Button>
+                                  <Button size="sm" variant="ghost" title="Delete Report">
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
                       </TableBody>
                     </Table>
                   </ScrollArea>
@@ -1628,8 +2108,8 @@ export default function Reports() {
               <CardTitle className="flex items-center justify-between">
                 <span>Query Results ({reportResult.total_rows} rows)</span>
                 <div className="flex items-center gap-2">
-                  <Input 
-                    placeholder="Search results..." 
+                  <Input
+                    placeholder="Search results..."
                     className="w-48"
                     value={resultsSearchTerm}
                     onChange={(e) => setResultsSearchTerm(e.target.value)}
@@ -1637,7 +2117,7 @@ export default function Reports() {
                   <Badge variant="outline">
                     Executed in {reportResult.execution_time}ms
                   </Badge>
-                  <Button size="sm" variant="outline">
+                  <Button size="sm" variant="outline" onClick={exportToCsv}>
                     <Download className="h-4 w-4 mr-2" />
                     Export
                   </Button>
@@ -1665,21 +2145,21 @@ export default function Reports() {
                       })
                       .slice(0, 100)
                       .map((row, index) => (
-                      <TableRow key={index} className="hover:bg-muted/50">
-                        <TableCell>
-                          <Checkbox />
-                        </TableCell>
-                        {reportResult.columns.map((column) => (
-                          <TableCell key={column} className="font-mono text-sm">
-                            {row[column]}
+                        <TableRow key={index} className="hover:bg-muted/50">
+                          <TableCell>
+                            <Checkbox />
                           </TableCell>
-                        ))}
-                      </TableRow>
-                    ))}
+                          {reportResult.columns.map((column) => (
+                            <TableCell key={column} className="font-mono text-sm">
+                              {row[column]}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
                   </TableBody>
                 </Table>
               </ScrollArea>
-              
+
               <div className="flex items-center justify-between mt-4 pt-4 border-t">
                 <div className="text-sm text-muted-foreground">
                   Showing {Math.min(100, reportResult.data.length)} of {reportResult.total_rows} rows

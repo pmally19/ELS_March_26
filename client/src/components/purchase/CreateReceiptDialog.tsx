@@ -408,7 +408,7 @@ export default function CreateReceiptDialog({ isOpen, onClose }: CreateReceiptDi
                 ) : documentTypes.length > 0 ? (
                   documentTypes.map((dt: any) => (
                     <SelectItem key={dt.id} value={dt.id.toString()}>
-                      {dt.document_type_code} - {dt.description}
+                      {dt.document_type_code || dt.documentTypeCode || dt.code} - {dt.description || dt.name}
                     </SelectItem>
                   ))
                 ) : (

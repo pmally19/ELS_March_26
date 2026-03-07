@@ -891,7 +891,6 @@ router.get('/payment-terms', async (req, res) => {
         cash_discount_days,
         cash_discount_percent,
         created_at,
-        updated_at,
         created_by,
         updated_by,
         "_tenantId",
@@ -914,7 +913,7 @@ router.get('/payment-terms', async (req, res) => {
       companyCodeId: 1,
       isActive: r.is_active !== undefined ? r.is_active : true,
       createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
-      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
+      updatedAt: r.created_at ? new Date(r.created_at).toISOString() : null, // Using created_at since updated_at missing in DB
       createdBy: r.created_by,
       updatedBy: r.updated_by,
       tenantId: r._tenantId,
@@ -1071,7 +1070,7 @@ router.get('/document-types', async (req, res) => {
   try {
     const pool = ensureActivePool();
     const records = await pool.query('SELECT * FROM document_types ORDER BY id');
-    res.json({ records });
+    res.json(records.rows); // Return the array directly to match what the frontend expects
   } catch (error) {
     console.error('Error fetching document types:', error);
     res.status(500).json({ message: 'Failed to fetch document types' });

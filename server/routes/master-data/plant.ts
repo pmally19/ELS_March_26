@@ -177,6 +177,20 @@ export async function createPlant(req: Request, res: Response) {
         (req as any).user?.tenantId ?? '001'
       ]);
 
+      // Resolve Country Name to 2-letter Code
+      let resolvedCountry = data.country;
+      if (resolvedCountry && resolvedCountry.length > 2) {
+        try {
+          const countryRes = await pool.query(
+            `SELECT code FROM countries WHERE name ILIKE $1 OR code ILIKE $1 LIMIT 1`,
+            [resolvedCountry]
+          );
+          if (countryRes.rows.length > 0) {
+            resolvedCountry = countryRes.rows[0].code;
+          }
+        } catch (e) { /* ignore */ }
+      }
+
       newPlant = result.rows[0];
 
       // Update with additional fields if the basic insert succeeded
@@ -193,7 +207,7 @@ export async function createPlant(req: Request, res: Response) {
           RETURNING *
         `, [
           data.description, data.category, data.address, data.city, data.state,
-          data.country, data.postalCode, data.phone, data.email, data.manager,
+          resolvedCountry, data.postalCode, data.phone, data.email, data.manager,
           data.timezone, data.operatingHours, data.coordinates, data.factoryCalendar, newPlant.id
         ]);
 
@@ -302,6 +316,20 @@ export async function updatePlant(req: Request, res: Response) {
       return res.status(400).json({ error: "Invalid company code ID" });
     }
 
+    // Resolve Country Name to 2-letter Code
+    let resolvedCountry = data.country;
+    if (resolvedCountry && resolvedCountry.length > 2) {
+      try {
+        const countryRes = await pool.query(
+          `SELECT code FROM countries WHERE name ILIKE $1 OR code ILIKE $1 LIMIT 1`,
+          [resolvedCountry]
+        );
+        if (countryRes.rows.length > 0) {
+          resolvedCountry = countryRes.rows[0].code;
+        }
+      } catch (e) { /* ignore */ }
+    }
+
     // Update plant — inject updated_by for audit trail
     const updateResult = await pool.query(`
       UPDATE plants 
@@ -314,7 +342,7 @@ export async function updatePlant(req: Request, res: Response) {
       RETURNING *
     `, [
       data.code, data.name, data.description, data.companyCodeId, data.type,
-      data.category, data.address, data.city, data.state, data.country,
+      data.category, data.address, data.city, data.state, resolvedCountry,
       data.postalCode, data.phone, data.email, data.manager, data.timezone,
       data.operatingHours, data.coordinates, data.factoryCalendar, data.status, data.isActive,
       data.valuationGroupingCodeId || null, (req as any).user?.id ?? 1, id

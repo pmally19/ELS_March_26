@@ -1097,7 +1097,18 @@ router.post('/orders', async (req, res) => {
         vm.lead_time_days,
         vm.minimum_order_quantity
       FROM vendor_materials vm
-      WHERE vm.vendor_id = $1 AND vm.is_active = true
+      WHERE vm.vendor_id = $1 
+        AND vm.is_active = true
+        AND (vm.valid_from IS NULL OR DATE(vm.valid_from) <= CURRENT_DATE)
+        AND (vm.valid_to IS NULL OR DATE(vm.valid_to) >= CURRENT_DATE)
+        AND NOT EXISTS (
+          SELECT 1 FROM source_lists sl 
+          WHERE sl.material_id = vm.material_id 
+          AND sl.vendor_id = vm.vendor_id 
+          AND sl.is_blocked = true 
+          AND sl.is_active = true 
+          AND CURRENT_DATE BETWEEN sl.valid_from AND sl.valid_to
+        )
     `, [vendor_id]);
 
     // Create a map of material_id -> vendor pricing for quick lookup
@@ -1155,7 +1166,7 @@ router.post('/orders', async (req, res) => {
 
         itemInsertColumns.push('line_number');
         itemInsertValues.push(`$${itemParamIndex++}`);
-        itemInsertParams.push(item.line_number || (index + 1));
+        itemInsertParams.push(item.line_number ? String(item.line_number) : String((index + 1) * 10));
 
         if (availableItemColumns.includes('material_id')) {
           itemInsertColumns.push('material_id');
@@ -1698,6 +1709,7 @@ router.get('/orders/:id/items', async (req, res) => {
     const items = itemsResult.rows.map(item => ({
       id: item.id,
       line_item: item.line_number || item.id,
+      line_number: item.line_number || item.id,
       material_id: item.material_id,
       material_code: item.material_code || null,
       material_name: item.material_name || null,
@@ -2715,7 +2727,18 @@ router.post('/requisitions/:id/convert-to-po', async (req, res) => {
         vm.lead_time_days,
         vm.minimum_order_quantity
       FROM vendor_materials vm
-      WHERE vm.vendor_id = $1 AND vm.is_active = true
+      WHERE vm.vendor_id = $1 
+        AND vm.is_active = true
+        AND (vm.valid_from IS NULL OR DATE(vm.valid_from) <= CURRENT_DATE)
+        AND (vm.valid_to IS NULL OR DATE(vm.valid_to) >= CURRENT_DATE)
+        AND NOT EXISTS (
+          SELECT 1 FROM source_lists sl 
+          WHERE sl.material_id = vm.material_id 
+          AND sl.vendor_id = vm.vendor_id 
+          AND sl.is_blocked = true 
+          AND sl.is_active = true 
+          AND CURRENT_DATE BETWEEN sl.valid_from AND sl.valid_to
+        )
     `, [vendor_id]);
 
     // Create a map of material_id -> vendor pricing for quick lookup
@@ -2734,6 +2757,7 @@ router.post('/requisitions/:id/convert-to-po', async (req, res) => {
     let actualPoTotal = 0;
 
     // Insert PO items with vendor-specific pricing (if available) or PR prices (fallback)
+    let currentLineNumber = 10;
     for (const item of prItems.rows) {
       // Check if vendor has specific pricing for this material
       const vendorPricing = item.material_id ? vendorPricingMap[item.material_id] : null;
@@ -2775,7 +2799,7 @@ router.post('/requisitions/:id/convert-to-po', async (req, res) => {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       `, [
         po.id,
-        item.line_number,
+        String(currentLineNumber),
         item.material_id,
         item.material_code_ref || item.material_code,
         item.description,
@@ -2790,6 +2814,8 @@ router.post('/requisitions/:id/convert-to-po', async (req, res) => {
         item.cost_center_id || null,
         item.purchasing_organization_id || null
       ]);
+
+      currentLineNumber += 10;
     }
 
     // Update PO total_amount with actual total based on vendor prices
@@ -2991,6 +3017,16 @@ router.get('/vendors/by-materials', async (req, res) => {
       INNER JOIN vendor_materials vm ON v.id = vm.vendor_id
       WHERE vm.material_id = ANY($1)
         AND vm.is_active = true
+        AND (vm.valid_from IS NULL OR DATE(vm.valid_from) <= CURRENT_DATE)
+        AND (vm.valid_to IS NULL OR DATE(vm.valid_to) >= CURRENT_DATE)
+        AND NOT EXISTS (
+          SELECT 1 FROM source_lists sl 
+          WHERE sl.material_id = vm.material_id 
+          AND sl.vendor_id = vm.vendor_id 
+          AND sl.is_blocked = true 
+          AND sl.is_active = true 
+          AND CURRENT_DATE BETWEEN sl.valid_from AND sl.valid_to
+        )
       GROUP BY v.id, v.code, v.name, v.email, v.phone, v.address, v.city, v.country, v.payment_terms, v.currency
       ORDER BY materials_count DESC, has_preferred_materials DESC, v.name
     `, [materialIdArray]);
@@ -3017,6 +3053,16 @@ router.get('/vendors/by-materials', async (req, res) => {
           WHERE vm.vendor_id = $1
             AND vm.material_id = ANY($2)
             AND vm.is_active = true
+            AND (vm.valid_from IS NULL OR DATE(vm.valid_from) <= CURRENT_DATE)
+            AND (vm.valid_to IS NULL OR DATE(vm.valid_to) >= CURRENT_DATE)
+            AND NOT EXISTS (
+              SELECT 1 FROM source_lists sl 
+              WHERE sl.material_id = vm.material_id 
+              AND sl.vendor_id = vm.vendor_id 
+              AND sl.is_blocked = true 
+              AND sl.is_active = true 
+              AND CURRENT_DATE BETWEEN sl.valid_from AND sl.valid_to
+            )
           ORDER BY vm.is_preferred DESC, m.code
         `, [vendor.id, materialIdArray]);
 
@@ -3263,73 +3309,7 @@ router.delete('/requisitions/:id', async (req, res) => {
   }
 });
 
-// Get material movements for a purchase order
-router.get('/material-movements/:po_id', async (req, res) => {
-  try {
-    const { po_id } = req.params;
 
-    // Check if material_movements table exists
-    const tableCheckResult = await pool.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'material_movements'
-      );
-    `);
-
-    if (!tableCheckResult.rows[0].exists) {
-      // Return empty array if table doesn't exist
-      return res.json([]);
-    }
-
-    // Fetch material movements for this PO, joined with materials table
-    const result = await pool.query(`
-      SELECT 
-        mm.id,
-        mm.movement_number,
-        mm.movement_type,
-        mm.movement_date,
-        mm.posting_date,
-        mm.material_id,
-        mm.material_code,
-        mm.material_name,
-        COALESCE(m.description, mm.material_name) as material_description,
-        mm.quantity,
-        mm.unit_of_measure,
-        mm.from_location,
-        mm.to_location,
-        mm.plant_id,
-        p.name as plant_name,
-        p.code as plant_code,
-        mm.warehouse_code,
-        mm.bin_location,
-        mm.batch_number,
-        mm.serial_number,
-        mm.value_amount,
-        mm.currency,
-        mm.status,
-        mm.reference_document,
-        mm.reference_type,
-        mm.goods_receipt_id,
-        gr.receipt_number,
-        mm.notes
-      FROM material_movements mm
-      LEFT JOIN materials m ON mm.material_id = m.id
-      LEFT JOIN plants p ON mm.plant_id = p.id
-      LEFT JOIN goods_receipts gr ON mm.goods_receipt_id = gr.id
-      WHERE mm.purchase_order_id = $1
-      ORDER BY mm.movement_date DESC, mm.created_at DESC
-    `, [parseInt(po_id)]);
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching material movements for PO:', error);
-    res.status(500).json({
-      message: 'Failed to fetch material movements',
-      error: error.message
-    });
-  }
-});
 
 export default router;
 

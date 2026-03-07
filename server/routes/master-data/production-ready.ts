@@ -1590,6 +1590,8 @@ export function registerProductionMasterDataRoutes(app: Express) {
           vm.lead_time_days,
           vm.is_preferred,
           vm.is_active,
+          vm.valid_from,
+          vm.valid_to,
           vm.notes,
           vm.created_at,
           vm.updated_at,
@@ -1619,6 +1621,8 @@ export function registerProductionMasterDataRoutes(app: Express) {
         leadTimeDays: row.lead_time_days || null,
         isPreferred: row.is_preferred || false,
         isActive: row.is_active,
+        validFrom: row.valid_from || null,
+        validTo: row.valid_to || null,
         notes: row.notes || null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -1649,7 +1653,7 @@ export function registerProductionMasterDataRoutes(app: Express) {
   // POST: Assign materials to a vendor (bulk)
   app.post("/api/master-data/vendor-materials", async (req: Request, res: Response) => {
     try {
-      const { vendorId, materialIds, vendorMaterialCode, unitPrice, currency, minimumOrderQuantity, leadTimeDays, isPreferred, notes } = req.body;
+      const { vendorId, materialIds, vendorMaterialCode, unitPrice, currency, minimumOrderQuantity, leadTimeDays, isPreferred, validFrom, validTo, notes } = req.body;
 
       if (!vendorId || !materialIds || !Array.isArray(materialIds) || materialIds.length === 0) {
         return res.status(400).json({ message: "Vendor ID and material IDs array are required" });
@@ -1697,7 +1701,9 @@ export function registerProductionMasterDataRoutes(app: Express) {
                 minimum_order_quantity = COALESCE($6, minimum_order_quantity),
                 lead_time_days = COALESCE($7, lead_time_days),
                 is_preferred = COALESCE($8, is_preferred),
-                notes = COALESCE($9, notes),
+                valid_from = COALESCE($9, valid_from),
+                valid_to = COALESCE($10, valid_to),
+                notes = COALESCE($11, notes),
                 is_active = true,
                 updated_at = NOW()
               WHERE vendor_id = $1 AND material_id = $2
@@ -1711,6 +1717,8 @@ export function registerProductionMasterDataRoutes(app: Express) {
               minimumOrderQuantity || null,
               leadTimeDays || null,
               isPreferred || false,
+              validFrom ? new Date(validFrom) : null,
+              validTo ? new Date(validTo) : null,
               notes || null
             ]);
 
@@ -1727,12 +1735,14 @@ export function registerProductionMasterDataRoutes(app: Express) {
                 minimum_order_quantity,
                 lead_time_days,
                 is_preferred,
+                valid_from,
+                valid_to,
                 notes,
                 is_active,
                 created_at,
                 updated_at
               )
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, NOW(), NOW())
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, NOW(), NOW())
               RETURNING *
             `, [
               vendorId,
@@ -1743,6 +1753,8 @@ export function registerProductionMasterDataRoutes(app: Express) {
               minimumOrderQuantity || null,
               leadTimeDays || null,
               isPreferred || false,
+              validFrom ? new Date(validFrom) : null,
+              validTo ? new Date(validTo) : null,
               notes || null
             ]);
 
@@ -1802,7 +1814,7 @@ export function registerProductionMasterDataRoutes(app: Express) {
   app.patch("/api/master-data/vendor-materials/:id", async (req: Request, res: Response) => {
     try {
       const id = req.params.id;
-      const { vendorMaterialCode, unitPrice, currency, minimumOrderQuantity, leadTimeDays, isPreferred, notes, isActive } = req.body;
+      const { vendorMaterialCode, unitPrice, currency, minimumOrderQuantity, leadTimeDays, isPreferred, validFrom, validTo, notes, isActive } = req.body;
 
       const updates: string[] = [];
       const values: any[] = [];
@@ -1831,6 +1843,14 @@ export function registerProductionMasterDataRoutes(app: Express) {
       if (isPreferred !== undefined) {
         updates.push(`is_preferred = $${paramIndex++}`);
         values.push(isPreferred);
+      }
+      if (validFrom !== undefined) {
+        updates.push(`valid_from = $${paramIndex++}`);
+        values.push(validFrom ? new Date(validFrom) : null);
+      }
+      if (validTo !== undefined) {
+        updates.push(`valid_to = $${paramIndex++}`);
+        values.push(validTo ? new Date(validTo) : null);
       }
       if (notes !== undefined) {
         updates.push(`notes = $${paramIndex++}`);

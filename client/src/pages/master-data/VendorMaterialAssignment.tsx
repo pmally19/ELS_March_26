@@ -19,9 +19,13 @@ import { AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDe
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Building, Plus, Trash2, RefreshCw, Package, ArrowLeft, Search
+  Building, Plus, Trash2, RefreshCw, Package, ArrowLeft, Search, CalendarIcon
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { format } from "date-fns";
+import { cn } from "@/lib/utils";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 // Types
 interface Vendor {
@@ -57,6 +61,8 @@ interface VendorMaterialAssignment {
   leadTimeDays?: number;
   isPreferred: boolean;
   isActive: boolean;
+  validFrom?: string | null;
+  validTo?: string | null;
   notes?: string;
   createdAt: string;
   updatedAt: string;
@@ -86,6 +92,8 @@ const vendorMaterialFormSchema = z.object({
   minimumOrderQuantity: z.coerce.number().min(0).optional(),
   leadTimeDays: z.coerce.number().min(0).optional(),
   isPreferred: z.boolean().default(false),
+  validFrom: z.date().optional().nullable(),
+  validTo: z.date().optional().nullable(),
   notes: z.string().optional(),
 });
 
@@ -138,6 +146,8 @@ export default function VendorMaterialAssignment() {
       minimumOrderQuantity: undefined,
       leadTimeDays: undefined,
       isPreferred: false,
+      validFrom: null,
+      validTo: null,
       notes: "",
     },
   });
@@ -269,6 +279,8 @@ export default function VendorMaterialAssignment() {
         minimumOrderQuantity: editingAssignment.minimumOrderQuantity,
         leadTimeDays: editingAssignment.leadTimeDays,
         isPreferred: editingAssignment.isPreferred,
+        validFrom: editingAssignment.validFrom ? new Date(editingAssignment.validFrom) : null,
+        validTo: editingAssignment.validTo ? new Date(editingAssignment.validTo) : null,
         notes: editingAssignment.notes || "",
       });
     }
@@ -315,7 +327,7 @@ export default function VendorMaterialAssignment() {
           const material = materials.find(m => m.id === materialId);
           // Use the entered unitPrice if available (it will be applied to all selected materials in this batch)
           // otherwise fallback to material base price
-          const price = data.unitPrice !== undefined ? data.unitPrice : (material?.price || 0);
+          const price = data.unitPrice !== undefined && data.unitPrice !== null ? data.unitPrice : (material?.base_unit_price || 0);
 
           return createAssignmentMutation.mutateAsync({
             vendorId: data.vendorId,
@@ -326,6 +338,8 @@ export default function VendorMaterialAssignment() {
             minimumOrderQuantity: data.minimumOrderQuantity,
             leadTimeDays: data.leadTimeDays,
             isPreferred: data.isPreferred,
+            validFrom: data.validFrom ? data.validFrom.toISOString() : undefined,
+            validTo: data.validTo ? data.validTo.toISOString() : undefined,
             notes: data.notes
           });
         });
@@ -683,6 +697,86 @@ export default function VendorMaterialAssignment() {
                       )}
                     />
 
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="validFrom"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-col">
+                            <FormLabel>Valid From</FormLabel>
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <FormControl>
+                                  <Button
+                                    variant={"outline"}
+                                    className={cn(
+                                      "w-full pl-3 text-left font-normal",
+                                      !field.value && "text-muted-foreground"
+                                    )}
+                                  >
+                                    {field.value ? (
+                                      format(field.value, "PPP")
+                                    ) : (
+                                      <span>Pick a date</span>
+                                    )}
+                                    <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                                  </Button>
+                                </FormControl>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-0" align="start">
+                                <Calendar
+                                  mode="single"
+                                  selected={field.value || undefined}
+                                  onSelect={field.onChange}
+                                  initialFocus
+                                />
+                              </PopoverContent>
+                            </Popover>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="validTo"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-col">
+                            <FormLabel>Valid To</FormLabel>
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <FormControl>
+                                  <Button
+                                    variant={"outline"}
+                                    className={cn(
+                                      "w-full pl-3 text-left font-normal",
+                                      !field.value && "text-muted-foreground"
+                                    )}
+                                  >
+                                    {field.value ? (
+                                      format(field.value, "PPP")
+                                    ) : (
+                                      <span>Pick a date</span>
+                                    )}
+                                    <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                                  </Button>
+                                </FormControl>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-0" align="start">
+                                <Calendar
+                                  mode="single"
+                                  selected={field.value || undefined}
+                                  onSelect={field.onChange}
+                                  initialFocus
+                                />
+                              </PopoverContent>
+                            </Popover>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
                     <FormField
                       control={form.control}
                       name="notes"
@@ -752,8 +846,9 @@ export default function VendorMaterialAssignment() {
                     <TableRow>
                       <TableHead>Material</TableHead>
                       <TableHead>Unit Price</TableHead>
-                      <TableHead>Min Qty</TableHead>
+                      <TableHead>Minimum Qty</TableHead>
                       <TableHead>Lead Time</TableHead>
+                      <TableHead>Validity</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
@@ -794,6 +889,16 @@ export default function VendorMaterialAssignment() {
                             <span>{assignment.leadTimeDays} days</span>
                           ) : (
                             <span className="text-gray-400">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-sm">
+                          {assignment.validFrom || assignment.validTo ? (
+                            <div className="flex flex-col text-gray-600">
+                              {assignment.validFrom && <span>From: {format(new Date(assignment.validFrom), 'MMM d, yyyy')}</span>}
+                              {assignment.validTo && <span>To: {format(new Date(assignment.validTo), 'MMM d, yyyy')}</span>}
+                            </div>
+                          ) : (
+                            <span className="text-gray-400">Always valid</span>
                           )}
                         </TableCell>
                         <TableCell>
@@ -950,6 +1055,86 @@ export default function VendorMaterialAssignment() {
                     </FormItem>
                   )}
                 />
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormField
+                    control={editForm.control}
+                    name="validFrom"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-col">
+                        <FormLabel>Valid From</FormLabel>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <FormControl>
+                              <Button
+                                variant={"outline"}
+                                className={cn(
+                                  "w-full pl-3 text-left font-normal",
+                                  !field.value && "text-muted-foreground"
+                                )}
+                              >
+                                {field.value ? (
+                                  format(field.value, "PPP")
+                                ) : (
+                                  <span>Pick a date</span>
+                                )}
+                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                              </Button>
+                            </FormControl>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={field.value || undefined}
+                              onSelect={field.onChange}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={editForm.control}
+                    name="validTo"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-col">
+                        <FormLabel>Valid To</FormLabel>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <FormControl>
+                              <Button
+                                variant={"outline"}
+                                className={cn(
+                                  "w-full pl-3 text-left font-normal",
+                                  !field.value && "text-muted-foreground"
+                                )}
+                              >
+                                {field.value ? (
+                                  format(field.value, "PPP")
+                                ) : (
+                                  <span>Pick a date</span>
+                                )}
+                                <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                              </Button>
+                            </FormControl>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={field.value || undefined}
+                              onSelect={field.onChange}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
                 <FormField
                   control={editForm.control}

@@ -1,4 +1,4 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 import { z } from "zod";
 import { db, pool } from "../db";
 import { sql, eq, and, desc } from "drizzle-orm";
@@ -631,18 +631,18 @@ router.post("/sales-orders", async (req, res) => {
                     WHEN order_number LIKE 'SO-%' THEN
                       CASE 
                         WHEN (regexp_match(order_number, 'SO-[0-9]{4}-([0-9]+)'))[1] IS NOT NULL THEN
-                          CAST((regexp_match(order_number, 'SO-[0-9]{4}-([0-9]+)'))[1] AS INTEGER)
+                          CAST((regexp_match(order_number, 'SO-[0-9]{4}-([0-9]+)'))[1] AS BIGINT)
                         ELSE 0
                       END
                     WHEN order_number ~ '^[0-9]+$' THEN
-                      CAST(order_number AS INTEGER)
+                      CAST(order_number AS BIGINT)
                     ELSE 0
                   END
                 ), 0
               ) + 1 as next_number
               FROM sales_orders 
               WHERE order_number LIKE ${`SO-${currentYear}-%`}
-                 OR (order_number ~ '^[0-9]+$' AND LENGTH(order_number) > 0)
+                 OR (order_number ~ '^[0-9]+$' AND LENGTH(order_number) > 0 AND LENGTH(order_number) <= 18)
             `);
             const nextNumber = getInt(orderCountResult.rows[0]?.next_number, 1);
             orderNumber = `SO-${currentYear}-${nextNumber.toString().padStart(4, '0')}`;
@@ -659,18 +659,18 @@ router.post("/sales-orders", async (req, res) => {
                   WHEN order_number LIKE 'SO-%' THEN
                     CASE 
                       WHEN (regexp_match(order_number, 'SO-[0-9]{4}-([0-9]+)'))[1] IS NOT NULL THEN
-                        CAST((regexp_match(order_number, 'SO-[0-9]{4}-([0-9]+)'))[1] AS INTEGER)
+                        CAST((regexp_match(order_number, 'SO-[0-9]{4}-([0-9]+)'))[1] AS BIGINT)
                       ELSE 0
                     END
                   WHEN order_number ~ '^[0-9]+$' THEN
-                    CAST(order_number AS INTEGER)
+                    CAST(order_number AS BIGINT)
                   ELSE 0
                 END
               ), 0
             ) + 1 as next_number
             FROM sales_orders 
             WHERE order_number LIKE ${`SO-${currentYear}-%`}
-               OR (order_number ~ '^[0-9]+$' AND LENGTH(order_number) > 0)
+               OR (order_number ~ '^[0-9]+$' AND LENGTH(order_number) > 0 AND LENGTH(order_number) <= 18)
           `);
           const nextNumber = getInt(orderCountResult.rows[0]?.next_number, 1);
           orderNumber = `SO-${currentYear}-${nextNumber.toString().padStart(4, '0')}`;
@@ -687,18 +687,18 @@ router.post("/sales-orders", async (req, res) => {
                 WHEN order_number LIKE 'SO-%' THEN
                   CASE 
                     WHEN (regexp_match(order_number, 'SO-[0-9]{4}-([0-9]+)'))[1] IS NOT NULL THEN
-                      CAST((regexp_match(order_number, 'SO-[0-9]{4}-([0-9]+)'))[1] AS INTEGER)
+                      CAST((regexp_match(order_number, 'SO-[0-9]{4}-([0-9]+)'))[1] AS BIGINT)
                     ELSE 0
                   END
                 WHEN order_number ~ '^[0-9]+$' THEN
-                  CAST(order_number AS INTEGER)
+                  CAST(order_number AS BIGINT)
                 ELSE 0
               END
             ), 0
           ) + 1 as next_number
           FROM sales_orders 
           WHERE order_number LIKE ${`SO-${currentYear}-%`}
-             OR (order_number ~ '^[0-9]+$' AND LENGTH(order_number) > 0)
+             OR (order_number ~ '^[0-9]+$' AND LENGTH(order_number) > 0 AND LENGTH(order_number) <= 18)
         `);
         const nextNumber = getInt(orderCountResult.rows[0]?.next_number, 1);
         orderNumber = `SO-${currentYear}-${nextNumber.toString().padStart(4, '0')}`;
@@ -714,18 +714,18 @@ router.post("/sales-orders", async (req, res) => {
               WHEN order_number LIKE 'SO-%' THEN
                 CASE 
                   WHEN (regexp_match(order_number, 'SO-[0-9]{4}-([0-9]+)'))[1] IS NOT NULL THEN
-                    CAST((regexp_match(order_number, 'SO-[0-9]{4}-([0-9]+)'))[1] AS INTEGER)
+                    CAST((regexp_match(order_number, 'SO-[0-9]{4}-([0-9]+)'))[1] AS BIGINT)
                   ELSE 0
                 END
               WHEN order_number ~ '^[0-9]+$' THEN
-                CAST(order_number AS INTEGER)
+                CAST(order_number AS BIGINT)
               ELSE 0
             END
           ), 0
         ) + 1 as next_number
         FROM sales_orders 
         WHERE order_number LIKE ${`SO-${currentYear}-%`}
-           OR (order_number ~ '^[0-9]+$' AND LENGTH(order_number) > 0)
+           OR (order_number ~ '^[0-9]+$' AND LENGTH(order_number) > 0 AND LENGTH(order_number) <= 18)
       `);
       const nextNumber = getInt(orderCountResult.rows[0]?.next_number, 1);
       orderNumber = `SO-${currentYear}-${nextNumber.toString().padStart(4, '0')}`;
@@ -744,20 +744,40 @@ router.post("/sales-orders", async (req, res) => {
     }
 
     // Ã¢â€â‚¬Ã¢â€â‚¬ Server-side pricing procedure determination Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-    let resolvedPricingProcedure: string | null = null;
-    try {
-      resolvedPricingProcedure = await pricingCalculationService.determinePricingProcedure(
-        salesOrgId,
-        orderData.distribution_channel_id ? parseInt(String(orderData.distribution_channel_id)) : undefined,
-        orderData.division_id ? parseInt(String(orderData.division_id)) : undefined,
-        orderData.customer_pricing_procedure,
-        orderData.document_type   // treat doc type as document pricing procedure key
-      );
-    } catch (ppErr) {
-      console.warn(' Could not auto-determine pricing procedure:', ppErr);
+    console.log('[SO Creation] Pricing Proc Determination Payload:', {
+      sales_org: salesOrgId,
+      dist_channel: orderData.distribution_channel_id,
+      div: orderData.division_id,
+      customer_pp: orderData.customer_pricing_procedure,
+      document_pp: orderData.document_pricing_procedure
+    });
+
+    // ─── Server-side pricing procedure determination ──────────────────────────
+    let resolvedPricingProcedure: string | null = orderData.pricing_procedure || null;
+
+    // Only determine if not explicitly provided by frontend (or if we need to validate it)
+    if (!resolvedPricingProcedure) {
+      try {
+        resolvedPricingProcedure = await pricingCalculationService.determinePricingProcedure(
+          salesOrgId ? Number(salesOrgId) : undefined,
+          orderData.distribution_channel_id ? parseInt(String(orderData.distribution_channel_id)) : undefined,
+          orderData.division_id ? parseInt(String(orderData.division_id)) : undefined,
+          orderData.customer_pricing_procedure,
+          orderData.document_pricing_procedure // Use actual document_pricing_procedure from payload
+        );
+      } catch (ppErr) {
+        console.error('Pricing procedure error:', ppErr);
+      }
     }
-    // Fall back to frontend-provided value if server cannot determine
-    const effectivePricingProcedure = resolvedPricingProcedure || orderData.pricing_procedure || null;
+
+    if (!resolvedPricingProcedure) {
+      return res.status(400).json({
+        success: false,
+        error: 'Pricing procedure could not be determined',
+        details: `No pricing procedure found for SalesOrg=${salesOrgId}. Maintain in: SD → Pricing → Pricing Procedure Determination.`
+      });
+    }
+    const effectivePricingProcedure = resolvedPricingProcedure;
     console.log(`Ã°Å¸â€œâ€¹ Effective pricing procedure: ${effectivePricingProcedure}`);
 
     // Ã¢â€â‚¬Ã¢â€â‚¬ Fallback raw items total (used only as base for per-item pricing engine calls) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -778,9 +798,10 @@ router.post("/sales-orders", async (req, res) => {
 
     // Get customer information (for customer_name and credit limit validation)
     let customerName = orderData.customer_name || null;
+    let customerCodeStr: string | undefined = undefined;
     if (orderData.customer_id) {
       const customerResult = await db.execute(sql`
-        SELECT id, name, credit_limit, status 
+        SELECT id, customer_code, name, credit_limit, status 
         FROM erp_customers 
         WHERE id = ${orderData.customer_id}
       `);
@@ -793,6 +814,8 @@ router.post("/sales-orders", async (req, res) => {
           details: `Customer ID ${orderData.customer_id} does not exist`
         });
       }
+
+      customerCodeStr = customer.customer_code ? String(customer.customer_code) : undefined;
 
       // Set customer_name if not provided
       if (!customerName) {
@@ -908,8 +931,8 @@ router.post("/sales-orders", async (req, res) => {
         credit_status, payment_terms, shipping_method, sales_rep, priority, currency,
         subtotal, tax_amount, shipping_amount, active, tax_breakdown, tax_profile_id,
         document_type, distribution_channel_id, division_id, pricing_procedure, tax_code,
-        sales_office_id, sales_group_id, sales_person_id, shipping_point_id, route_id,
-        shipping_point_code, route_code, shipping_condition, loading_point,
+        sales_office_id, sales_group_id, sales_person_id, route_id,
+        route_code, shipping_condition, loading_point,
         customer_po_number, customer_po_date, order_reason, sales_district
       ) VALUES (
         ${orderNumber}, 
@@ -954,9 +977,7 @@ router.post("/sales-orders", async (req, res) => {
         ${orderData.sales_office_id || null},
         ${orderData.sales_group_id || null},
         ${orderData.sales_person_id || null},
-        ${orderData.shipping_point_id || null},
         ${orderData.route_id || null},
-        ${orderData.shipping_point_code ? orderData.shipping_point_code.substring(0, 4) : null},
         ${orderData.route_code ? orderData.route_code.substring(0, 6) : null},
         ${orderData.shipping_condition ? orderData.shipping_condition.substring(0, 4) : null},
         ${orderData.loading_point ? orderData.loading_point.substring(0, 4) : null},
@@ -972,99 +993,17 @@ router.post("/sales-orders", async (req, res) => {
                   credit_status, payment_terms, shipping_method, sales_rep, priority, currency,
                   subtotal, tax_amount, shipping_amount, tax_breakdown, tax_profile_id,
                   document_type, distribution_channel_id, division_id, pricing_procedure, tax_code,
-                  sales_office_id, sales_group_id, sales_person_id, shipping_point_id, route_id
+                  sales_office_id, sales_group_id, sales_person_id, route_id
     `);
     } catch (insertError) {
-      if (insertError.code === '23505' && insertError.constraint === 'sales_orders_order_number_key') {
-        // If we still get a duplicate key error, generate a completely unique order number
-        const timestamp = Date.now();
-        const randomSuffix = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
-        // Get year from order date if available, otherwise use current year
-        const orderYear = orderData.order_date
-          ? new Date(orderData.order_date).getFullYear()
-          : new Date().getFullYear();
-        orderNumber = `SO-${orderYear}-${randomSuffix}-${timestamp.toString().slice(-6)}`;
-
-        // Retry the insert with the new unique order number
-        result = await db.execute(sql`
-          INSERT INTO sales_orders (
-            order_number, customer_id, customer_name, order_date, 
-            delivery_date, status, total_amount, payment_status, 
-            shipping_address, billing_address, notes, created_by,
-            plant_id, sales_org_id, company_code_id, currency_id, 
-            inventory_status, credit_check_status,
-            sold_to_address_id, bill_to_address_id, ship_to_address_id, payer_to_address_id,
-            credit_status, payment_terms, shipping_method, sales_rep, priority, currency,
-            subtotal, tax_amount, shipping_amount, active, tax_breakdown, tax_profile_id,
-            document_type, distribution_channel_id, division_id, pricing_procedure, tax_code,
-            sales_office_id, sales_group_id, sales_person_id, shipping_point_id, route_id,
-            shipping_point_code, route_code, shipping_condition, loading_point,
-            customer_po_number, customer_po_date, order_reason, sales_district
-          ) VALUES (
-            ${orderNumber}, 
-            ${orderData.customer_id || null}, 
-            ${customerName}, 
-            ${orderData.order_date ? new Date(orderData.order_date).toISOString() : sql`NOW()`}, 
-            ${orderData.delivery_date ? new Date(orderData.delivery_date).toISOString() : null}, 
-            ${orderData.status || null}, 
-            ${totalAmount.toFixed(2)}, 
-            ${orderData.payment_status || null}, 
-            ${orderData.shipping_address || null}, 
-            ${orderData.billing_address || null}, 
-            ${orderData.notes || null}, 
-            ${orderData.created_by || null},
-            ${warehouseId || null},
-            ${salesOrgId},
-            ${companyCodeId || null},
-            ${currencyId || null},
-            ${orderData.inventory_status || null},
-            ${orderData.credit_check_status || null},
-            ${orderData.sold_to_address_id || null},
-            ${orderData.bill_to_address_id || null},
-            ${orderData.ship_to_address_id || null},
-            ${orderData.payer_to_address_id || null},
-            ${orderData.credit_status || null},
-            ${orderData.payment_terms || null},
-            ${orderData.shipping_method || null},
-            ${orderData.sales_rep || null},
-            ${orderData.priority || null},
-            ${orderData.currency || null},
-            ${orderTotal.toFixed(2)},
-            ${taxAmount.toFixed(2)},
-            ${shippingAmount.toFixed(2)},
-            ${orderData.active !== undefined ? orderData.active : true},
-            ${taxBreakdown.length > 0 ? JSON.stringify(taxBreakdown) : null},
-            ${orderData.tax_profile_id || null},
-            ${orderData.document_type},
-            ${orderData.distribution_channel_id || null},
-            ${orderData.division_id || null},
-            ${orderData.pricing_procedure || null},
-            ${orderData.tax_code || null},
-            ${orderData.sales_office_id || null},
-            ${orderData.sales_group_id || null},
-            ${orderData.sales_person_id || null},
-            ${orderData.shipping_point_id || null},
-            ${orderData.route_id || null},
-            ${orderData.shipping_point_code || null},
-            ${orderData.route_code || null},
-            ${orderData.shipping_condition || null},
-            ${orderData.loading_point || null},
-            ${orderData.customer_po_number || null},
-            ${orderData.customer_po_date ? new Date(orderData.customer_po_date).toISOString() : null},
-            ${orderData.order_reason || null},
-            ${orderData.sales_district || null}
-          ) RETURNING id, order_number, customer_id, customer_name, order_date, 
-                      delivery_date, status, total_amount, payment_status, 
-                      shipping_address, billing_address, notes, created_at,
-                      inventory_status, credit_check_status,
-                      sold_to_address_id, bill_to_address_id, ship_to_address_id, payer_to_address_id,
-                      credit_status, payment_terms, shipping_method, sales_rep, priority, currency,
-                      subtotal, tax_amount, shipping_amount, tax_breakdown, tax_profile_id,
-                      document_type, distribution_channel_id, division_id, pricing_procedure, tax_code
-        `);
-      } else {
-        throw insertError;
+      if ((insertError as any).code === '23505') {
+        return res.status(409).json({
+          success: false,
+          error: 'Order number conflict',
+          details: `Order number ${orderNumber} already exists. This indicates a number range concurrency issue — retry the operation.`
+        });
       }
+      throw insertError;
     }
 
     const salesOrderId = result.rows[0]?.id;
@@ -1078,20 +1017,61 @@ router.post("/sales-orders", async (req, res) => {
       let engineTaxAcc = 0;
 
 
-      // Destination country: comes from the Ship-To address
+      // Destination country: comes from the Ship-To address or fallback to customer default
       let destinationCountry: string | null = null; let destinationState: string | null = null;
       if (orderData.ship_to_address_id) {
         try {
           const destRes = await db.execute(sql`
-            SELECT ca.state, COALESCE(c.code, ca.country) as country_code 
+            SELECT ca.state, 
+                   COALESCE((SELECT code FROM states s WHERE s.name ILIKE ca.state OR s.code ILIKE ca.state LIMIT 1), ca.state) as state_code,
+                   COALESCE(c.code, ca.country) as country_code 
             FROM customer_addresses ca
             LEFT JOIN countries c ON c.name ILIKE ca.country OR c.code = ca.country
             WHERE ca.id = ${orderData.ship_to_address_id}
             LIMIT 1
           `);
           if (destRes.rows.length > 0) {
-            destinationCountry = String(destRes.rows[0].country_code || ''); 
-            destinationState = String(destRes.rows[0].state || '');
+            destinationCountry = String(destRes.rows[0].country_code || '');
+            destinationState = String(destRes.rows[0].state_code || destRes.rows[0].state || '');
+          }
+        } catch { /* graceful */ }
+      }
+
+      // FALLBACK: If ship_to_address_id is missing, use the customer's primary ship_to address 
+      if ((!destinationCountry || !destinationState) && orderData.customer_id) {
+        try {
+          const fallbackRes = await db.execute(sql`
+            SELECT ca.state, 
+                   COALESCE((SELECT code FROM states s WHERE s.name ILIKE ca.state OR s.code ILIKE ca.state LIMIT 1), ca.state) as state_code,
+                   COALESCE(c.code, ca.country) as country_code 
+            FROM customer_addresses ca
+            LEFT JOIN countries c ON c.name ILIKE ca.country OR c.code = ca.country
+            WHERE ca.customer_id = ${orderData.customer_id}
+            ORDER BY CASE WHEN ca.address_type = 'ship_to' THEN 1 ELSE 2 END ASC, ca.is_primary DESC, ca.id DESC 
+            LIMIT 1
+          `);
+          if (fallbackRes.rows.length > 0) {
+            destinationCountry = String(fallbackRes.rows[0].country_code || '');
+            destinationState = String(fallbackRes.rows[0].state_code || fallbackRes.rows[0].state || '');
+          }
+        } catch { /* graceful */ }
+      }
+
+      if ((!destinationCountry || !destinationState) && orderData.customer_id) {
+        try {
+          const fallbackRes = await db.execute(sql`
+            SELECT ca.state, 
+                   COALESCE((SELECT code FROM states s WHERE s.name ILIKE ca.state OR s.code ILIKE ca.state LIMIT 1), ca.state) as state_code,
+                   COALESCE(c.code, ca.country) as country_code 
+            FROM customer_addresses ca
+            LEFT JOIN countries c ON c.name ILIKE ca.country OR c.code = ca.country
+            WHERE ca.customer_id = ${orderData.customer_id}
+            ORDER BY CASE WHEN ca.address_type = 'ship_to' THEN 1 ELSE 2 END ASC, ca.is_primary DESC, ca.id DESC 
+            LIMIT 1
+          `);
+          if (fallbackRes.rows.length > 0) {
+            destinationCountry = String(fallbackRes.rows[0].country_code || '');
+            destinationState = String(fallbackRes.rows[0].state_code || fallbackRes.rows[0].state || '');
           }
         } catch { /* graceful */ }
       }
@@ -1199,23 +1179,24 @@ router.post("/sales-orders", async (req, res) => {
         if (finalPlantId) {
           try {
             const itemDeptRes = await db.execute(sql`
-              SELECT co.code, p.state, p.region
+              SELECT p.country as code, 
+                     p.state,
+                     COALESCE((SELECT code FROM states s WHERE s.name ILIKE p.state OR s.code ILIKE p.state LIMIT 1), p.state) as state_code
               FROM plants p
-              JOIN countries co ON co.id = p.country_id
               WHERE p.id = ${finalPlantId}
               LIMIT 1
             `);
             if (itemDeptRes.rows.length > 0 && itemDeptRes.rows[0].code) {
               departureCountry = String(itemDeptRes.rows[0].code);
-              departureState = String(itemDeptRes.rows[0].state || itemDeptRes.rows[0].region || '');
+              departureState = String(itemDeptRes.rows[0].state_code || itemDeptRes.rows[0].state || '');
             } else {
-              departureCountry = 'IN'; // Fallback
+              departureCountry = null; // No country — tax determination will use wildcard match
             }
           } catch {
             departureCountry = 'IN';
           }
         } else {
-          departureCountry = 'IN'; // Strict fallback
+          departureCountry = null; // No country on plant — tax determination will use wildcard match
         }
         console.log(`🌍 Item tax context: departure=${departureCountry}, destination=${destinationCountry}`);
 
@@ -1236,7 +1217,7 @@ router.post("/sales-orders", async (req, res) => {
             }
 
             const pricingCtx: PricingContext = {
-              customerCode: String(orderData.customer_id || ''),
+              customerCode: customerCodeStr || String(orderData.customer_id || ''),
               materialCode: materialCode || undefined,
               materialId: materialId ? Number(materialId) : undefined,
               customerId: orderData.customer_id ? Number(orderData.customer_id) : undefined,
@@ -1254,14 +1235,15 @@ router.post("/sales-orders", async (req, res) => {
             };
 
             // Ã¢â€â‚¬Ã¢â€â‚¬ Run pricing engine ONCE per item Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-            // Result is reused for both amount calculation AND condition persistence
             const pricingResult = await pricingCalculationService.calculatePricing(
               effectivePricingProcedure,
               subtotal,   // base = qty Ãƒâ€” price per item
               pricingCtx
             );
 
-            itemNetAmount = pricingResult.subtotal > 0 ? pricingResult.subtotal : subtotal;
+            itemNetAmount = pricingResult.netTotal > 0 ? pricingResult.netTotal : pricingResult.subtotal;
+            if (itemNetAmount === 0 && subtotal > 0) itemNetAmount = subtotal;
+
             itemTaxAmount = pricingResult.taxTotal;
 
             engineSubtotalAcc += itemNetAmount;
@@ -1312,6 +1294,7 @@ router.post("/sales-orders", async (req, res) => {
             discount_percent, tax_percent, net_amount, active,
             plant_id, plant_code, storage_location_id, storage_location_code,
             unit, item_category, item_category_group,
+            shipping_point_id, shipping_point_code,
             created_at, updated_at
           ) VALUES (
             ${salesOrderId}, ${materialId || null}, ${item.material_description || item.product_name || ''},
@@ -1321,6 +1304,7 @@ router.post("/sales-orders", async (req, res) => {
             ${finalPlantId}, ${finalPlantCode || null},
             ${finalStorageLocationId || null}, ${finalStorageLocationCode || null},
             ${finalUnit || 'PC'}, ${item.item_category || null}, ${item.item_category_group || null},
+            ${item.shipping_point_id ? parseInt(String(item.shipping_point_id)) : null}, ${item.shipping_point_code || null},
             NOW(), NOW()
           ) RETURNING id
         `);
@@ -1390,11 +1374,15 @@ router.post("/sales-orders", async (req, res) => {
 
     // Patch the saved SO row with engine-calculated totals (if engine ran)
     // BUT: if the frontend already sent accurate totals (from pricingPreview), prefer those.
+    let finalSubtotal: number = orderTotal;
+    let finalTax: number = taxAmount;
+    let finalTotal: number = totalAmount;
+
     if (pricingEngineRan && salesOrderId) {
       try {
-        let finalSubtotal: number = engineSubtotal;
-        let finalTax: number = engineTaxTotal;
-        let finalTotal: number = finalSubtotal + finalTax + shippingAmount;
+        finalSubtotal = engineSubtotal;
+        finalTax = engineTaxTotal;
+        finalTotal = finalSubtotal + finalTax + shippingAmount;
 
         console.log(`📊 Strictly using engine-computed totals: subtotal=${finalSubtotal}, tax=${finalTax}, total=${finalTotal}`);
         await db.execute(sql`
@@ -1406,6 +1394,13 @@ router.post("/sales-orders", async (req, res) => {
           WHERE id = ${salesOrderId}
         `);
         console.log(`Ã¢Å“â€¦ Updated SO ${salesOrderId} totals: subtotal=${finalSubtotal}, tax=${finalTax}, total=${finalTotal}`);
+
+        // Update the result row to reflect the new totals
+        if (result && result.rows && result.rows.length > 0) {
+          result.rows[0].subtotal = finalSubtotal.toFixed(2);
+          result.rows[0].tax_amount = finalTax.toFixed(2);
+          result.rows[0].total_amount = finalTotal.toFixed(2);
+        }
       } catch (updateErr) {
         console.warn(' Could not update SO totals after pricing engine run:', updateErr);
       }
@@ -1416,9 +1411,9 @@ router.post("/sales-orders", async (req, res) => {
       data: {
         order: result.rows[0],
         orderNumber,
-        totalAmount,
-        subtotal: orderTotal,
-        taxAmount: taxAmount,
+        totalAmount: finalTotal,
+        subtotal: finalSubtotal,
+        taxAmount: finalTax,
         shippingAmount: shippingAmount,
         inventory_status: {
           status: 'PASSED',
@@ -2403,14 +2398,16 @@ router.post("/sales-orders-enhanced", async (req, res) => {
           material_description, ordered_quantity, unit_of_measure,
           unit_price, net_amount, tax_amount, gross_amount,
           requested_delivery_date, plant, storage_location,
-          pricing_procedure, condition_records
+          pricing_procedure, condition_records,
+          shipping_point_id, shipping_point_code
         ) VALUES (
           ${salesOrderId}, ${i + 1}, ${item.materialId}, ${material.material_code},
           ${material.description}, ${quantity}, ${material.base_uom},
           ${basePrice}, ${netAmount}, ${taxAmount}, ${grossAmount},
           ${item.deliveryDate || delivery.requestedDate}, 
           ${item.plant || '1001'}, ${item.storageLocation || '0001'},
-          ${pricing.procedure || 'MALLSTD01'}, ${JSON.stringify(conditions)}
+          ${pricing.procedure || 'MALLSTD01'}, ${JSON.stringify(conditions)},
+          ${item.shippingPointId ? parseInt(String(item.shippingPointId)) : null}, ${item.shippingPointCode || null}
         ) RETURNING id
       `);
 
@@ -2506,7 +2503,6 @@ router.post("/delivery-documents", async (req, res) => {
              so.delivery_priority,
              so.shipping_condition,
              so.route_code,
-             so.shipping_point_code,
              so.loading_point,
              so.complete_delivery_required,
              so.partial_delivery_allowed,
@@ -2663,8 +2659,13 @@ router.post("/delivery-documents", async (req, res) => {
     );
     const plantCode = firstPlantCodeResult.rows[0]?.code;
 
-    // Determine shipping point (from shipping_point_determination table)
-    let shippingPointCode = salesOrder.shipping_point_code;
+    // Determine shipping point from first item (SAP: VSTEL is item-level)
+    // Items carry their own shipping_point_code set during SO creation
+    let shippingPointCode: string | null = null;
+    const firstItemWithSP = scheduleLines?.find((sl: any) => sl.shipping_point_code);
+    if (firstItemWithSP) {
+      shippingPointCode = firstItemWithSP.shipping_point_code;
+    }
     if (!shippingPointCode && shippingCondition && plantCode) {
       const spdResult = await pool.query(
         `SELECT proposed_shipping_point 
@@ -3169,11 +3170,13 @@ router.post("/delivery-documents", async (req, res) => {
         // Determine delivery item category from copy control item map
         // Get the source SO item's item category, then look up target from copy control
         const soItemResult = await pool.query(
-          `SELECT item_category FROM sales_order_items WHERE id = $1 LIMIT 1`,
+          `SELECT item_category, item_category_group FROM sales_order_items WHERE id = $1 LIMIT 1`,
           [scheduleLine.sales_order_item_id]
         );
         const sourceItemCategory = soItemResult.rows[0]?.item_category || 'TAN';
-        const deliveryItemCategory = copyControlItemMap[sourceItemCategory] || 'ZTAN';
+        const sourceItemCategoryGroup = soItemResult.rows[0]?.item_category_group || null;
+        // SAP: if no copy control rule found, pass source category through unchanged
+        const deliveryItemCategory = copyControlItemMap[sourceItemCategory] ?? sourceItemCategory;
         console.log(`  Ã°Å¸â€œÅ’ Item ${scheduleLine.sales_order_item_id}: ${sourceItemCategory} Ã¢â€ â€™ ${deliveryItemCategory}`);
 
         await db.execute(sql`
@@ -3181,7 +3184,7 @@ router.post("/delivery-documents", async (req, res) => {
             delivery_id, sales_order_item_id, line_item, material_id, 
             delivery_quantity, pgi_quantity, unit, storage_location, batch,
             schedule_line_id, inventory_posting_status,
-            stock_type, item_category
+            stock_type, item_category, item_category_group
           ) VALUES (
             ${separateDeliveryId}, 
             ${scheduleLine.sales_order_item_id}, 
@@ -3195,7 +3198,8 @@ router.post("/delivery-documents", async (req, res) => {
             ${scheduleLine.id},
             'NOT_POSTED',
             'UNRESTRICTED',
-            ${deliveryItemCategory}
+            ${deliveryItemCategory},
+            ${sourceItemCategoryGroup}
           )
         `);
 
@@ -3362,12 +3366,14 @@ router.post("/delivery-documents", async (req, res) => {
 
       // Determine delivery item category from copy control item map
       const soItemCatResult = await pool.query(
-        `SELECT item_category FROM sales_order_items WHERE id = $1 LIMIT 1`,
+        `SELECT item_category, item_category_group FROM sales_order_items WHERE id = $1 LIMIT 1`,
         [scheduleLine.sales_order_item_id]
       );
       const srcItemCategory = soItemCatResult.rows[0]?.item_category || 'TAN';
-      const tgtItemCategory = copyControlItemMap[srcItemCategory] || 'ZTAN';
-      console.log(`  Ã°Å¸â€œÅ’ Standard item ${i + 1} (SO item ${scheduleLine.sales_order_item_id}): ${srcItemCategory} Ã¢â€ â€™ ${tgtItemCategory}`);
+      const srcItemCategoryGroup = soItemCatResult.rows[0]?.item_category_group || null;
+      // SAP: if no copy control rule found, pass source category through unchanged
+      const tgtItemCategory = copyControlItemMap[srcItemCategory] ?? srcItemCategory;
+      console.log(`  📋 Standard item ${i + 1} (SO item ${scheduleLine.sales_order_item_id}): ${srcItemCategory} → ${tgtItemCategory} (group: ${srcItemCategoryGroup || 'none'})`);
 
       // Create delivery item linked to schedule line (even if stock is low - track for later)
       await db.execute(sql`
@@ -3375,7 +3381,7 @@ router.post("/delivery-documents", async (req, res) => {
           delivery_id, sales_order_item_id, line_item, material_id, 
           delivery_quantity, pgi_quantity, unit, storage_location, batch,
           schedule_line_id, inventory_posting_status,
-          stock_type, item_category
+          stock_type, item_category, item_category_group
         ) VALUES (
           ${deliveryDocumentId}, 
           ${scheduleLine.sales_order_item_id}, 
@@ -3389,7 +3395,8 @@ router.post("/delivery-documents", async (req, res) => {
           ${scheduleLine.id},
           'NOT_POSTED',
           'UNRESTRICTED',
-          ${tgtItemCategory}
+          ${tgtItemCategory},
+          ${srcItemCategoryGroup}
         )
       `);
 
@@ -5433,8 +5440,8 @@ router.get("/document-flow/:sourceType/:sourceId", async (req, res) => {
 
     const flowResult = await db.execute(sql`
       SELECT * FROM document_flow 
-      WHERE source_document_type = ${sourceType} AND source_document = ${sourceId}
-      ORDER BY created_at DESC
+      WHERE source_document = ${sourceId}
+      ORDER BY created_at ASC
     `);
 
     res.json({
@@ -8165,31 +8172,14 @@ router.post("/billing-documents", async (req, res) => {
 
     console.log(`Ã¢Å“â€¦ Created ${billingItemsData.length} billing items`);
 
-    // Step 11.5: Create DRAFT accounting document with direct GL account assignment
-    const billingItemsForAccountDoc = billingItemsData.map(item => ({
-      glAccount: item.glAccount,
-      netAmount: item.netAmount,
-      description: `Revenue - ${item.materialCode}`
-    }));
-
-    await transactionalApplicationsService.createDraftAccountingDocument({
-      documentNumber: accountingDocNumber,
-      companyCode: companyCode,
-      billingId: parseInt(String(billingId)),
-      billingNumber: billingNumber,
-      billingType: String(billingType), // Required for document type mapping
-      billingItems: billingItemsForAccountDoc,
-      arAccount: accountDeterminationResult.arAccount,
-      taxAccount: accountDeterminationResult.taxAccount,
-      totalAmount: totalGrossAmount,
-      taxAmount: totalTaxAmount,
-      currency: String(currency), // Retrieved from company code or sales order
-      postingDate: billingDate,
-      documentDate: billingDate,
-      createdBy: parseInt(String(createdBy)) // From auth context
-    });
-
-    console.log(`Created DRAFT accounting document: ${accountingDocNumber}`);
+    // IMPORTANT: Do NOT pre-populate accounting_document_items or gl_entries here.
+    // GL entry creation is handled exclusively by the proper financial-posting route:
+    //   POST /api/order-to-cash/financial-posting/post/:billingId
+    // That route uses SAP-standard account determination:
+    //   Customer Recon Account → AR Debit
+    //   account_determination_mapping (ERL key) → Revenue Credit
+    //   tax_account_determination (MWS/ZJS key) → Tax Credit
+    console.log(`✅ Billing document ${billingNumber} created — pending GL posting via Financial Posting tab`);
 
     // Step 12: Update delivery status
     await db.execute(sql`
@@ -8290,63 +8280,68 @@ router.post("/billing-documents", async (req, res) => {
       message: `Billing document ${billingNumber} created successfully`
     });
 
-    // Ã¢â€â‚¬Ã¢â€â‚¬ Async Auto GL Posting Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-    // SAP Standard: Invoice creation (VF01) immediately posts Dr AR / Cr Revenue / Cr Tax
-    // Run after response is sent so it doesn't delay the HTTP response.
-    setImmediate(async () => {
-      try {
-        const { sdGLResolver } = await import('../services/sd-gl-resolver');
+    // REMOVED: Async auto-GL-posting block.
+    // GL posting is now done explicitly via POST /financial-posting/post/:billingId
+    // using proper account determination (ERL→Revenue, Recon→AR, TAD→Tax).
+    // Auto-posting here caused: WIP inventory debits, duplicate revenue lines, wrong accounts.
+    if (false) { // Disabled — kept for reference only
+      // Ã¢â€â‚¬Ã¢â€â‚¬ Async Auto GL Posting Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+      // SAP Standard: Invoice creation (VF01) immediately posts Dr AR / Cr Revenue / Cr Tax
+      // Run after response is sent so it doesn't delay the HTTP response.
+      setImmediate(async () => {
+        try {
+          const { sdGLResolver } = await import('../services/sd-gl-resolver');
 
-        // Build journal lines using the full SAP GL determination chain:
-        // AR = customer recon account (from customer master)
-        // Revenue = ERL account key Ã¢â€ â€™ account_determination_mapping
-        // Tax = MWS account key Ã¢â€ â€™ tax_account_determination (separate table)
-        const journalResult = await sdGLResolver.buildBillingJournalLines({
-          netAmount: capturedTotalNet,
-          taxAmount: capturedTotalTax,
-          discountAmount: 0,
-          totalAmount: capturedTotalGross,
-          currency: capturedCurrency,
-          reference: capturedBillingNumber,
-          customerId: capturedCustomerId,           // -> Customer recon account lookup
-          chartOfAccountsId: capturedChartOfAccountsId, // -> Used for tax_account_determination filter
-          revenueItems: billingItemsData.map(item => ({
-            account: item.revenueAccount || '',
-            amount: item.netAmount,
-            description: `Revenue for ${item.materialCode || item.materialDescription}`
-          })).filter(i => i.account !== ''),
-          arAccount: accountDeterminationResult.arAccount,
-          taxAccount: accountDeterminationResult.taxAccount
-        });
+          // Build journal lines using the full SAP GL determination chain:
+          // AR = customer recon account (from customer master)
+          // Revenue = ERL account key Ã¢â€ â€™ account_determination_mapping
+          // Tax = MWS account key Ã¢â€ â€™ tax_account_determination (separate table)
+          const journalResult = await sdGLResolver.buildBillingJournalLines({
+            netAmount: capturedTotalNet,
+            taxAmount: capturedTotalTax,
+            discountAmount: 0,
+            totalAmount: capturedTotalGross,
+            currency: capturedCurrency,
+            reference: capturedBillingNumber,
+            customerId: capturedCustomerId,           // -> Customer recon account lookup
+            chartOfAccountsId: capturedChartOfAccountsId, // -> Used for tax_account_determination filter
+            revenueItems: billingItemsData.map(item => ({
+              account: item.revenueAccount || '',
+              amount: item.netAmount,
+              description: `Revenue for ${item.materialCode || item.materialDescription}`
+            })).filter(i => i.account !== ''),
+            arAccount: accountDeterminationResult.arAccount,
+            taxAccount: accountDeterminationResult.taxAccount
+          });
 
-        console.log(`Ã°Å¸â€Â Invoice GL determination for ${capturedBillingNumber}: `, {
-          ar: journalResult.glAccounts.receivable,
-          revenue: journalResult.glAccounts.revenue,
-          lines: journalResult.lines.length
-        });
+          console.log(`Ã°Å¸â€Â Invoice GL determination for ${capturedBillingNumber}: `, {
+            ar: journalResult.glAccounts.receivable,
+            revenue: journalResult.glAccounts.revenue,
+            lines: journalResult.lines.length
+          });
 
-        const today = new Date();
-        const fiscalYear = today.getFullYear();
-        const fiscalPeriod = today.getMonth() + 1;
+          const today = new Date();
+          const fiscalYear = today.getFullYear();
+          const fiscalPeriod = today.getMonth() + 1;
 
-        // Insert GL entries for each journal line
-        for (const line of journalResult.lines) {
-          try {
-            // Resolve gl_account_id from account_number
-            const glAccRes = await db.execute(sql`
+          // Insert GL entries for each journal line
+          for (const line of journalResult.lines) {
+            try {
+              // Resolve gl_account_id from account_number
+              const glAccRes = await db.execute(sql`
               SELECT id FROM gl_accounts WHERE account_number = ${line.account} AND is_active = true LIMIT 1
             `);
-            const glAccountId = glAccRes.rows[0]?.id ? Number(glAccRes.rows[0].id) : null;
+              const glAccountId = glAccRes.rows[0]?.id ? Number(glAccRes.rows[0].id) : null;
 
-            if (!glAccountId) {
-              console.warn(` Invoice GL post: account ${line.account} not found in gl_accounts, skipping line`);
-              continue;
-            }
+              if (!glAccountId) {
+                console.warn(` Invoice GL post: account ${line.account} not found in gl_accounts, skipping line`);
+                continue;
+              }
 
-            const dcIndicator = line.debit > 0 ? 'D' : 'C';
-            const amount = line.debit > 0 ? line.debit : line.credit;
+              const dcIndicator = line.debit > 0 ? 'D' : 'C';
+              const amount = line.debit > 0 ? line.debit : line.credit;
 
-            await db.execute(sql`
+              await db.execute(sql`
               INSERT INTO gl_entries(
         document_number, gl_account_id, amount, debit_credit_indicator,
         posting_key, posting_date, posting_status, fiscal_period, fiscal_year,
@@ -8358,26 +8353,27 @@ router.post("/billing-documents", async (req, res) => {
         'SD', 'INVOICE', ${capturedBillingId}, ${capturedBillingNumber}
       )
             `);
-          } catch (lineErr: any) {
-            console.warn(` Invoice GL line insert failed(${line.account}): `, lineErr.message);
+            } catch (lineErr: any) {
+              console.warn(` Invoice GL line insert failed(${line.account}): `, lineErr.message);
+            }
           }
-        }
 
-        // Mark billing document as POSTED
-        await db.execute(sql`
+          // Mark billing document as POSTED
+          await db.execute(sql`
           UPDATE billing_documents
           SET posting_status = 'POSTED', updated_at = NOW()
           WHERE id = ${capturedBillingId}
     `);
 
-        console.log(`Ã¢Å“â€¦ Invoice ${capturedBillingNumber} auto - posted to GL(${journalResult.lines.length} entries)`);
-      } catch (glErr: any) {
-        console.warn(` Invoice auto - GL posting failed for ${capturedBillingNumber}(invoice committed, only GL skipped): `, glErr.message);
-      }
-    });
+          console.log(`Ã¢Å“â€¦ Invoice ${capturedBillingNumber} auto - posted to GL(${journalResult.lines.length} entries)`);
+        } catch (glErr: any) {
+          console.warn(` Invoice auto - GL posting failed for ${capturedBillingNumber}(invoice committed, only GL skipped): `, glErr.message);
+        }
+      });
+    } // end disabled auto-GL block
 
   } catch (error) {
-    console.error('Ã¢ÂÅ’ Billing document creation error:', error);
+    console.error('❌ Billing document creation error:', error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to create billing document'
@@ -9895,75 +9891,97 @@ AND(reconciliation_account = true
       }
     }
 
-    // Calculate totals
+    // Calculate totals from billing document header (source of truth)
     const netAmount = parseFloat(billingDoc.net_amount || 0);
     const taxAmount = parseFloat(billingDoc.tax_amount || 0);
     const totalAmount = parseFloat(billingDoc.total_amount || 0);
 
-    // Calculate debit and credit totals
-    const totalDebit = totalAmount; // AR is debited
-    const totalCredit = totalAmount; // Revenue + Tax is credited
-
-    // Create GL entries using accounts from billing_items (no hardcoded values)
-    // 1. Debit: Accounts Receivable (total amount including tax)
-    // 2. Credit: Revenue (net amount from billing_items with determined GL accounts)
-    // 3. Credit: Tax Payable (tax amount, if tax account exists)
-
     // Tax account already determined by account determination service
     const taxAccountNumber = billingAccountsResult.taxAccount;
 
-    // Prepare GL entries using accounts from billing_items (no hardcoded values)
+    // ── SAP-Standard GL Entry Generation ──────────────────────────────────────
+    // In SAP (VF01 → VF02 → Accounting document):
+    //   Debit  (PK 01): Customer Recon Account = Total Invoice Amount (net + tax)
+    //   Credit (PK 50): Revenue Account (ERL) = Net Amount
+    //   Credit (PK 50): Output Tax Account (MWS/ZJS) = Tax Amount
+    //
+    // IMPORTANT: billing_items.gl_account may point to inventory/WIP accounts and
+    // must NOT be used for revenue posting. Revenue GL comes from account_determination_mapping
+    // keyed by account_key_code = 'ERL' (revenue) or 'ERS' (sales deductions).
+    // ──────────────────────────────────────────────────────────────────────────
+
+    // 1. Debit: Accounts Receivable = TOTAL amount (net + tax)
     const glEntries = [
       {
         gl_account_id: arAccount.id,
         amount: totalAmount,
         debit_credit_indicator: 'D',
-        posting_key: '01',  // SAP PK01: Customer Debit (Account type D)
+        posting_key: '01',  // SAP PK01: Customer Debit
         description: `AR - ${billingDoc.billing_number}`
       }
     ];
 
-    // Group revenue accounts from billing_items by GL account
+    // 2. Credit: Revenue — resolve via account_determination_mapping (ERL key)
+    //    SAP VKOA: ERL = Sales Revenue Domestic, ERS = Sales Deductions
     const revenueAccountMap = new Map<string, number>();
     let totalRevenueAmount = 0;
 
+    // Primary: ERL key from account_determination_mapping
+    if (billingAccountsResult.revenueAccounts.length > 0) {
+      // Use account determination service result (ERL-keyed revenue accounts)
+      for (const revAccount of billingAccountsResult.revenueAccounts) {
+        if (revAccount.glAccount) {
+          const current = revenueAccountMap.get(revAccount.glAccount) || 0;
+          revenueAccountMap.set(revAccount.glAccount, current);
+        }
+      }
+    }
+
+    // Populate amounts: sum net_amount from billing_items (only positive amounts = revenue)
+    // All revenue items go to the same ERL-determined GL account
     for (const item of itemsResult.rows) {
-      const glAccount = item.gl_account;
       const itemNetAmount = parseFloat(item.net_amount || 0);
-      if (glAccount && itemNetAmount > 0) {
-        const currentAmount = revenueAccountMap.get(glAccount) || 0;
-        revenueAccountMap.set(glAccount, currentAmount + itemNetAmount);
+      if (itemNetAmount > 0) {
         totalRevenueAmount += itemNetAmount;
       }
     }
 
-    // If no revenue accounts found in billing_items, use account determination service results as fallback
-    if (revenueAccountMap.size === 0 && billingAccountsResult.revenueAccounts.length > 0) {
-      // Use determined revenue accounts from account determination service
-      for (const revAccount of billingAccountsResult.revenueAccounts) {
-        const currentAmount = revenueAccountMap.get(revAccount.glAccount) || 0;
-        revenueAccountMap.set(revAccount.glAccount, currentAmount + netAmount);
+    // If we have a revenue GL from ERL mapping, assign the full net amount to it
+    if (revenueAccountMap.size > 0) {
+      for (const [glAccNum] of Array.from(revenueAccountMap.entries())) {
+        revenueAccountMap.set(glAccNum, totalRevenueAmount);
       }
-      totalRevenueAmount = netAmount;
-    }
-
-    // If still no revenue accounts, get default revenue account from database
-    if (revenueAccountMap.size === 0) {
-      const defaultRevenueResult = await db.execute(sql`
-        SELECT id, account_number FROM gl_accounts 
-        WHERE account_type = 'REVENUE' AND is_active = true
-        ORDER BY account_number
+    } else {
+      // Fallback: query account_determination_mapping directly for ERL
+      const erlDirectResult = await db.execute(sql`
+        SELECT gl.account_number
+        FROM account_determination_mapping adm
+        JOIN gl_accounts gl ON adm.gl_account_id = gl.id
+        WHERE adm.account_key_code IN ('ERL', 'REVENUE', 'REV', 'ERLS')
+          AND adm.is_active = true AND gl.is_active = true
+        ORDER BY CASE WHEN adm.account_key_code = 'ERL' THEN 0 ELSE 1 END, adm.id
         LIMIT 1
       `);
-
-      if (defaultRevenueResult.rows.length > 0) {
-        revenueAccountMap.set(defaultRevenueResult.rows[0].account_number, netAmount);
+      if (erlDirectResult.rows.length > 0) {
+        revenueAccountMap.set(String(erlDirectResult.rows[0].account_number), netAmount);
         totalRevenueAmount = netAmount;
       } else {
-        return res.status(400).json({
-          success: false,
-          error: 'No revenue GL account found. Please configure GL accounts.'
-        });
+        // Last fallback: first REVENUE-type GL account
+        const defaultRevenueResult = await db.execute(sql`
+          SELECT id, account_number FROM gl_accounts 
+          WHERE account_type IN ('REVENUE', 'P') AND is_active = true
+          ORDER BY account_number
+          LIMIT 1
+        `);
+        if (defaultRevenueResult.rows.length > 0) {
+          revenueAccountMap.set(defaultRevenueResult.rows[0].account_number, netAmount);
+          totalRevenueAmount = netAmount;
+        } else {
+          return res.status(400).json({
+            success: false,
+            error: 'No revenue GL account found. Please configure an account determination mapping with account key ERL, or configure a GL account with type REVENUE.'
+          });
+        }
       }
     }
 
@@ -10058,23 +10076,43 @@ AND(reconciliation_account = true
         }
       }
 
-      // If no per-rule mapping found, use the single global tax account from account determination
+      // If no per-rule mapping found, resolve from tax_account_determination by account key only
+      // SAP Tax Account Determination: account_key (MWS/ZJS) is configured in Tax Management UI
+      // This is the canonical source — do NOT fall back to account_determination_mapping for tax.
       if (taxGLMap.size === 0) {
-        const fallbackTaxAccount = billingAccountsResult.taxAccount
-          || await (async () => {
-            // Try MWS key from account_determination_mapping
-            const mwsResult = await db.execute(sql`
-              SELECT gl.account_number
-              FROM account_determination_mapping adm
-              JOIN gl_accounts gl ON adm.gl_account_id = gl.id
-              WHERE adm.account_key_code IN ('MWS','MW1','MW2','TAX')
-                AND adm.is_active = true AND gl.is_active = true
-              ORDER BY adm.id LIMIT 1
-            `);
-            return mwsResult.rows[0]?.account_number || null;
-          })();
-        if (fallbackTaxAccount) {
-          taxGLMap.set(String(fallbackTaxAccount), taxAmount);
+        // Strategy 3: Look up tax_account_determination by account key without rule filter
+        // This matches the "global" tax account configured in Tax Management → Account Determination
+        const globalTaxResult = await db.execute(sql`
+          SELECT gl.account_number
+          FROM tax_account_determination tad
+          JOIN gl_accounts gl ON tad.gl_account_id = gl.id
+          WHERE tad.account_key IN ('MWS', 'ZJS', 'IGST', 'CGST', 'SGST', 'VAT', 'TAX')
+            AND tad.is_active = true
+            AND gl.is_active = true
+          ORDER BY 
+            CASE tad.account_key
+              WHEN 'MWS' THEN 0 WHEN 'ZJS' THEN 1 WHEN 'IGST' THEN 2
+              WHEN 'CGST' THEN 3 WHEN 'SGST' THEN 4 ELSE 5
+            END, tad.id
+          LIMIT 1
+        `);
+        if (globalTaxResult.rows.length > 0 && globalTaxResult.rows[0].account_number) {
+          taxGLMap.set(String(globalTaxResult.rows[0].account_number), taxAmount);
+          console.log(`✅ [TaxGL] Resolved from tax_account_determination (global key): ${globalTaxResult.rows[0].account_number}`);
+        } else {
+          // Last resort: any active GL with tax/GST/VAT in name under LIABILITIES
+          const lastResortTaxResult = await db.execute(sql`
+            SELECT id, account_number FROM gl_accounts
+            WHERE account_type = 'LIABILITIES'
+              AND (account_name ILIKE '%output tax%' OR account_name ILIKE '%output GST%'
+                   OR account_name ILIKE '%tax payable%' OR account_name ILIKE '%GST payable%')
+              AND is_active = true
+            ORDER BY account_number LIMIT 1
+          `);
+          if (lastResortTaxResult.rows.length > 0) {
+            taxGLMap.set(String(lastResortTaxResult.rows[0].account_number), taxAmount);
+            console.log(`⚠️ [TaxGL] Using last-resort tax GL: ${lastResortTaxResult.rows[0].account_number} — configure tax_account_determination for precise mapping`);
+          }
         }
       }
 
@@ -10379,10 +10417,16 @@ AND(reconciliation_account = true
       }
     }
 
-    // Post to GL using the existing GL posting endpoint structure
-    // Insert GL entries directly
-    // Note: gl_entries table does not have a description column
-    // CRITICAL: Explicitly set posting_status to 'posted' for reconciliation
+    // CLEANUP: Delete any stale gl_entries for this accounting document before re-inserting correct ones.
+    // This eliminates residual entries from: old draft postings, hardcoded accounts in billing-routes,
+    // or any prior incorrect posting using billing_items.gl_account (WIP/inventory accounts).
+    await db.execute(sql`
+      DELETE FROM gl_entries 
+      WHERE document_number = ${accountingDocNumber}
+    `);
+    console.log(`🧹 Cleared stale gl_entries for document ${accountingDocNumber}`);
+
+    // Insert correct GL entries (resolved via account determination: ERL→Revenue, Recon→AR, TAD→Tax)
     for (const entry of glEntries) {
       await db.execute(sql`
         INSERT INTO gl_entries (

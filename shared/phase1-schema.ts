@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, numeric, timestamp, jsonb, foreignKey, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, numeric, timestamp, jsonb, foreignKey, pgEnum, date } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -586,6 +586,37 @@ export const vendorMaterialRelations = relations(vendorMaterials, ({ one }) => (
   }),
 }));
 
+export const sourceLists = pgTable("source_lists", {
+  ...commonFields,
+  materialId: integer("material_id").notNull().references(() => materials.id),
+  plantId: integer("plant_id"), // Plant ID without cross-file FK for now
+  vendorId: integer("vendor_id").notNull().references(() => vendors.id),
+  validFrom: date("valid_from").notNull(),
+  validTo: date("valid_to").notNull(),
+  isFixed: boolean("is_fixed").default(false),
+  isBlocked: boolean("is_blocked").default(false),
+});
+
+export const sourceListRelations = relations(sourceLists, ({ one }) => ({
+  material: one(materials, {
+    fields: [sourceLists.materialId],
+    references: [materials.id],
+  }),
+  // Removing plant relation to avoid complex cross-schema imports
+  vendor: one(vendors, {
+    fields: [sourceLists.vendorId],
+    references: [vendors.id],
+  }),
+  createdBy: one(users, {
+    fields: [sourceLists.createdBy],
+    references: [users.id],
+  }),
+  updatedBy: one(users, {
+    fields: [sourceLists.updatedBy],
+    references: [users.id],
+  }),
+}));
+
 // Chart of Accounts
 export const glAccounts = pgTable("gl_accounts", {
   ...commonFields,
@@ -657,6 +688,10 @@ export const insertGlAccountSchema = createInsertSchema(glAccounts).omit({
   id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true, path: true
 });
 
+export const insertSourceListSchema = createInsertSchema(sourceLists).omit({
+  id: true, createdAt: true, updatedAt: true, createdBy: true, updatedBy: true
+});
+
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -687,3 +722,6 @@ export type Bom = typeof bom.$inferSelect;
 
 export type InsertGlAccount = z.infer<typeof insertGlAccountSchema>;
 export type GlAccount = typeof glAccounts.$inferSelect;
+
+export type InsertSourceList = z.infer<typeof insertSourceListSchema>;
+export type SourceList = typeof sourceLists.$inferSelect;

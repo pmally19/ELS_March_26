@@ -684,7 +684,7 @@ router.get('/api/sales/customers', async (req, res) => {
         ` : ''}
         SELECT c.id, c.name, 'master' AS source, NULL AS contact_person, c.email, c.phone, NULL AS industry,
                CASE WHEN c.is_active THEN 'Active' ELSE 'Inactive' END AS status
-        FROM customers c
+        FROM erp_customers c
       ), ranked AS (
         SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY (CASE WHEN source='sales' THEN 1 ELSE 2 END)) AS rnk
         FROM combined
@@ -782,7 +782,7 @@ router.get('/api/sales/customers/dropdown', async (req, res) => {
     const base = `
       WITH combined AS (
         ${includeSales ? `SELECT id, company_name AS name, 'sales' AS source FROM sales_customers UNION ALL` : ''}
-        SELECT id, name, 'master' AS source FROM customers
+        SELECT id, name, 'master' AS source FROM erp_customers
       ), ranked AS (
         SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY (CASE WHEN source='sales' THEN 1 ELSE 2 END)) AS rnk
         FROM combined
