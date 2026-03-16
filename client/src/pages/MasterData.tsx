@@ -61,6 +61,7 @@ const tileIcons: Record<string, any> = {
   'calculation-methods': Calculator,
   'item-category-groups': Grid3x3,
   'fiscal-calendar': Calendar,
+  'packaging-types': Package,
 };
 
 // Category color mapping
@@ -97,6 +98,7 @@ const tileDescriptions: Record<string, string> = {
   'calculation-methods': 'Define methods and formulas for pricing',
   'item-category-groups': 'Classify materials for sales item determination',
   'fiscal-calendar': 'Manage fiscal calendars and posting periods',
+  'packaging-types': 'Define packaging materials and capacities',
 };
 
 const masterDataCategories: MasterDataCategory[] = [
@@ -127,8 +129,8 @@ const masterDataCategories: MasterDataCategory[] = [
   {
     id: 'logistics',
     name: 'Logistics',
-    count: 5,
-    tiles: ['incoterms', 'shipping-conditions', 'shipping-point', 'transportation-zones', 'route-schedules']
+    count: 6,
+    tiles: ['incoterms', 'shipping-conditions', 'shipping-point', 'transportation-zones', 'route-schedules', 'packaging-types']
   },
   {
     id: 'organizational',
@@ -609,13 +611,34 @@ const tileConfigurations = {
     apiEndpoint: null as any,
     route: '/master-data/fiscal-calendar',
     fields: null
+  },
+  'packaging-types': {
+    title: 'Packaging Material Types',
+    apiEndpoint: '/api/delivery/master-data/packaging-types',
+    fields: [
+      { key: 'code', label: 'Code', type: 'text', required: true },
+      { key: 'name', label: 'Name', type: 'text', required: true },
+      { key: 'max_weight', label: 'Max Weight', type: 'number' },
+      { key: 'weight_unit', label: 'Weight Unit', type: 'text' },
+      { key: 'is_active', label: 'Active', type: 'checkbox' }
+    ]
   }
 };
 
 export default function MasterData() {
   const [, setLocation] = useLocation();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [selectedTile, setSelectedTile] = useState<string | null>(null);
+
+  // Extract tile name from URL path if present (e.g., /master-data/packaging-types -> packaging-types)
+  const initialTile = typeof window !== 'undefined'
+    ? window.location.pathname.split('/').pop()
+    : null;
+
+  const validInitialTile = initialTile && tileConfigurations[initialTile as keyof typeof tileConfigurations] && initialTile !== 'master-data' && initialTile !== 'complete-demo'
+    ? initialTile
+    : null;
+
+  const [selectedTile, setSelectedTile] = useState<string | null>(validInitialTile);
   const [searchQuery, setSearchQuery] = useState("");
   const [allTiles, setAllTiles] = useState<string[]>([]);
   const [filteredTiles, setFilteredTiles] = useState<string[]>([]);
@@ -845,7 +868,10 @@ export default function MasterData() {
           <div>
             <Button
               variant="outline"
-              onClick={() => setSelectedTile(null)}
+              onClick={() => {
+                setSelectedTile(null);
+                setLocation('/master-data');
+              }}
               className="mb-4"
             >
               ← Back to Master Data
@@ -1013,6 +1039,7 @@ export default function MasterData() {
                       setLocation((tileConfig as any).route);
                     } else {
                       setSelectedTile(tileKey);
+                      setLocation(`/master-data/${tileKey}`);
                     }
                   }}
                 >

@@ -20,8 +20,8 @@ router.get('/rules', async (req: Request, res: Response) => {
                    ea.account_name as expense_account_name,
                    aa.account_number as accrual_account_number,
                    aa.account_name as accrual_account_name,
-                   cc.company_code,
-                   cc.company_name
+                   cc.code as company_code,
+                   cc.name as company_name
             FROM accrual_rules ar
             LEFT JOIN gl_accounts ea ON ar.gl_expense_account_id = ea.id
             LEFT JOIN gl_accounts aa ON ar.gl_accrual_account_id = aa.id
@@ -76,8 +76,8 @@ router.get('/rules/:id', async (req: Request, res: Response) => {
                    ea.account_name as expense_account_name,
                    aa.account_number as accrual_account_number,
                    aa.account_name as accrual_account_name,
-                   cc.company_code,
-                   cc.company_name
+                   cc.code as company_code,
+                   cc.name as company_name
             FROM accrual_rules ar
             LEFT JOIN gl_accounts ea ON ar.gl_expense_account_id = ea.id
             LEFT JOIN gl_accounts aa ON ar.gl_accrual_account_id = aa.id
@@ -119,7 +119,9 @@ router.post('/rules', async (req: Request, res: Response) => {
             gl_expense_account_id,
             gl_accrual_account_id,
             company_code_id,
-            is_active
+            is_active,
+            requires_reversal,
+            provision_type
         } = req.body;
 
         // Validation
@@ -143,39 +145,13 @@ router.post('/rules', async (req: Request, res: Response) => {
             });
         }
 
-        // Validate GL accounts exist if provided
-        if (gl_expense_account_id) {
-            const expenseAccountCheck = await dbPool.query(
-                'SELECT id FROM gl_accounts WHERE id = $1',
-                [gl_expense_account_id]
-            );
-            if (expenseAccountCheck.rows.length === 0) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Invalid expense GL account ID'
-                });
-            }
-        }
-
-        if (gl_accrual_account_id) {
-            const accrualAccountCheck = await dbPool.query(
-                'SELECT id FROM gl_accounts WHERE id = $1',
-                [gl_accrual_account_id]
-            );
-            if (accrualAccountCheck.rows.length === 0) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Invalid accrual GL account ID'
-                });
-            }
-        }
-
         // Insert new rule
         const result = await dbPool.query(`
             INSERT INTO accrual_rules (
                 rule_name, rule_description, accrual_type, calculation_method,
-                gl_expense_account_id, gl_accrual_account_id, company_code_id, is_active
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                gl_expense_account_id, gl_accrual_account_id, company_code_id, is_active,
+                requires_reversal, provision_type
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING *
         `, [
             rule_name,
@@ -185,7 +161,9 @@ router.post('/rules', async (req: Request, res: Response) => {
             gl_expense_account_id || null,
             gl_accrual_account_id || null,
             company_code_id || null,
-            is_active !== undefined ? is_active : true
+            is_active !== undefined ? is_active : true,
+            requires_reversal || false,
+            provision_type || 'accrual'
         ]);
 
         res.status(201).json({
@@ -473,7 +451,7 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.post('/post', async (req: Request, res: Response) => {
     try {
-        const { accrual_ids, posted_by } = req.body;
+        const { accrual_ids, posted_by, manual_amounts } = req.body;
 
         if (!accrual_ids || !Array.isArray(accrual_ids) || accrual_ids.length === 0) {
             return res.status(400).json({
@@ -491,7 +469,8 @@ router.post('/post', async (req: Request, res: Response) => {
 
         await accrualCalculationService.postAccruals(
             accrual_ids.map((id: any) => parseInt(id)),
-            posted_by
+            posted_by,
+            manual_amounts
         );
 
         res.json({
@@ -504,6 +483,93 @@ router.post('/post', async (req: Request, res: Response) => {
             success: false,
             error: error.message || 'Failed to post accruals'
         });
+    }
+});
+
+/**
+ * Get pending reversals for a fiscal period
+ * GET /api/finance/accruals/pending-reversals?fiscal_year=2026&fiscal_period=3
+ */
+router.get('/pending-reversals', async (req: Request, res: Response) => {
+    try {
+        const { fiscal_year, fiscal_period } = req.query;
+        if (!fiscal_year || !fiscal_period) {
+            return res.status(400).json({ success: false, error: 'fiscal_year and fiscal_period required' });
+        }
+        const data = await accrualCalculationService.getPendingReversals(
+            parseInt(fiscal_year as string),
+            parseInt(fiscal_period as string)
+        );
+        res.json({ success: true, data, count: data.length });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ==================== ACCRUAL OBJECTS CRUD ====================
+
+/**
+ * Get all accrual objects
+ * GET /api/finance/accruals/objects
+ */
+router.get('/objects', async (req: Request, res: Response) => {
+    try {
+        const { rule_id, status } = req.query;
+        let query = `
+            SELECT ao.*, ar.rule_name, cc.code as company_code
+            FROM accrual_objects ao
+            LEFT JOIN accrual_rules ar ON ao.accrual_rule_id = ar.id
+            LEFT JOIN company_codes cc ON ao.company_code_id = cc.id
+            WHERE 1=1
+        `;
+        const params: any[] = [];
+        let idx = 1;
+        if (rule_id) { query += ` AND ao.accrual_rule_id = $${idx++}`; params.push(parseInt(rule_id as string)); }
+        if (status) { query += ` AND ao.status = $${idx++}`; params.push(status); }
+        query += ` ORDER BY ao.created_at DESC`;
+        const result = await dbPool.query(query, params);
+        res.json({ success: true, data: result.rows, count: result.rows.length });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Create accrual object
+ * POST /api/finance/accruals/objects
+ */
+router.post('/objects', async (req: Request, res: Response) => {
+    try {
+        const { object_name, description, accrual_rule_id, total_amount, start_date, end_date, company_code_id } = req.body;
+        if (!object_name || !accrual_rule_id || !total_amount || !start_date || !end_date) {
+            return res.status(400).json({ success: false, error: 'object_name, accrual_rule_id, total_amount, start_date, end_date are required' });
+        }
+        const result = await dbPool.query(`
+            INSERT INTO accrual_objects (object_name, description, accrual_rule_id, total_amount, start_date, end_date, company_code_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *
+        `, [object_name, description || null, accrual_rule_id, total_amount, start_date, end_date, company_code_id || null]);
+        res.status(201).json({ success: true, data: result.rows[0], message: 'Accrual object created successfully' });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Update accrual object status
+ * PATCH /api/finance/accruals/objects/:id
+ */
+router.patch('/objects/:id', async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        const result = await dbPool.query(
+            `UPDATE accrual_objects SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+            [status, parseInt(id)]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Accrual object not found' });
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 

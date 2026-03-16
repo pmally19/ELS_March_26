@@ -77,7 +77,7 @@ export default function QuotationManagement() {
   const { data: customersData } = useQuery({
     queryKey: ['customers'],
     queryFn: async () => {
-      const res = await fetch('/api/master-data/customers');
+      const res = await fetch('/api/master-data/customer');
       if (!res.ok) throw new Error('Failed to fetch customers');
       return await res.json() as Customer[];
     }

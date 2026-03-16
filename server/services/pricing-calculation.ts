@@ -2,9 +2,9 @@ import { pool } from '../db';
 
 /**
  * Pricing Calculation Service
- * Implements SAP-style pricing procedure (condition technique) execution.
+ * Implements ERP-style pricing procedure (condition technique) execution.
  *
- * SAP alignment:
+ * erp alignment:
  *   - Pricing procedure determination (T683S equivalent)
  *   - Condition technique: access sequence → condition record lookup
  *   - 6-level access-sequence fallback (customer+material → wildcard)
@@ -24,11 +24,15 @@ export interface PricingContext {
     departureState?: string;
     destinationCountry?: string;
     destinationState?: string;
+    plantCode?: string;
+    storageLocation?: string;
     materialGroup?: string;
     customerGroup?: string;
     quantity?: number;
     /** Manual overrides keyed by condition type code (e.g. { PR00: '750', FR10: '25' }) */
     manualOverrides?: Record<string, string>;
+    /** Fallback unit price (material base price) if PR00 is missing */
+    fallbackPrice?: number;
 }
 
 interface ConditionStep {
@@ -100,7 +104,10 @@ class PricingCalculationService {
                 pps.*,
                 ct.condition_name,
                 ct.condition_class_id,
-                ct.account_key AS ct_account_key
+                ct.account_key AS ct_account_key,
+                ct.plus_minus,
+                ct.rounding_rule,
+                ct.rounding_precision
             FROM pricing_procedure_steps pps
             LEFT JOIN pricing_procedures pp ON pps.procedure_id = pp.id
             LEFT JOIN condition_types ct ON pps.condition_type_code = ct.condition_code
@@ -140,7 +147,72 @@ class PricingCalculationService {
     }
 
     /**
-     * Find condition record using SAP-standard access sequence.
+     * Fetch material cost (VPRS) from stock_balances or materials master.
+     */
+    async getMaterialCost(materialId: number | null, materialCode: string | null, plantCode?: string, storageLocation?: string): Promise<number> {
+        if (!materialId && !materialCode) return 0;
+
+        let priceControl = 'V';
+        let standardPrice = 0;
+        let movingAveragePrice = 0;
+
+        // 1. Try materials master (price_control and standard price)
+        try {
+            const matRes = await pool.query(`
+                SELECT price_control, cost, base_unit_price, code
+                FROM materials 
+                WHERE id = $1 OR code = $2
+                LIMIT 1
+            `, [materialId, materialCode]);
+
+            if (matRes.rows.length > 0) {
+                const row = matRes.rows[0];
+                materialCode = row.code; // Ensure we have the code for stock_balances
+                priceControl = row.price_control === 'S' || row.price_control === 'V' ? row.price_control : 'V';
+                standardPrice = parseFloat(row.base_unit_price || row.cost || '0');
+            }
+        } catch (err) {
+            console.warn('[PricingService] Could not fetch from materials table:', err);
+        }
+
+        // 2. Try stock_balances (moving_average_price)
+        if (plantCode && storageLocation && materialCode) {
+            try {
+                const stockRes = await pool.query(`
+                    SELECT moving_average_price 
+                    FROM stock_balances 
+                    WHERE material_code = $1
+                      AND plant_code = $2 
+                      AND storage_location = $3
+                    LIMIT 1
+                `, [materialCode, plantCode, storageLocation]);
+                
+                if (stockRes.rows.length > 0 && stockRes.rows[0].moving_average_price != null) {
+                    movingAveragePrice = parseFloat(stockRes.rows[0].moving_average_price);
+                }
+            } catch (err) {
+                console.warn('[PricingService] Could not fetch from stock_balances:', err);
+            }
+        }
+
+        // 3. Determine unit cost based on price control
+        let unitCost = 0;
+        if (priceControl === 'S') {
+            unitCost = standardPrice;
+            // Fallback
+            if (unitCost === 0 && movingAveragePrice > 0) unitCost = movingAveragePrice;
+        } else {
+            // priceControl === 'V'
+            unitCost = movingAveragePrice;
+            // Fallback
+            if (unitCost === 0 && standardPrice > 0) unitCost = standardPrice;
+        }
+
+        return unitCost;
+    }
+
+    /**
+     * Find condition record using ERP-standard access sequence.
      * Full 6-level when material_group column exists:
      *   1. Customer + Material (highest priority)
      *   2. Customer + MaterialGroup
@@ -154,30 +226,36 @@ class PricingCalculationService {
         conditionTypeCode: string,
         context: PricingContext
     ): Promise<{ value: number; calculationType: string; perUnit: number } | null> {
-        // Manual override takes priority (SAP: manual entry in condition screen)
-        if (context.manualOverrides && conditionTypeCode in context.manualOverrides) {
-            const overrideVal = parseFloat(context.manualOverrides[conditionTypeCode]);
-            if (!isNaN(overrideVal) && overrideVal > 0) {
-                return { value: overrideVal, calculationType: 'A', perUnit: 1 };
-            }
-        }
-
-        // Resolve calculation type from condition_types master
         let calcType = 'A';
+        let manualEntries = 'free';
         const ctRes = await pool.query(
-            `SELECT calculation_type FROM condition_types WHERE condition_code = $1 LIMIT 1`,
+            `SELECT calculation_type, manual_entries FROM condition_types WHERE condition_code = $1 LIMIT 1`,
             [conditionTypeCode]
         );
         if (ctRes.rows.length > 0) {
-            const ct = (ctRes.rows[0].calculation_type || '').toUpperCase();
+            const row = ctRes.rows[0];
+            const ct = (row.calculation_type || '').toUpperCase();
             if (ct.includes('PERCENT') || ct === 'P' || ct === '%') calcType = '%';
+            manualEntries = row.manual_entries || 'free';
+        }
+
+        // Manual override takes priority (ERP: manual entry in condition screen)
+        if (context.manualOverrides && conditionTypeCode in context.manualOverrides) {
+            if (manualEntries === 'automatic') {
+                console.warn(`[Pricing] Manual override rejected for ${conditionTypeCode} — configured for automatic entry only.`);
+            } else {
+                const overrideVal = parseFloat(context.manualOverrides[conditionTypeCode]);
+                if (!isNaN(overrideVal) && overrideVal > 0) {
+                    return { value: overrideVal, calculationType: 'A', perUnit: 1 };
+                }
+            }
         }
 
         const hasMG = await this.checkMaterialGroupColumn();
 
         let result;
         if (hasMG) {
-            // Full 6-level SAP access sequence
+            // Full 6-level ERP access sequence
             result = await pool.query<ConditionRecordRow>(`
                 SELECT amount, currency, unit
                 FROM condition_records
@@ -250,10 +328,10 @@ class PricingCalculationService {
     }
 
     /**
-     * Find tax rate from tax_condition_records (SAP: tax condition technique via T007A/MWST).
-     * Uses SAP-standard specificity scoring — most specific (most non-null fields) wins.
+     * Find tax rate from tax_condition_records (ERP: tax condition technique via T007A/MWST).
+     * Uses ERP-standard specificity scoring — most specific (most non-null fields) wins.
      *
-     * THROWS when no record found — missing tax configuration is always a hard error in SAP.
+     * THROWS when no record found — missing tax configuration is always a hard error in ERP.
      * Callers must surface this error to the user as a configuration problem.
      */
     async findTaxConditionRecord(
@@ -280,7 +358,7 @@ class PricingCalculationService {
             if (mtcRes.rows.length > 0) materialTaxClass = mtcRes.rows[0].tax_classification_code || null;
         }
 
-        // SAP specificity match — NULL on record = wildcard (matches all context values).
+        // ERP specificity match — NULL on record = wildcard (matches all context values).
         // Context values that are null can only match wildcard (NULL) records for that field.
         const tcrRes = await pool.query(`
             SELECT tcr.id, tcr.tax_rule_id, tr.rate_percent
@@ -335,7 +413,7 @@ class PricingCalculationService {
     }
 
     /**
-     * Auto-determine pricing procedure from pricing_procedure_determinations (SAP: T683S).
+     * Auto-determine pricing procedure from pricing_procedure_determinations (ERP: T683S).
      * Uses specificity order: SalesOrg + DistChan + Division + CustomerPP + DocumentPP.
      * Returns null only when salesOrgId is missing — caller must then reject the order.
      * Does NOT silently fall back to any hardcoded procedure.
@@ -406,7 +484,7 @@ class PricingCalculationService {
     }
 
     /**
-     * Evaluate SAP requirement condition (simplified).
+     * Evaluate ERP requirement condition (simplified).
      */
     evaluateRequirement(requirementCode: string | undefined, context: PricingContext): boolean {
         if (!requirementCode) return true;
@@ -422,7 +500,7 @@ class PricingCalculationService {
     }
 
     /**
-     * Returns true if this condition type is a tax step (SAP condition class D).
+     * Returns true if this condition type is a tax step (ERP condition class D).
      * Checks condition_class_id = 4 first, then code pattern as fallback.
      */
     isTaxStep(step: ConditionStep): boolean {
@@ -438,7 +516,7 @@ class PricingCalculationService {
 
     /**
      * Main pricing calculation — returns per-step breakdown ready for persistence.
-     * SAP: RVAA01 / condition technique with full access sequence.
+     * ERP: RVAA01 / condition technique with full access sequence.
      * Throws on mandatory missing conditions (PR00, tax steps that are mandatory).
      */
     async calculatePricing(
@@ -452,6 +530,7 @@ class PricingCalculationService {
         const conditions: ConditionResult[] = [];
 
         let runningTotal = 0;
+        let vprsValue = 0; // Store VPRS for Profit Margin calculation
         let taxTotal = 0;
         let discountTotal = 0;
         let pricingError: string | undefined = undefined;
@@ -468,15 +547,44 @@ class PricingCalculationService {
             let stepTaxRuleId: number | undefined = undefined;
             let stepError: string | undefined = undefined;
 
-            // ── SUBTOTAL step ───────────────────────────────────────────────
-            if (step.is_subtotal && step.from_step && step.to_step) {
-                calculatedValue = this.calculateSubtotal(step.from_step, step.to_step, processedSteps);
+            // ── VPRS (Internal Price) ───────────────────────────────────────
+            if (step.condition_type_code === 'VPRS') {
+                const cost = await this.getMaterialCost(context.materialId || null, context.materialCode || null, context.plantCode, context.storageLocation);
+                conditionValue = cost;
+                calculatedValue = cost * (context.quantity || 1);
                 baseForCalculation = calculatedValue;
+                calcType = 'A';
+                vprsValue = calculatedValue;
+                step.is_statistical = true; // Ensure VPRS doesn't inflate Net Value
+            }
+            // ── Profit Margin (Statistical calculation或基于Net的子计) ─────────────────────
+            else if (step.condition_type_code === 'Profit Margin' || (step as any).condition_name?.includes('Profit Margin') || (step as any).description?.includes('Profit Margin')) {
+                // Determine base (usually current net subtotal or specific range)
+                if (step.from_step) {
+                    if (step.to_step && step.to_step > step.from_step) {
+                        baseForCalculation = this.calculateSubtotal(step.from_step, step.to_step, processedSteps);
+                    } else {
+                        const sourceStep = processedSteps.get(step.from_step);
+                        baseForCalculation = sourceStep ? sourceStep.calculatedValue : 0;
+                    }
+                } else {
+                    baseForCalculation = runningTotal;
+                }
+                
+                // Profit = Base (Net) - Cost (VPRS)
+                calculatedValue = baseForCalculation - vprsValue;
                 conditionValue = 0;
                 calcType = '';
+                step.is_statistical = true; // Ensure Profit Margin is statistical
             }
             // ── CONDITION TYPE step ─────────────────────────────────────────
             else if (step.condition_type_code) {
+                // Find departure location if not provided
+                if (!context.departureCountry || !context.departureState) {
+                    // Logic to find departure location from plant if needed
+                    // (Already handled in routes/pricing-procedures.ts preview call usually)
+                }
+
                 // Determine base for calculation
                 if (step.from_step) {
                     if (step.to_step && step.to_step > step.from_step) {
@@ -491,7 +599,6 @@ class PricingCalculationService {
 
                 if (isTax) {
                     try {
-                        // Tax step: lookup via tax_condition_records (THROWS if not configured)
                         const taxResult = await this.findTaxConditionRecord(step.condition_type_code, context);
                         const taxRate = taxResult.rate;
                         stepTaxRuleId = taxResult.taxRuleId ?? undefined;
@@ -508,7 +615,6 @@ class PricingCalculationService {
                         pricingError = pricingError || stepError;
                     }
                 } else {
-                    // Price / discount step: lookup via condition_records
                     const record = await this.findConditionRecord(step.condition_type_code, context);
 
                     if (record) {
@@ -520,27 +626,64 @@ class PricingCalculationService {
                         } else {
                             calculatedValue = record.value * (context.quantity || 1) / record.perUnit;
                         }
-
-                        // SAP-standard sign determination using condition_class_id
-                        const classId = (step as any).condition_class_id;
-                        if (classId === 1) {
-                            calculatedValue = -Math.abs(calculatedValue);
-                        } else if (classId === 2 || classId === 3) {
-                            calculatedValue = Math.abs(calculatedValue);
-                        } else {
-                            // Fallback sign: check account key
-                            const accountKey = step.account_key || (step as any).ct_account_key || '';
-                            if (['ERS', 'ERB', 'BO1', 'BO2', 'BO3'].includes(accountKey)) {
-                                calculatedValue = -Math.abs(calculatedValue);
-                            }
-                        }
+                    } else if (step.condition_class_id === 2 && context.fallbackPrice != null && context.fallbackPrice > 0) {
+                        conditionValue = context.fallbackPrice;
+                        calcType = 'A';
+                        calculatedValue = context.fallbackPrice * (context.quantity || 1);
+                        console.log(`[Pricing] No record for ${step.condition_type_code}, using fallback price: ${conditionValue}`);
                     } else if (step.is_mandatory) {
-                        // Mandatory condition with no record = pricing error
                         stepError = `[PRICING CONFIG ERROR] Mandatory condition '${step.condition_type_code}' (step ${step.step_number}) has no active condition record.`;
                         pricingError = pricingError || stepError;
                     }
-                    // Non-mandatory + no record → skip (calculatedValue stays 0)
+
+                    if (calculatedValue !== 0 || record || (step.condition_class_id === 2 && context.fallbackPrice)) {
+                        const ct_plus_minus = (step as any).plus_minus;
+                        if (ct_plus_minus === 'positive') {
+                            calculatedValue = Math.abs(calculatedValue);
+                        } else if (ct_plus_minus === 'negative') {
+                            calculatedValue = -Math.abs(calculatedValue);
+                        } else {
+                            const classId = (step as any).condition_class_id;
+                            if (classId === 1) {
+                                calculatedValue = -Math.abs(calculatedValue);
+                            } else if (classId === 2 || classId === 3) {
+                                calculatedValue = Math.abs(calculatedValue);
+                            } else {
+                                const accountKey = step.account_key || (step as any).ct_account_key || '';
+                                if (['ERS', 'ERB', 'BO1', 'BO2', 'BO3'].includes(accountKey)) {
+                                    calculatedValue = -Math.abs(calculatedValue);
+                                }
+                            }
+                        }
+
+                        const rounding_rule = (step as any).rounding_rule;
+                        if (rounding_rule && rounding_rule !== 'commercial') {
+                            const precision = (step as any).rounding_precision ?? 2;
+                            const factor = Math.pow(10, precision);
+                            if (rounding_rule === 'round_up') {
+                                calculatedValue = Math.ceil(calculatedValue * factor) / factor;
+                            } else if (rounding_rule === 'round_down') {
+                                calculatedValue = Math.floor(calculatedValue * factor) / factor;
+                            }
+                        }
+                    }
                 }
+            }
+            // ── SUBTOTAL step ───────────────────────────────────────────────
+            else if (step.is_subtotal) {
+                if (step.from_step) {
+                    if (step.to_step && step.to_step > step.from_step) {
+                        calculatedValue = this.calculateSubtotal(step.from_step, step.to_step, processedSteps);
+                    } else {
+                        const sourceStep = processedSteps.get(step.from_step);
+                        calculatedValue = sourceStep ? sourceStep.calculatedValue : 0;
+                    }
+                } else {
+                    calculatedValue = runningTotal;
+                }
+                baseForCalculation = calculatedValue;
+                conditionValue = 0;
+                calcType = '';
             }
 
             const conditionResult: ConditionResult = {

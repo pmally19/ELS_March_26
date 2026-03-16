@@ -6,6 +6,8 @@
 import express from 'express';
 import { db } from '../db';
 import { sql } from 'drizzle-orm';
+import { pool } from '../db';
+import { postGLDocument, GLLineItem, GLDocumentHeader } from '../services/gl-posting-helper.js';
 
 const router = express.Router();
 
@@ -603,27 +605,65 @@ router.post('/debit-memos/:id/post', async (req, res) => {
                 }
             }
 
-            // Insert all journal entries into gl_entries table
-            const insertQuery = sql`
-        INSERT INTO gl_entries (
-          document_number,
-          gl_account_id,
-          amount,
-          debit_credit_indicator,
-          posting_status,
-          posting_date,
-          created_at,
-          fiscal_period,
-          fiscal_year,
-          description,
-          reference,
-          source_module,
-          source_document_id,
-          source_document_type
-        ) VALUES ${sql.join(journalEntries, sql`, `)}
-      `;
+            // Post to GL using shared helper — journal_entries + journal_entry_line_items
+            const pgClient = await pool.connect();
+            try {
+                await pgClient.query('BEGIN');
 
-            await tx.execute(insertQuery);
+                const glHeader: GLDocumentHeader = {
+                    documentNumber: glDocNumber,
+                    documentType: 'DR',
+                    companyCodeId: dm.company_code_id,
+                    postingDate: new Date(dm.debit_date),
+                    fiscalYear: new Date().getFullYear(),
+                    fiscalPeriod: new Date().getMonth() + 1,
+                    headerText: `Debit Memo ${dm.debit_memo_number} - ${dm.reason_code}`,
+                    sourceModule: 'AR',
+                    sourceDocumentId: debitMemoId,
+                    sourceDocumentType: 'DEBIT_MEMO'
+                };
+
+                const glLines: GLLineItem[] = [];
+
+                // 1. AR Debit Entry
+                glLines.push({
+                    glAccountId: arAccountId, postingKey: '01', debitCredit: 'D',
+                    amount: dm.net_amount,
+                    description: `Debit Memo ${dm.debit_memo_number} - ${dm.reason_code}`,
+                    partnerId: dm.customer_id,
+                    sourceModule: 'AR', sourceDocumentId: debitMemoId, sourceDocumentType: 'DEBIT_MEMO'
+                });
+
+                // 2. Revenue/Income Credit Entries per line item
+                for (const item of items) {
+                    if (!item.gl_account_id) throw new Error(`GL Account ID not found for item: ${item.description}`);
+                    glLines.push({
+                        glAccountId: item.gl_account_id, postingKey: '50', debitCredit: 'C',
+                        amount: item.total_amount,
+                        description: `Debit Memo Item: ${item.description}`,
+                        sourceModule: 'AR', sourceDocumentId: debitMemoId, sourceDocumentType: 'DEBIT_MEMO'
+                    });
+                    // 3. Output Tax Credit
+                    if (parseFloat(item.tax_amount) > 0) {
+                        glLines.push({
+                            glAccountId: taxAccountId, postingKey: '50', debitCredit: 'C',
+                            amount: item.tax_amount,
+                            description: `Debit Memo Item Tax: ${item.description}`,
+                            sourceModule: 'AR', sourceDocumentId: debitMemoId, sourceDocumentType: 'DEBIT_MEMO'
+                        });
+                    }
+                }
+
+                const glResult = await postGLDocument(pgClient, glHeader, glLines);
+                if (!glResult.success) throw new Error(glResult.error);
+
+                await pgClient.query('COMMIT');
+            } catch (glErr) {
+                await pgClient.query('ROLLBACK');
+                throw glErr;
+            } finally {
+                pgClient.release();
+            }
 
             // Update debit memo with GL doc number
             await tx.execute(sql`

@@ -57,9 +57,11 @@ import ComprehensiveInventory from "@/pages/comprehensive/ComprehensiveInventory
 import Sales from "@/pages/sales/Sales";
 // // // import SalesOrderList from "@/pages/sales/SalesOrderList"; // Removed during cleanup // File removed during cleanup // REMOVED: File does not exist
 // // // import SalesOrder from "@/pages/sales/SalesOrder"; // Removed during cleanup // File removed during cleanup // REMOVED: File does not exist
-import SalesOrderDetail from "@/pages/sales/SalesOrderDetail";
+const SalesOrderDetail = lazy(() => import("./pages/sales/SalesOrderDetail"));
+const DeliveryView = lazy(() => import("./pages/logistics/DeliveryView"));
+const InvoiceView = lazy(() => import("./pages/transactions/InvoiceView"));
 import TestDynamicRoute from "@/pages/sales/TestDynamicRoute";
-import SalesOrderWithIncoterms from "@/pages/sales/SalesOrderWithIncoterms";
+
 import OrderToCash from "@/pages/sales/OrderToCash";
 import PricingProcedures from "@/pages/sales/PricingProcedures";
 import AccessSequences from "@/pages/sales/AccessSequences";
@@ -148,16 +150,17 @@ import ApprovalLevels from "@/pages/master-data/ApprovalLevels";
 // Note: Material master uses MaterialMaster route; legacy Material component removed
 import MaterialMaster from "@/pages/master-data/MaterialMaster";
 import MRPControllers from "@/pages/master-data/MRPControllers";
+import MRPConfiguration from "@/pages/master-data/MRPConfiguration";
 import SDDocumentTypes from "@/pages/master-data/SDDocumentTypes";
 import SalesDocumentCategories from "@/pages/master-data/SalesDocumentCategories";
 import FieldStatusVariants from "@/pages/master-data/FieldStatusVariants";
 import MasterDataChartOfAccounts from "@/pages/master-data/ChartOfAccounts";
-
+import BankConfiguration from "@/pages/finance/BankConfiguration";
 import CustomerMaster from "@/pages/master-data/CustomerMaster";
 import Vendor from "@/pages/master-data/Vendor";
 import VendorMaterialAssignment from "@/pages/master-data/VendorMaterialAssignment";
 import BomsContent from "@/components/production/BomsContent";
-import UnitsOfMeasure from "@/pages/master-data/UnitsOfMeasure";
+
 import WorkCenters from "@/pages/master-data/WorkCenters";
 import CostCenters from "@/pages/master-data/CostCenters";
 import ProfitCenters from "@/pages/master-data/ProfitCenters";
@@ -485,6 +488,14 @@ const MasterDataDashboard = () => {
       onClick: navigate("/master-data/chart-of-accounts")
     },
     {
+      id: "financial-report-templates",
+      title: "Financial Statement Templates",
+      icon: <FolderTree className="h-5 w-5 text-indigo-600" />,
+      description: "Design custom balance sheets and P&L hierarchies",
+      linkText: "Manage Report Templates →",
+      onClick: navigate("/finance/report-template-builder")
+    },
+    {
       id: "fiscal-calendar",
       title: "Fiscal Calendar",
       icon: <Calendar className="h-5 w-5 text-blue-600" />,
@@ -651,6 +662,14 @@ const MasterDataDashboard = () => {
       description: "Assign pricing procedures to sales areas and customers",
       linkText: "Manage Determinations →",
       onClick: navigate("/master-data/pricing-procedure-determination")
+    },
+    {
+      id: "mrp-configuration",
+      title: "MRP Configuration",
+      icon: <SettingsIcon className="h-5 w-5 text-blue-600" />,
+      description: "Manage MRP Types, Lot Sizes, and Procedures",
+      linkText: "Configure MRP →",
+      onClick: navigate("/master-data/mrp-configuration")
     }
   ];
 
@@ -809,7 +828,7 @@ const MasterDataDashboard = () => {
       id: "transportation-groups",
       title: "Transportation Groups",
       icon: <Truck className="h-5 w-5 text-blue-600" />,
-      description: "Define transportation groups (SAP OVLK)",
+      description: "Define transportation groups ",
       linkText: "Manage Transportation Groups →",
       onClick: () => window.location.pathname = "/master-data/transportation-groups"
     },
@@ -834,6 +853,15 @@ const MasterDataDashboard = () => {
   // Define new categorized master data tiles (21 additional tiles)
   const categorizedMasterDataTiles = [
     // Financial Category
+    {
+      id: "management-control-areas",
+      title: "Management Control Areas",
+      icon: <Shield className="h-5 w-5 text-green-600" />,
+      description: "Configure cost accounting and profitability analysis integration with financial systems",
+      linkText: "Manage Control Areas →",
+      category: "Financial",
+      onClick: () => window.location.pathname = "/master-data/management-control-areas"
+    },
     {
       id: "account-groups",
       title: "Account Groups",
@@ -1323,6 +1351,15 @@ const MasterDataDashboard = () => {
     },
     // Logistics Category
     {
+      id: "packaging-types",
+      title: "Packaging Material Types",
+      icon: <Package className="h-5 w-5 text-orange-600" />,
+      description: "Define packaging materials, max weights, and capacities",
+      linkText: "Manage Packaging Types →",
+      category: "Logistics",
+      onClick: () => window.location.pathname = "/master-data/packaging-types"
+    },
+    {
       id: "incoterms",
       title: "Incoterms",
       icon: <Globe className="h-5 w-5 text-orange-600" />,
@@ -1330,6 +1367,15 @@ const MasterDataDashboard = () => {
       linkText: "Manage Incoterms →",
       category: "Logistics",
       onClick: () => window.location.pathname = "/master-data/incoterms"
+    },
+    {
+      id: "account-id",
+      title: "Account ID",
+      icon: <Truck className="h-5 w-5 text-orange-600" />,
+      description: "Manage account IDs for bank accounts",
+      linkText: "Manage Account IDs →",
+      category: "Master Data",
+      onClick: () => window.location.pathname = "/master-data/account-id"
     },
     {
       id: "shipping-conditions",
@@ -1366,6 +1412,15 @@ const MasterDataDashboard = () => {
       linkText: "Manage Route Schedules →",
       category: "Logistics",
       onClick: () => window.location.pathname = "/master-data/route-schedules"
+    },
+    {
+      id: "bank-configuration",
+      title: "Bank Configuration",
+      icon: <Globe className="h-5 w-5 text-orange-600" />,
+      description: "Configure real bank accounts and EDI trading partners",
+      linkText: "Manage Bank Configuration →",
+      category: "Finance",
+      onClick: () => window.location.pathname = "/finance/bank-configuration"
     },
     {
       id: "routes",
@@ -1452,6 +1507,16 @@ const MasterDataDashboard = () => {
       linkText: "Manage Document Types →",
       category: "System",
       onClick: () => window.location.pathname = "/master-data/document-types"
+    },
+
+    {
+      id: "bank-accounts",
+      title: "Bank Accounts",
+      icon: <Building2 className="h-5 w-5 text-gray-600" />,
+      description: "Manage bank accounts and financial institution information",
+      linkText: "Manage Bank Accounts →",
+      category: "System",
+      onClick: () => window.location.pathname = "/master-data/bank-accounts"
     },
     {
       id: "number-ranges-new",
@@ -1666,6 +1731,7 @@ function Router() {
             <Route path="/master-data/material" component={MaterialMaster} />
             <Route path="/master-data/material-master" component={MaterialMaster} />
             <Route path="/master-data/mrp-controllers" component={MRPControllers} />
+            <Route path="/master-data/mrp-configuration" component={MRPConfiguration} />
             <Route path="/master-data/routing" component={lazy(() => import('./pages/master-data/RoutingManagement'))} />
             <Route path="/master-data/sd-document-types" component={SDDocumentTypes} />
             <Route path="/master-data/sales-document-categories" component={SalesDocumentCategories} />
@@ -1674,7 +1740,7 @@ function Router() {
             <Route path="/master-data/divisions" component={Divisions} />
             <Route path="/master-data/sales-areas" component={SalesAreas} />
             <Route path="/material-master" component={MaterialMaster} />
-
+            <Route path="/master-data/bank-accounts" component={BankAccounts} />
 
             <Route path="/master-data/vendor" component={Vendor} />
             <Route path="/master-data/bom" component={BomsContent} />
@@ -1731,6 +1797,7 @@ function Router() {
             <Route path="/master-data/fiscal-calendar" component={FiscalCalendar} />
             <Route path="/master-data/fiscal-year-variant" component={FiscalYearVariant} />
             <Route path="/master-data/fiscal-period" component={FiscalPeriod} />
+
             <Route path="/master-data/gl-accounts" component={GeneralLedgerAccounts} />
             <Route path="/master-data/gl-account-groups" component={GLAccountGroups} />
             <Route path="/master-data/posting-period-controls" component={PostingPeriodControls} />
@@ -1748,6 +1815,7 @@ function Router() {
             <Route path="/master-data/routes" component={RoutesMaster} />
             <Route path="/master-data/movement-types" component={MovementTypes} />
 
+
             {/* Categorized Master Data Routes - 21 New Tiles - All redirect to main Master Data dashboard */}
 
             {/* New standardized master data routes */}
@@ -1756,9 +1824,10 @@ function Router() {
             <Route path="/master-data/vendor-master" component={Vendor} />
             <Route path="/master-data/vendor-material-assignment" component={VendorMaterialAssignment} />
             <Route path="/master-data/bill-of-materials" component={BomsContent} />
-            <Route path="/master-data/units-of-measure" component={UnitsOfMeasure} />
+            <Route path="/master-data/units-of-measure" component={UnitOfMeasure} />
             <Route path="/master-data/customer-account-assignment-groups" component={CustomerAccountAssignmentGroups} />
             <Route path="/master-data/material-account-assignment-groups" component={MaterialAccountAssignmentGroups} />
+            <Route path="/master-data/packaging-types" component={MasterDataPage} />
 
             {/* Transport System */}
             <Route path="/transport" component={Transport} />
@@ -1807,6 +1876,7 @@ function Router() {
             <Route path="/transactions/inventory-management" component={lazy(() => import("./pages/InventoryManagement"))} />
             <Route path="/transactions/inventory-valuation" component={lazy(() => import("./pages/transactions/InventoryValuation"))} />
             <Route path="/transactions/invoice" component={lazy(() => import("./pages/transactions/Invoice"))} />
+            <Route path="/transactions/invoice/view/:id" component={InvoiceView} />
             <Route path="/transactions/invoice-verification" component={lazy(() => import("./pages/sales/InvoiceVerification"))} />
             <Route path="/transactions/ledger-management" component={lazy(() => import("./pages/transactions/LedgerManagement"))} />
             <Route path="/transactions/management-reporting-dashboard-enhancement" component={lazy(() => import("./pages/transactions/ManagementReportingDashboardEnhancement"))} />
@@ -1952,7 +2022,7 @@ function Router() {
             <Route path="/sales/quote-approval" component={SalesQuoteApproval} />
             {/* <Route path="/sales/orders" component={SalesOrderList} /> */}
             {/* <Route path="/sales/orders/new" component={SalesOrder} /> */}
-            <Route path="/sales/orders/new-with-incoterms" component={SalesOrderWithIncoterms} />
+
             <Route path="/sales/orders/test/:id" component={TestDynamicRoute} />
             <Route path="/sales/orders/view/:id" component={SalesOrderDetail} />
             {/* <Route path="/sales/orders/:id/edit" component={SalesOrder} /> */}
@@ -1994,7 +2064,9 @@ function Router() {
             <Route path="/finance/end-to-end-guide" component={EndToEndFinancialGuide} />
             <Route path="/finance/accounts-receivable" component={AccountsReceivable} />
             <Route path="/finance/ar-complete" component={lazy(() => import("./pages/finance/ARComplete"))} />
-
+            <Route path="/finance/report-template-builder" component={lazy(() => import("./pages/finance/master-data/ReportTemplateBuilder"))} />
+            <Route path="/finance/financial-statements-viewer" component={lazy(() => import("./pages/finance/reports/FinancialStatementViewer"))} />
+            <Route path="/finance/bank-configuration" component={lazy(() => import("./pages/finance/BankConfiguration"))} />
             {/* Authorization Management Settings */}
             <Route path="/finance/settings/authorization-levels" component={() => <AuthorizationLevelsPage />} />
             <Route path="/finance/settings/vendor-payment-approval" component={() => <VendorPaymentApprovalPage />} />
@@ -2049,6 +2121,7 @@ function Router() {
 
             {/* Phase 2 Order-to-Cash Enhancement Pages */}
             <Route path="/logistics/shipping" component={lazy(() => import("./pages/logistics/ShippingLogistics"))} />
+            <Route path="/logistics/delivery/view/:id" component={DeliveryView} />
             <Route path="/revenue-recognition" component={lazy(() => import("./pages/finance/revenue-recognition/RevenueRecognition"))} />
             <Route path="/customer-portal" component={lazy(() => import("./pages/customer-portal/CustomerPortal"))} />
 

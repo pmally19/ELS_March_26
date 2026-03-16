@@ -16,6 +16,7 @@
  */
 
 import { pool } from '../db';
+import { postGLDocument, generateDocumentNumber, GLLineItem, GLDocumentHeader } from './gl-posting-helper.js';
 
 export interface APPostingResult {
     success: boolean;
@@ -146,75 +147,73 @@ export class APGLPostingService {
                 }
             }
 
-            // ── 4. Generate FI document number ─────────────────────────────────────
-            const today = new Date();
-            const fiscal_year = today.getFullYear();
-            const fiscal_period = today.getMonth() + 1;
-            const docNumber = `FIAP${apInvoiceId}-${Date.now().toString().slice(-8)}`;
+            const docNumber = await generateDocumentNumber(client, 'FIAP');
             const reference = inv.invoice_number || `AP-${apInvoiceId}`;
 
-            // ── 5. Insert accounting_documents header ──────────────────────────────
-            const adResult = await client.query(`
-                INSERT INTO accounting_documents (
-                    document_number, document_type, posting_date, document_date,
-                    company_code, fiscal_year, period, reference,
-                    header_text, total_amount, currency,
-                    source_module, source_document_id, source_document_type,
-                    status, created_at
-                ) VALUES (
-                    $1, 'KR', CURRENT_DATE, $2,
-                    $3, $4, $5, $6,
-                    $7, $8, 'INR',
-                    'AP', $9, 'AP_INVOICE',
-                    'POSTED', NOW()
-                ) RETURNING id
-            `, [
-                docNumber,
-                inv.invoice_date || today,
-                inv.company_code_id?.toString() || '1000',
-                fiscal_year,
-                fiscal_period,
-                reference,
-                `Vendor Invoice ${reference}`,
-                totalAmount,
-                apInvoiceId
-            ]);
-
-            const accountingDocId = adResult.rows[0].id;
-
+            const glLines: GLLineItem[] = [];
             let debitAccountNum: string | null = null;
             let creditAccountNum: string | null = null;
 
-            // ── 6. Post GL lines ────────────────────────────────────────────────────
+            // ── 6. Collect GL lines ─────────────────────────────────────────────────
+            const today = new Date();
+            const fiscal_year = today.getFullYear();
+            const fiscal_period = today.getMonth() + 1;
 
-            // Line 1: Debit WRX — GR/IR Clearing (clears the credit from GR posting)
+            // Line 1: Debit WRX — GR/IR Clearing
             if (wrxGLId && inv.purchase_order_id) {
                 const wrxAcct = await client.query('SELECT account_number FROM gl_accounts WHERE id = $1', [wrxGLId]);
                 debitAccountNum = wrxAcct.rows[0]?.account_number || 'WRX';
-                await this.insertGLEntry(client, docNumber, wrxGLId, totalAmount, 'D',
-                    fiscal_period, fiscal_year,
-                    `WRX: GR/IR Clearing — Invoice ${reference}`,
-                    apInvoiceId, reference);
+                glLines.push({
+                    glAccountId: wrxGLId,
+                    postingKey: '40',
+                    debitCredit: 'D',
+                    amount: totalAmount,
+                    description: `WRX: GR/IR Clearing — Invoice ${reference}`,
+                    reference,
+                    sourceModule: 'AP',
+                    sourceDocumentId: apInvoiceId,
+                    sourceDocumentType: 'AP_INVOICE'
+                });
             } else if (!wrxGLId && inv.purchase_order_id) {
-                console.warn(`[AP GL] ⚠️ No WRX (GR/IR) account resolved for invoice ${apInvoiceId}. Posting against vendor account only.`);
+                console.warn(`[AP GL] ⚠️ No WRX (GR/IR) account resolved for invoice ${apInvoiceId}.`);
             }
 
-            // Line 2: Credit Vendor Reconciliation Account
+            // Line 2: Credit Vendor Reconciliation Account (PK 31)
             if (vendorGLId) {
                 creditAccountNum = vendorGLNumber || 'AP';
-                await this.insertGLEntry(client, docNumber, vendorGLId, totalAmount, 'C',
-                    fiscal_period, fiscal_year,
-                    `KR: Vendor Payable — Invoice ${reference}`,
-                    apInvoiceId, reference);
+                glLines.push({
+                    glAccountId: vendorGLId,
+                    postingKey: '31',
+                    debitCredit: 'C',
+                    amount: totalAmount,
+                    description: `KR: Vendor Payable — Invoice ${reference}`,
+                    reference,
+                    partnerId: inv.vendor_id,
+                    sourceModule: 'AP',
+                    sourceDocumentId: apInvoiceId,
+                    sourceDocumentType: 'AP_INVOICE'
+                });
             } else {
-                throw new Error('No Vendor reconciliation / Accounts Payable GL account could be determined. Please configure a reconciliation account on the vendor.');
+                throw new Error('No Vendor reconciliation / AP GL account could be determined.');
             }
 
-            // ── 7. Update invoice GL posting status ────────────────────────────────
-            try {
-                await client.query(`ALTER TABLE accounts_payable ADD COLUMN IF NOT EXISTS gl_document_number VARCHAR(50)`);
-                await client.query(`ALTER TABLE accounts_payable ADD COLUMN IF NOT EXISTS gl_posting_status VARCHAR(20)`);
-            } catch (_) { /* columns already exist */ }
+            // ── 7. Post via shared helper ──────────────────────────────────────────
+            const jeHeader: GLDocumentHeader = {
+                documentNumber: docNumber,
+                documentType: 'KR',
+                companyCodeId: inv.company_code_id,
+                postingDate: today,
+                documentDate: inv.invoice_date ? new Date(inv.invoice_date) : today,
+                fiscalYear: fiscal_year,
+                fiscalPeriod: fiscal_period,
+                reference,
+                headerText: `Vendor Invoice ${reference}`,
+                sourceModule: 'AP',
+                sourceDocumentId: apInvoiceId,
+                sourceDocumentType: 'AP_INVOICE'
+            };
+            const postResult = await postGLDocument(client, jeHeader, glLines);
+            if (!postResult.success) throw new Error(postResult.error);
 
             await client.query(`
                 UPDATE accounts_payable
@@ -224,23 +223,19 @@ export class APGLPostingService {
                 WHERE id = $2
             `, [docNumber, apInvoiceId]);
 
-            // Also update accounting_documents with resolved type if available
-            try {
-                await client.query(`ALTER TABLE accounting_documents ADD COLUMN IF NOT EXISTS accountingDocTypeId INTEGER`);
-            } catch (_) { }
-
             await client.query('COMMIT');
 
-            console.log(`✅ AP Invoice ${apInvoiceId} posted to GL: ${docNumber} | Dr(WRX): ${debitAccountNum} Cr(Vendor): ${creditAccountNum} | Amount: ${totalAmount}`);
+            console.log(`✅ AP Invoice ${apInvoiceId} posted to journal_entries: ${docNumber} | Dr(WRX): ${debitAccountNum} Cr(Vendor): ${creditAccountNum} | Amount: ${totalAmount}`);
 
             return {
                 success: true,
                 glDocumentNumber: docNumber,
-                accountingDocumentId: accountingDocId,
+                accountingDocumentId: postResult.journalEntryId,
                 debitAccount: debitAccountNum || 'WRX',
                 creditAccount: creditAccountNum || 'AP',
                 totalAmount
             };
+
 
         } catch (error: any) {
             await client.query('ROLLBACK');
@@ -251,31 +246,8 @@ export class APGLPostingService {
         }
     }
 
-    private async insertGLEntry(
-        client: any,
-        docNumber: string,
-        glAccountId: number,
-        amount: number,
-        dcIndicator: 'D' | 'C',
-        period: number,
-        year: number,
-        description: string,
-        sourceDocId: number,
-        reference: string
-    ): Promise<void> {
-        await client.query(`
-            INSERT INTO gl_entries (
-                document_number, gl_account_id, amount, debit_credit_indicator,
-                posting_date, posting_status, fiscal_period, fiscal_year,
-                description, source_module, source_document_type, source_document_id,
-                reference
-            ) VALUES (
-                $1, $2, $3, $4,
-                CURRENT_DATE, 'posted', $5, $6,
-                $7, 'AP', 'AP_INVOICE', $8, $9
-            )
-        `, [docNumber, glAccountId, amount, dcIndicator, period, year, description, sourceDocId, reference]);
-    }
+    // insertGLEntry removed — now using shared postGLDocument helper (gl-posting-helper.ts)
+
 
     /**
      * Resolve GL account via material_account_determination (OBYC).

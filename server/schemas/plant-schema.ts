@@ -23,4 +23,6 @@ export const plantSchema = z.object({
   factoryCalendar: z.string().optional().nullable(),
   status: z.string().default("active"),
   isActive: z.boolean().default(true),
+  region: z.string().optional().nullable(),
+  regionId: z.coerce.number().optional().nullable(),
 });

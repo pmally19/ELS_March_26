@@ -49,7 +49,6 @@ import taxClassificationsRouter from "./tax-classifications";
 import taxCodesRouter from "./tax-codes";
 import taxCalculationRouter from "./tax-calculation";
 import taxJurisdictionsRouter from "./tax-jurisdictions";
-import mrpTypesRouter from "./mrp-types";
 import mrpControllersRouter from "./mrp-controllers";
 import loadingGroupsRouter from "./loading-groups";
 import shippingConditionKeysRouter from "./shipping-condition-keys";
@@ -80,6 +79,7 @@ import transportationGroupsRouter from './transportation-groups';
 import shippingPointDeterminationRouter from './shipping-point-determination';
 import taxConditionRecordsRouter from './tax-condition-records';
 import sourceListsRouter from './source-lists';
+import mrpConfigRouter from './mrp-config';
 
 
 
@@ -198,12 +198,12 @@ export function registerMasterDataRoutes(app: Express) {
   app.use('/api/master-data/tax-categories', taxCategoriesRouter);
   app.use('/api/master-data/tax-calculation', taxCalculationRouter);
   app.use('/api/master-data/tax-jurisdictions', taxJurisdictionsRouter);
+  app.use('/api/master-data/mrp-config', mrpConfigRouter);
   app.use('/api/master-data/tax-classifications', taxClassificationsRouter);
   app.use('/api/master-data/tax-procedures', taxProceduresRouter);
   app.use('/api/master-data/tax-account-determination', taxAccountDeterminationRouter);
   app.use('/api/master-data/tax-condition-records', taxConditionRecordsRouter);
   app.use('/api/master-data/tolerance-groups', toleranceGroupsRouter);
-  app.use('/api/master-data/mrp-types', mrpTypesRouter);
   app.use('/api/master-data/mrp-controllers', mrpControllersRouter);
   app.use('/api/master-data/routing', routingRouter);
   app.use('/api/master-data/production-versions', productionVersionsRouter);
@@ -2530,7 +2530,7 @@ export function registerMasterDataRoutes(app: Express) {
   app.get("/api/master-data/units-of-measure", async (req: Request, res: Response) => {
     try {
       res.setHeader('Content-Type', 'application/json');
-      const result = await pool.query('SELECT * FROM uom WHERE "_deletedAt" IS NULL');
+      const result = await pool.query('SELECT * FROM units_of_measure WHERE "_deletedAt" IS NULL');
 
       // Transform the data to match frontend expectations
       const transformedData = result.rows.map(row => ({
@@ -2564,10 +2564,10 @@ export function registerMasterDataRoutes(app: Express) {
       const tenantId = (req as any).user?.tenantId || '001';
 
       const result = await pool.query(`
-        INSERT INTO uom(code, name, description, category, is_base, is_active, created_at, updated_at, created_by, updated_by, "_tenantId")
-  VALUES($1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
-  RETURNING *
-    `, [code, name, description, category, isBase, isActive !== false, userId, userId, tenantId]);
+        INSERT INTO units_of_measure(code, name, description, category, dimension, is_base, is_active, active, created_at, updated_at, created_by, updated_by, "_tenantId")
+        VALUES($1, $2, $3, $4, $4, $5, $6, $6, NOW(), NOW(), $7, $8, $9)
+        RETURNING *
+      `, [code, name, description, category || 'Other', isBase, isActive !== false, userId, userId, tenantId]);
 
       const newUom = result.rows[0];
       const transformedData = {
@@ -2593,26 +2593,28 @@ export function registerMasterDataRoutes(app: Express) {
     }
   });
 
-  // PATCH - Update UOM
-  app.patch("/api/master-data/units-of-measure/:id", async (req: Request, res: Response) => {
+  // PATCH/PUT - Update UOM
+  const updateUomHandler = async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const { code, name, description, category, isBase, isActive } = req.body;
       const userId = (req as any).user?.id || 1;
 
       const result = await pool.query(`
-        UPDATE uom 
+        UPDATE units_of_measure 
         SET code = COALESCE($1, code),
-    name = COALESCE($2, name),
-    description = COALESCE($3, description),
-    category = COALESCE($4, category),
-    is_base = COALESCE($5, is_base),
-    is_active = COALESCE($6, is_active),
-    updated_at = NOW(),
-    updated_by = $7
+            name = COALESCE($2, name),
+            description = COALESCE($3, description),
+            category = COALESCE($4, category),
+            dimension = COALESCE($4, dimension),
+            is_base = COALESCE($5, is_base),
+            is_active = COALESCE($6, is_active),
+            active = COALESCE($6, active),
+            updated_at = NOW(),
+            updated_by = $7
         WHERE id = $8
-  RETURNING *
-    `, [code, name, description, category, isBase, isActive, userId, id]);
+        RETURNING *
+      `, [code, name, description, category, isBase, isActive, userId, id]);
 
       if (result.rows.length === 0) {
         return res.status(404).json({ message: "Unit of measure not found" });
@@ -2640,7 +2642,10 @@ export function registerMasterDataRoutes(app: Express) {
       console.error("Error updating unit of measure:", error);
       return res.status(500).json({ message: "Failed to update unit of measure" });
     }
-  });
+  };
+
+  app.patch("/api/master-data/units-of-measure/:id", updateUomHandler);
+  app.put("/api/master-data/units-of-measure/:id", updateUomHandler);
 
   // DELETE - Delete UOM
   app.delete("/api/master-data/units-of-measure/:id", async (req: Request, res: Response) => {
@@ -2649,8 +2654,8 @@ export function registerMasterDataRoutes(app: Express) {
       const userId = (req as any).user?.id || 1;
 
       const result = await pool.query(`
-        UPDATE uom SET is_active = false, "_deletedAt" = NOW(), updated_by = $2, updated_at = NOW() WHERE id = $1 RETURNING *
-    `, [id, userId]);
+        UPDATE units_of_measure SET is_active = false, active = false, "_deletedAt" = NOW(), updated_by = $2, updated_at = NOW() WHERE id = $1 RETURNING *
+      `, [id, userId]);
 
       if (result.rows.length === 0) {
         return res.status(404).json({ message: "Unit of measure not found" });
@@ -2667,7 +2672,7 @@ export function registerMasterDataRoutes(app: Express) {
   app.get("/api/master-data/uom", async (req: Request, res: Response) => {
     try {
       res.setHeader('Content-Type', 'application/json');
-      const result = await pool.query('SELECT * FROM uom WHERE "_deletedAt" IS NULL');
+      const result = await pool.query('SELECT * FROM units_of_measure WHERE "_deletedAt" IS NULL');
       return res.status(200).json(result.rows);
     } catch (error) {
       console.error("Error fetching UOMs:", error);

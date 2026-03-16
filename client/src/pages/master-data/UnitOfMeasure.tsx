@@ -65,20 +65,20 @@ type UoM = {
   updatedAt: string;
 };
 
-// Define the UoM categories for the dropdown
+// Define the UoM categories for the dropdown - aligned with database dimensions
 const UOM_CATEGORIES = [
-  "Quantity",
-  "Weight",
-  "Volume",
-  "Length",
-  "Area",
-  "Time",
-  "Temperature",
-  "Electrical",
-  "Energy",
-  "Pressure",
-  "Speed",
-  "Other",
+  "COUNT",
+  "MASS",
+  "VOLUME",
+  "LENGTH",
+  "AREA",
+  "TIME",
+  "TEMPERATURE",
+  "ELECTRICAL",
+  "ENERGY",
+  "PRESSURE",
+  "SPEED",
+  "OTHER",
 ];
 
 // Define the conversion type
@@ -102,6 +102,8 @@ const uomSchema = z.object({
   name: z.string().min(1, "Name is required").max(100, "Name must be at most 100 characters"),
   description: z.string().optional(),
   category: z.string().min(1, "Category is required"),
+  dimension: z.string().optional(),
+  conversionFactor: z.string().optional(),
   isBase: z.boolean().default(false),
   isActive: z.boolean().default(true),
 });
@@ -372,6 +374,16 @@ export default function UnitOfMeasure() {
   // Function to handle editing a UoM
   const handleEditUom = (uom: UoM) => {
     setEditingUom(uom);
+    uomForm.reset({
+      code: uom.code,
+      name: uom.name,
+      description: uom.description || "",
+      category: uom.category,
+      dimension: (uom as any).dimension || uom.category,
+      conversionFactor: String((uom as any).conversionFactor || "1"),
+      isBase: uom.isBase,
+      isActive: uom.isActive,
+    });
     setShowUomDialog(true);
   };
 
@@ -398,11 +410,18 @@ export default function UnitOfMeasure() {
     <div className="space-y-6">
       {/* Page Header */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Units of Measure</h1>
-          <p className="text-sm text-muted-foreground">
-            Manage units of measure and their conversions
-          </p>
+        <div className="flex items-center gap-3">
+          <Link href="/master-data">
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+          </Link>
+          <div>
+            <h1 className="text-2xl font-bold">Units of Measure</h1>
+            <p className="text-sm text-muted-foreground">
+              Manage units of measure and their conversions
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {activeTab === "uoms" ? (
@@ -708,6 +727,42 @@ export default function UnitOfMeasure() {
                   </FormItem>
                 )}
               />
+
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={uomForm.control}
+                  name="dimension"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Dimension</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g. MASS, VOLUME" {...field} />
+                      </FormControl>
+                      <FormDescription>
+                        Physical dimension
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={uomForm.control}
+                  name="conversionFactor"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Conversion Factor</FormLabel>
+                      <FormControl>
+                        <Input type="number" step="any" placeholder="1.0" {...field} />
+                      </FormControl>
+                      <FormDescription>
+                        Relative to base unit
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <FormField

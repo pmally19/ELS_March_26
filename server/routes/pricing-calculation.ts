@@ -35,7 +35,9 @@ router.post('/calculate', async (req, res) => {
                 divisionId: context.divisionId || context.division_id,
                 materialGroup: item.materialGroup || item.material_group,
                 customerGroup: context.customerGroup || context.customer_group,
-                quantity: item.quantity || 1
+                quantity: item.quantity || 1,
+                plantCode: item.plantCode || item.plant_code,
+                storageLocation: item.storageLocation || item.storage_location
             };
 
             const baseValue = item.baseValue || item.base_value || 0;

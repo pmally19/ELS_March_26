@@ -137,74 +137,63 @@ export class InventoryFinanceCostService {
     unitCost: number;
     valuationMethod: string;
   }> {
-    // Get current inventory valuation (moving average price)
-    const stockBalanceResult = await this.pool.query(
-      `SELECT moving_average_price, total_value, quantity
-       FROM stock_balances
-       WHERE material_code = $1 
-         AND plant_code = $2 
-         AND storage_location = $3
-       LIMIT 1`,
-      [materialCode, plantCode, storageLocation]
-    );
-
-    if (stockBalanceResult.rows.length === 0) {
-      throw new Error(`No stock balance found for material ${materialCode} at ${plantCode}/${storageLocation}`);
-    }
-
-    const stockBalance = stockBalanceResult.rows[0];
-    const unitCost = parseFloat(stockBalance.moving_average_price || '0');
-    const cogsAmount = unitCost * quantity;
-
-    // Get valuation method from material master or stock balance
-    // Check which columns exist in materials table first
-    let valuationMethod: string | null = null;
-
+    // 1. Get material price control & base_unit_price
+    let priceControl = 'V'; // Default to Moving Average
+    let standardPrice = 0;
+    
     try {
-      // Try to get valuation method/class from materials table
-      const columnCheck = await this.pool.query(`
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_name = 'materials' 
-        AND column_name IN ('valuation_method', 'valuation_class')
-      `);
+      const materialResult = await this.pool.query(
+        `SELECT price_control, base_unit_price, cost
+         FROM materials
+         WHERE code = $1
+         LIMIT 1`,
+        [materialCode]
+      );
 
-      const hasValuationMethod = columnCheck.rows.some((r: any) => r.column_name === 'valuation_method');
-      const hasValuationClass = columnCheck.rows.some((r: any) => r.column_name === 'valuation_class');
-
-      if (hasValuationMethod || hasValuationClass) {
-        const selectCols = [];
-        if (hasValuationMethod) selectCols.push('valuation_method');
-        if (hasValuationClass) selectCols.push('valuation_class');
-
-        const materialResult = await this.pool.query(
-          `SELECT ${selectCols.join(', ')}
-           FROM materials
-           WHERE code = $1
-           LIMIT 1`,
-          [materialCode]
-        );
-
-        if (materialResult.rows.length > 0) {
-          valuationMethod = materialResult.rows[0].valuation_method ||
-            materialResult.rows[0].valuation_class ||
-            null;
-        }
+      if (materialResult.rows.length > 0) {
+        const row = materialResult.rows[0];
+        priceControl = row.price_control === 'S' || row.price_control === 'V' ? row.price_control : 'V';
+        standardPrice = parseFloat(row.base_unit_price || row.cost || '0');
       }
     } catch (err) {
-      // If query fails, continue with fallback logic
-      console.warn('Could not check valuation method from materials table:', err);
+      console.warn('Could not check price_control from materials table:', err);
     }
 
-    // If no valuation method found, use the method from stock balance (moving_average_price indicates MOVING_AVERAGE)
-    if (!valuationMethod && stockBalance.moving_average_price) {
-      valuationMethod = 'MOVING_AVERAGE';
+    // 2. Get current inventory valuation (moving average price)
+    let movingAveragePrice = 0;
+    try {
+      const stockBalanceResult = await this.pool.query(
+        `SELECT moving_average_price
+         FROM stock_balances
+         WHERE material_code = $1 
+           AND plant_code = $2 
+           AND storage_location = $3
+         LIMIT 1`,
+        [materialCode, plantCode, storageLocation]
+      );
+
+      if (stockBalanceResult.rows.length > 0) {
+        movingAveragePrice = parseFloat(stockBalanceResult.rows[0].moving_average_price || '0');
+      }
+    } catch (err) {
+      console.warn('Could not fetch moving average from stock balances:', err);
     }
 
-    // If still no method found, default to MOVING_AVERAGE (since we're using moving_average_price)
-    if (!valuationMethod) {
-      valuationMethod = 'MOVING_AVERAGE';
+    // 3. Determine unit cost based on price control
+    let unitCost = 0;
+    if (priceControl === 'S') {
+      unitCost = standardPrice;
+      // Fallback
+      if (unitCost === 0 && movingAveragePrice > 0) unitCost = movingAveragePrice;
+    } else {
+      // priceControl === 'V'
+      unitCost = movingAveragePrice;
+      // Fallback
+      if (unitCost === 0 && standardPrice > 0) unitCost = standardPrice;
     }
+
+    const cogsAmount = unitCost * quantity;
+    const valuationMethod = priceControl === 'S' ? 'STANDARD' : 'MOVING_AVERAGE';
 
     return {
       cogsAmount,
@@ -440,10 +429,10 @@ export class InventoryFinanceCostService {
       let accounts;
       try {
         accounts = await this.determineAccounts(
-          movementData.materialCode,
           movementData.movementType,
-          movementData.costCenterId,
-          client  // Pass transaction client
+          movementData.materialCode,
+          null, // valuationClass will be fetched by determineAccounts
+          client
         );
       } catch (accountError: any) {
         // If account determination fails, return error instead of throwing
@@ -646,12 +635,32 @@ export class InventoryFinanceCostService {
         // Truncate reference document to 20 characters if needed
         const referenceDoc = (movementData.referenceDocument || '').substring(0, 20);
 
+        // Get GL Account IDs
+        let debitAccountId: number | null = null;
+        let creditAccountId: number | null = null;
+        try {
+          const debitAccountResult = await client.query(
+            `SELECT id FROM gl_accounts WHERE account_number = $1 LIMIT 1`,
+            [debitAccount]
+          );
+          debitAccountId = debitAccountResult.rows[0]?.id || null;
+          
+          const creditAccountResult = await client.query(
+            `SELECT id FROM gl_accounts WHERE account_number = $1 LIMIT 1`,
+            [creditAccount]
+          );
+          creditAccountId = creditAccountResult.rows[0]?.id || null;
+        } catch (e: any) {
+          console.warn('Could not fetch GL account IDs:', e.message);
+        }
+
         // Debit entry
         await client.query(
           `INSERT INTO journal_entry_line_items (
             journal_entry_id,
             line_item_number,
             gl_account,
+            gl_account_id,
             account_type,
             debit_amount,
             credit_amount,
@@ -662,11 +671,12 @@ export class InventoryFinanceCostService {
             description,
             reference,
             created_at
-          ) VALUES ($1, $2, $3, 'D', $4, 0, $5, $6, $7, $8, $9, $10, NOW())`,
+          ) VALUES ($1, $2, $3, $4, 'D', $5, 0, $6, $7, $8, $9, $10, $11, NOW())`,
           [
             journalEntryId,
             nextLineNumber,
             debitAccount,
+            debitAccountId,
             totalAmount,
             movementData.costCenterId || null,
             movementData.profitCenterId || null,
@@ -683,6 +693,7 @@ export class InventoryFinanceCostService {
             journal_entry_id,
             line_item_number,
             gl_account,
+            gl_account_id,
             account_type,
             debit_amount,
             credit_amount,
@@ -693,11 +704,12 @@ export class InventoryFinanceCostService {
             description,
             reference,
             created_at
-          ) VALUES ($1, $2, $3, 'C', 0, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+          ) VALUES ($1, $2, $3, $4, 'C', 0, $5, $6, $7, $8, $9, $10, $11, NOW())`,
           [
             journalEntryId,
             nextLineNumber + 1,
             creditAccount,
+            creditAccountId,
             totalAmount,
             movementData.costCenterId || null,
             movementData.profitCenterId || null,
@@ -730,1190 +742,120 @@ export class InventoryFinanceCostService {
    * Determine GL accounts for movement type from database
    */
   private async determineAccounts(
-    materialCode: string,
     movementType: string,
-    costCenterId?: number,
+    materialCode: string,
+    valuationClass: string | null,
     client?: any
-  ): Promise<{
-    debitAccount: string | null;
-    creditAccount: string | null;
-  }> {
-    // Always use pool for read-only queries to prevent missing columns/tables from aborting the transaction
-    const queryClient = this.pool;
+  ): Promise<{ debitAccount: string; creditAccount: string } | null> {
+    const queryClient = client || this.pool;
 
-    // Get material category for account determination
-    // Check which columns exist first
-    // Use savepoint if we're in a transaction to prevent abort on error
-    let columnCheck;
-    try {
-      if (client) {
-        await client.query('SAVEPOINT check_columns');
-      }
-      columnCheck = await queryClient.query(`
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_name = 'materials' 
-        AND column_name IN ('category_id', 'type', 'plant_id')
-      `);
-      if (client) {
-        await client.query('RELEASE SAVEPOINT check_columns');
-      }
-    } catch (columnCheckError: any) {
-      if (client) {
-        try {
-          await client.query('ROLLBACK TO SAVEPOINT check_columns');
-        } catch (rollbackError) {
-          // Savepoint may not exist
-        }
-      }
-      // If column check fails, assume no special columns exist
-      columnCheck = { rows: [] };
-      console.warn('[AccountDetermination] Column check failed, assuming no special columns:', columnCheckError.message);
-    }
-
-    const hasCategoryId = columnCheck.rows.some((r: any) => r.column_name === 'category_id');
-    const hasType = columnCheck.rows.some((r: any) => r.column_name === 'type');
-    const hasPlantId = columnCheck.rows.some((r: any) => r.column_name === 'plant_id');
-
-    const selectCols = [];
-    if (hasCategoryId) selectCols.push('category_id');
-    if (hasType) selectCols.push('type');
-    if (hasPlantId) selectCols.push('plant_id');
-
-    // At minimum, select code to verify material exists
-    if (selectCols.length === 0) {
-      selectCols.push('code');
-    }
-
-    let materialResult;
-    try {
-      if (client) {
-        await client.query('SAVEPOINT get_material');
-      }
-      materialResult = await queryClient.query(
-        `SELECT ${selectCols.join(', ')} 
-         FROM materials 
-         WHERE code = $1 
-         LIMIT 1`,
-        [materialCode]
-      );
-      if (client) {
-        await client.query('RELEASE SAVEPOINT get_material');
-      }
-    } catch (materialError: any) {
-      if (client) {
-        try {
-          await client.query('ROLLBACK TO SAVEPOINT get_material');
-        } catch (rollbackError) {
-          // Savepoint may not exist
-        }
-      }
-      throw new Error(`Failed to query material ${materialCode}: ${materialError.message}`);
-    }
-
-    if (materialResult.rows.length === 0) {
-      throw new Error(`Material ${materialCode} not found`);
-    }
-
-    const material = materialResult.rows[0];
-    const categoryId = hasCategoryId ? (material.category_id || null) : null;
-    const plantId = hasPlantId ? (material.plant_id || null) : null;
-
-    // Map category_id to material_category codes (RAW, FERT, etc.) and valuation_class codes (3000, 7900, etc.)
-    // These codes match what's stored in account_determination_rules table
-    let materialCategory: string | null = null;
-    let valuationClass: string | null = null;
-
-    if (categoryId) {
-      // Query material category and valuation class from database
+    if (!valuationClass) {
+      // Fetch valuation class directly from the materials table
       try {
-        // Check if material_categories table exists and has the needed columns
-        const categoryResult = await queryClient.query(
-          `SELECT mc.code as material_category_code, vc.class_code as valuation_class_code
-           FROM material_categories mc
-           LEFT JOIN valuation_classes vc ON mc.valuation_class_id = vc.id
-           WHERE mc.id = $1 AND mc.is_active = true
-           LIMIT 1`,
-          [categoryId]
+        if (client) await client.query('SAVEPOINT get_valclass');
+        
+        const matResult = await queryClient.query(
+          `SELECT valuation_class 
+           FROM materials 
+           WHERE code = $1 LIMIT 1`,
+          [materialCode]
         );
-
-        if (categoryResult.rows.length > 0 && categoryResult.rows[0].material_category_code) {
-          materialCategory = categoryResult.rows[0].material_category_code;
-          valuationClass = categoryResult.rows[0].valuation_class_code;
-        } else {
-          // Try alternative query if columns don't match
-          const altCategoryResult = await this.pool.query(
-            `SELECT name, code FROM material_categories WHERE id = $1 AND is_active = true LIMIT 1`,
-            [categoryId]
-          );
-
-          if (altCategoryResult.rows.length > 0) {
-            // Use code or name as material category
-            materialCategory = altCategoryResult.rows[0].code || altCategoryResult.rows[0].name;
-
-            // Query valuation class from material or category
-            const valClassResult = await this.pool.query(
-              `SELECT class_code FROM valuation_classes WHERE is_active = true LIMIT 1`
-            );
-            valuationClass = valClassResult.rows[0]?.class_code || null;
-          }
+        
+        if (matResult.rows.length > 0 && matResult.rows[0].valuation_class) {
+          valuationClass = matResult.rows[0].valuation_class;
         }
-      } catch (error: any) {
-        // If material_categories table doesn't exist, query from existing account determination rules
-        const existingRuleResult = await this.pool.query(
-          `SELECT DISTINCT material_category, valuation_class 
-           FROM account_determination_rules 
-           WHERE is_active = true 
-           LIMIT 1`
-        );
-
-        if (existingRuleResult.rows.length > 0) {
-          materialCategory = existingRuleResult.rows[0].material_category;
-          valuationClass = existingRuleResult.rows[0].valuation_class;
-        }
-      }
-    }
-
-    // If still no material category, try to derive from material type
-    if (!materialCategory && hasType && material.type) {
-      // Query existing material types and their categories from account determination rules
-      const typeBasedRule = await this.pool.query(
-        `SELECT DISTINCT material_category, valuation_class 
-         FROM account_determination_rules 
-         WHERE is_active = true 
-         LIMIT 1`
-      );
-
-      if (typeBasedRule.rows.length > 0) {
-        materialCategory = typeBasedRule.rows[0].material_category;
-        valuationClass = typeBasedRule.rows[0].valuation_class;
-      }
-    }
-
-    // If still no values, query from account_determination_rules to get any available category/class
-    if (!materialCategory || !valuationClass) {
-      try {
+        
+        if (client) await client.query('RELEASE SAVEPOINT get_valclass');
+      } catch (e: any) {
         if (client) {
-          await client.query('SAVEPOINT get_default_category');
-        }
-        const defaultRuleResult = await queryClient.query(
-          `SELECT DISTINCT material_category, valuation_class 
-           FROM account_determination_rules 
-           WHERE is_active = true 
-           AND material_category IS NOT NULL
-           AND valuation_class IS NOT NULL
-           LIMIT 1`
-        );
-        if (defaultRuleResult.rows.length > 0) {
-          materialCategory = materialCategory || defaultRuleResult.rows[0].material_category;
-          valuationClass = valuationClass || defaultRuleResult.rows[0].valuation_class;
-        }
-        if (client) {
-          await client.query('RELEASE SAVEPOINT get_default_category');
-        }
-      } catch (defaultError: any) {
-        if (client) {
-          try {
-            await client.query('ROLLBACK TO SAVEPOINT get_default_category');
-          } catch (rollbackError) {
-            // Ignore rollback error
-          }
-        }
-        // If still no values, throw error - account determination cannot proceed
-        if (!materialCategory || !valuationClass) {
-          throw new Error(
-            `Cannot determine material category and valuation class for material ${materialCode}. ` +
-            `Please ensure material_categories table has proper data or account_determination_rules table has default rules. ` +
-            `Error: ${defaultError.message}`
-          );
+          try { await client.query('ROLLBACK TO SAVEPOINT get_valclass'); } catch (e2) {}
         }
       }
     }
 
-    // Get plant code if plant_id exists
-    let plantCode: string | null = null;
-    if (plantId) {
-      const plantResult = await this.pool.query(
-        `SELECT code FROM plants WHERE id = $1 LIMIT 1`,
-        [plantId]
-      );
-      if (plantResult.rows.length > 0) {
-        plantCode = plantResult.rows[0].code;
-      }
+    if (!valuationClass) {
+      throw new Error(`Valuation class is required for account determination (Material: ${materialCode})`);
     }
 
-    // Query account_determination_rules table with priority:
-    // 1. Exact match: material_category + movement_type + valuation_class + plant
-    // 2. Match without plant: material_category + movement_type + valuation_class
-    // 3. Match without valuation_class: material_category + movement_type
-    // 4. Match with movement_type only (wildcard material_category)
+    // Determine transaction keys from movement type (Standard SAP OBYC logic)
+    let debitTk = '';
+    let creditTk = '';
 
-    let accountRule = null;
+    switch (movementType) {
+      case '601': // Goods Issue for Delivery (PGI)
+      case '543': // Goods Issue Transfer
+        debitTk = 'GBB';
+        creditTk = 'BSX';
+        break;
+      case '101': // Goods Receipt against PO
+      case '561': // Initial Entry
+      case '541': // Goods Receipt Transfer
+        debitTk = 'BSX';
+        creditTk = 'WRX'; // GBB or WRX depending on exact process
+        if (movementType === '561' || movementType === '541') {
+          creditTk = 'GBB';
+        }
+        break;
+      case '702': // Scrapping
+        debitTk = 'GBB';
+        creditTk = 'BSX';
+        break;
+      default:
+        console.warn(`[AccountDetermination] No distinct transaction keys hardcoded for movement type ${movementType}`);
+        // Fallback for custom movement types to basic PGI flow
+        debitTk = 'GBB';
+        creditTk = 'BSX';
+    }
 
-    // Wrap all account determination queries in savepoint to prevent transaction abort
+    let debitAccount: string | null = null;
+    let creditAccount: string | null = null;
+
     try {
+      if (client) await client.query('SAVEPOINT account_determination');
+
+      // Query OBYC (material_account_determination join transaction_keys join valuation_classes)
+      const obycQuery = `
+        SELECT tk.code as tk_code, gl.account_number 
+        FROM material_account_determination mad
+        JOIN transaction_keys tk ON mad.transaction_key_id = tk.id
+        JOIN valuation_classes vc ON mad.valuation_class_id = vc.id
+        JOIN gl_accounts gl ON mad.gl_account_id = gl.id
+        WHERE tk.code IN ($1, $2)
+          AND vc.class_code = $3
+          AND mad.is_active = true
+      `;
+      const obycResult = await queryClient.query(obycQuery, [debitTk, creditTk, valuationClass]);
+      
+      for (const row of obycResult.rows) {
+        if (row.tk_code === debitTk) debitAccount = row.account_number;
+        // Handle case where debit and credit might be the same TK
+        if (row.tk_code === creditTk) creditAccount = row.account_number;
+      }
+
+      if (client) await client.query('RELEASE SAVEPOINT account_determination');
+    } catch (error: any) {
       if (client) {
-        await client.query('SAVEPOINT account_determination');
+        try { await client.query('ROLLBACK TO SAVEPOINT account_determination'); } catch (rollbackError) {}
       }
-
-      // Try exact match first
-      if (materialCategory && valuationClass && plantCode) {
-        try {
-          const exactMatch = await queryClient.query(
-            `SELECT debit_account, credit_account 
-             FROM account_determination_rules 
-             WHERE material_category = $1 
-               AND movement_type = $2 
-               AND valuation_class = $3 
-               AND (plant = $4 OR plant IS NULL)
-               AND is_active = true
-             ORDER BY plant DESC NULLS LAST
-             LIMIT 1`,
-            [materialCategory, movementType, valuationClass, plantCode]
-          );
-          if (exactMatch.rows.length > 0) {
-            accountRule = exactMatch.rows[0];
-          }
-        } catch (exactMatchError: any) {
-          console.warn('[AccountDetermination] Exact match query failed:', exactMatchError.message);
-        }
-      }
-
-      // Try match without plant
-      if (!accountRule && materialCategory && valuationClass) {
-        try {
-          const matchWithoutPlant = await queryClient.query(
-            `SELECT debit_account, credit_account 
-             FROM account_determination_rules 
-             WHERE material_category = $1 
-               AND movement_type = $2 
-               AND valuation_class = $3 
-               AND plant IS NULL
-               AND is_active = true
-             LIMIT 1`,
-            [materialCategory, movementType, valuationClass]
-          );
-          if (matchWithoutPlant.rows.length > 0) {
-            accountRule = matchWithoutPlant.rows[0];
-          }
-        } catch (matchError: any) {
-          console.warn('[AccountDetermination] Match without plant query failed:', matchError.message);
-        }
-      }
-
-      // Try match without valuation_class
-      if (!accountRule && materialCategory) {
-        try {
-          const matchWithoutValuation = await queryClient.query(
-            `SELECT debit_account, credit_account 
-             FROM account_determination_rules 
-             WHERE material_category = $1 
-               AND movement_type = $2 
-               AND valuation_class IS NULL
-               AND is_active = true
-             LIMIT 1`,
-            [materialCategory, movementType]
-          );
-          if (matchWithoutValuation.rows.length > 0) {
-            accountRule = matchWithoutValuation.rows[0];
-          }
-        } catch (matchError: any) {
-          console.warn('[AccountDetermination] Match without valuation query failed:', matchError.message);
-        }
-      }
-
-      // Try match with movement_type only (wildcard) - use pool to avoid transaction issues
-      if (!accountRule) {
-        try {
-          const wildcardMatch = await this.pool.query(
-            `SELECT debit_account, credit_account 
-             FROM account_determination_rules 
-             WHERE material_category IS NULL 
-               AND movement_type = $1 
-               AND is_active = true
-             LIMIT 1`,
-            [movementType]
-          );
-          if (wildcardMatch.rows.length > 0) {
-            accountRule = wildcardMatch.rows[0];
-          }
-        } catch (wildcardError: any) {
-          console.warn('[AccountDetermination] Wildcard match query failed:', wildcardError.message);
-        }
-      }
-
-      if (client) {
-        await client.query('RELEASE SAVEPOINT account_determination');
-      }
-    } catch (accountDeterminationError: any) {
-      if (client) {
-        try {
-          await client.query('ROLLBACK TO SAVEPOINT account_determination');
-        } catch (rollbackError) {
-          // Savepoint may not exist
-        }
-      }
-      // Don't throw here - let the caller handle the missing account rule
-      console.warn('[AccountDetermination] Account determination queries failed:', accountDeterminationError.message);
+      console.error('[AccountDetermination] Query failed:', error);
     }
 
-    // If still no rule found, skip material-plant assignment query
-    // The inventory_account column doesn't exist in material_plants table
-    // We'll rely on account determination rules or dynamic rule creation
-
-    if (!accountRule) {
+    if (!debitAccount || !creditAccount) {
       throw new Error(
         `STRICT VERIFICATION FAILED: Account determination failed for material ${materialCode}, movement type ${movementType}. ` +
-        `No exact rule found in account_determination_rules table for material_category=${materialCategory}, valuation_class=${valuationClass}. ` +
+        `No exact rule found in OBYC material_account_determination table for valuation_class=${valuationClass}, ` +
+        `required transaction keys: Debit=${debitTk}, Credit=${creditTk}. ` +
         `Please configure the necessary rules in the system.`
       );
     }
 
     return {
-      debitAccount: accountRule.debit_account,
-      creditAccount: accountRule.credit_account,
+      debitAccount,
+      creditAccount,
     };
   }
 
-  /**
-   * Create account determination rule dynamically
-   * Finds or creates appropriate GL accounts and creates the rule
-   */
-  private async createAccountDeterminationRule(
-    materialCategory: string,
-    movementType: string,
-    valuationClass: string | null,
-    plantCode: string | null,
-    client?: any
-  ): Promise<{ debit_account: string; credit_account: string } | null> {
-    try {
-      // Determine accounts based on movement type and material category
-      let debitAccountNumber: string | null = null;
-      let creditAccountNumber: string | null = null;
 
-      // For goods receipt (101), debit inventory, credit GR/IR or vendor
-      if (movementType === '101') {
-        // Debit: Inventory account based on material category
-        debitAccountNumber = await this.findOrCreateInventoryAccount(materialCategory, valuationClass);
-
-        // Credit: GR/IR (Goods Receipt/Invoice Receipt) account
-        creditAccountNumber = await this.findOrCreateGRIRAccount();
-      }
-      // For goods issue (201), debit cost center/expense, credit inventory
-      else if (movementType === '201') {
-        // Debit: Expense account
-        debitAccountNumber = await this.findOrCreateExpenseAccount();
-
-        // Credit: Inventory account
-        creditAccountNumber = await this.findOrCreateInventoryAccount(materialCategory, valuationClass);
-      }
-      // For production consumption (261), debit WIP, credit inventory
-      else if (movementType === '261') {
-        // Debit: Work in Process account
-        debitAccountNumber = await this.findOrCreateWIPAccount();
-
-        // Credit: Inventory account
-        creditAccountNumber = await this.findOrCreateInventoryAccount(materialCategory, valuationClass);
-      }
-      // For sales delivery (601), debit COGS, credit inventory
-      else if (movementType === '601') {
-        // Debit: Cost of Goods Sold account
-        debitAccountNumber = await this.findOrCreateCOGSAccount();
-
-        // Credit: Inventory account
-        creditAccountNumber = await this.findOrCreateInventoryAccount(materialCategory, valuationClass);
-      }
-      // Default: try to find accounts by movement type
-      else {
-        // Try to find existing accounts for this movement type
-        const existingRule = await this.pool.query(
-          `SELECT debit_account, credit_account 
-           FROM account_determination_rules 
-           WHERE movement_type = $1 AND is_active = true
-           LIMIT 1`,
-          [movementType]
-        );
-
-        if (existingRule.rows.length > 0) {
-          return existingRule.rows[0];
-        }
-
-        // If no existing rule, use default inventory accounts
-        debitAccountNumber = await this.findOrCreateInventoryAccount(materialCategory, valuationClass);
-        creditAccountNumber = await this.findOrCreateGRIRAccount();
-      }
-
-      if (!debitAccountNumber || !creditAccountNumber) {
-        console.error('Failed to find or create GL accounts for account determination rule');
-        return null;
-      }
-
-      // Create the account determination rule
-      const insertResult = await this.pool.query(
-        `INSERT INTO account_determination_rules (
-          material_category, movement_type, valuation_class, plant,
-          debit_account, credit_account, is_active, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, true, NOW(), NOW())
-        RETURNING debit_account, credit_account`,
-        [materialCategory, movementType, valuationClass, plantCode, debitAccountNumber, creditAccountNumber]
-      );
-
-      console.log(`Created account determination rule: material_category=${materialCategory}, movement_type=${movementType}, debit=${debitAccountNumber}, credit=${creditAccountNumber}`);
-
-      return insertResult.rows[0];
-    } catch (error: any) {
-      console.error('Error creating account determination rule:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Find or create inventory GL account based on material category
-   */
-  private async findOrCreateInventoryAccount(
-    materialCategory: string | null,
-    valuationClass: string | null
-  ): Promise<string> {
-    // Query account group from database
-    const accountGroupResult = await this.pool.query(
-      `SELECT code FROM account_groups 
-       WHERE account_type = 'GL' 
-         AND (code = 'CURRENT_ASSETS' OR name ILIKE '%current%asset%')
-         AND is_active = true
-       LIMIT 1`
-    );
-
-    if (!accountGroupResult.rows[0]?.code) {
-      throw new Error('Account group for inventory not found. Please create CURRENT_ASSETS account group in account_groups table.');
-    }
-    const accountGroup = accountGroupResult.rows[0].code;
-
-    // Query account type from database
-    const accountTypeResult = await this.pool.query(
-      `SELECT DISTINCT account_type FROM gl_accounts 
-       WHERE account_group = $1 
-         AND account_type IS NOT NULL
-       LIMIT 1`,
-      [accountGroup]
-    );
-
-    if (!accountTypeResult.rows[0]?.account_type) {
-      throw new Error(`Account type not found for account group ${accountGroup}. Please ensure gl_accounts table has accounts with this group.`);
-    }
-    const accountType = accountTypeResult.rows[0].account_type;
-
-    // Query existing inventory account names to determine naming pattern
-    const existingInventoryAccounts = await this.pool.query(
-      `SELECT account_name FROM gl_accounts 
-       WHERE account_name ILIKE '%Inventory%' 
-         AND account_type = $1
-         AND account_group = $2
-         AND is_active = true
-       LIMIT 5`,
-      [accountType, accountGroup]
-    );
-
-    // Determine account name based on material category and existing patterns
-    let accountName: string | null = null;
-    if (materialCategory) {
-      // Check if there's a pattern matching the material category
-      const categoryPattern = existingInventoryAccounts.rows.find((r: any) =>
-        r.account_name.toLowerCase().includes(materialCategory.toLowerCase()) ||
-        (materialCategory === 'RAW' && r.account_name.toLowerCase().includes('raw')) ||
-        (materialCategory === 'FERT' && r.account_name.toLowerCase().includes('finished')) ||
-        (materialCategory === 'HALB' && (r.account_name.toLowerCase().includes('process') || r.account_name.toLowerCase().includes('wip'))) ||
-        (materialCategory === 'TRAD' && r.account_name.toLowerCase().includes('trading'))
-      );
-      accountName = categoryPattern?.account_name || null;
-    }
-
-    // If no pattern found, query from material_categories table
-    if (!accountName && materialCategory) {
-      const categoryNameResult = await this.pool.query(
-        `SELECT name FROM material_categories WHERE code = $1 OR name ILIKE $2 LIMIT 1`,
-        [materialCategory, `%${materialCategory}%`]
-      );
-      if (categoryNameResult.rows.length > 0) {
-        accountName = `Inventory - ${categoryNameResult.rows[0].name}`;
-      }
-    }
-
-    // If still no name, throw error
-    if (!accountName) {
-      throw new Error(`Cannot determine account name for material category ${materialCategory}. Please ensure material_categories table has proper data.`);
-    }
-
-    // Try to find existing inventory account
-    const existingAccount = await this.pool.query(
-      `SELECT account_number FROM gl_accounts 
-       WHERE account_name ILIKE $1 
-         AND account_type = $2
-         AND account_group = $3
-         AND is_active = true
-       LIMIT 1`,
-      [`%${accountName}%`, accountType, accountGroup]
-    );
-
-    if (existingAccount.rows.length > 0) {
-      return existingAccount.rows[0].account_number;
-    }
-
-    // Get account group configuration to determine number range
-    const accountGroupConfig = await this.pool.query(
-      `SELECT number_range_from, number_range_to 
-       FROM account_groups 
-       WHERE code = $1 AND is_active = true
-       LIMIT 1`,
-      ['CURRENT_ASSETS']
-    );
-
-    let rangeStart: number;
-    let rangeEnd: number;
-
-    if (accountGroupConfig.rows.length > 0 && accountGroupConfig.rows[0].number_range_from && accountGroupConfig.rows[0].number_range_to) {
-      rangeStart = parseInt(accountGroupConfig.rows[0].number_range_from);
-      rangeEnd = parseInt(accountGroupConfig.rows[0].number_range_to);
-
-      if (isNaN(rangeStart) || isNaN(rangeEnd)) {
-        throw new Error(`Invalid number range in account_groups table for ${accountGroup}. Please set valid number_range_from and number_range_to.`);
-      }
-    } else {
-      // Query existing inventory accounts to determine range
-      const existingInventoryRange = await this.pool.query(
-        `SELECT MIN(CAST(account_number AS INTEGER)) as min_num, MAX(CAST(account_number AS INTEGER)) as max_num
-         FROM gl_accounts 
-         WHERE account_number ~ '^[0-9]+$' 
-           AND account_type = $1
-           AND account_group = $2
-           AND account_name ILIKE '%Inventory%'`,
-        [accountType, accountGroup]
-      );
-
-      if (existingInventoryRange.rows.length > 0 && existingInventoryRange.rows[0].min_num) {
-        rangeStart = existingInventoryRange.rows[0].min_num;
-        rangeEnd = existingInventoryRange.rows[0].max_num + 100;
-      } else {
-        throw new Error(`Cannot determine account number range for inventory accounts. Please set number_range_from and number_range_to in account_groups table for ${accountGroup}.`);
-      }
-    }
-
-    // Find next available account number in the determined range
-    const accountNumberResult = await this.pool.query(
-      `SELECT COALESCE(MAX(CAST(account_number AS INTEGER)), $1 - 1) + 1 as next_number
-       FROM gl_accounts 
-       WHERE account_number ~ '^[0-9]+$' 
-         AND CAST(account_number AS INTEGER) >= $1 
-         AND CAST(account_number AS INTEGER) < $2`,
-      [rangeStart, rangeEnd]
-    );
-
-    if (!accountNumberResult.rows[0]?.next_number) {
-      throw new Error(`Failed to generate account number for inventory account. No available numbers in range ${rangeStart}-${rangeEnd}`);
-    }
-
-    let accountNumber = accountNumberResult.rows[0].next_number.toString();
-
-    // Create the inventory account (retry if account number conflict)
-    let retries = 0;
-    while (retries < 10) {
-      try {
-        await this.pool.query(
-          `INSERT INTO gl_accounts (
-            account_number, account_name, account_type, account_group,
-            balance_sheet_account, pl_account, block_posting, reconciliation_account,
-            is_active, posting_allowed, balance_type, created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, true, false, false, false, true, true, 'debit', NOW(), NOW())`,
-          [accountNumber, accountName, accountType, accountGroup]
-        );
-        break;
-      } catch (error: any) {
-        if (error.code === '23505') { // Unique violation
-          // Account number exists, try next one
-          accountNumber = (parseInt(accountNumber) + 1).toString();
-          retries++;
-        } else {
-          throw error;
-        }
-      }
-    }
-
-    return accountNumber;
-  }
-
-  /**
-   * Find or create GR/IR (Goods Receipt/Invoice Receipt) account
-   */
-  private async findOrCreateGRIRAccount(): Promise<string> {
-    // Query account type and group from database
-    const accountTypeResult = await this.pool.query(
-      `SELECT DISTINCT account_type FROM gl_accounts 
-       WHERE account_type = 'LIABILITIES' 
-       LIMIT 1`
-    );
-    if (!accountTypeResult.rows[0]?.account_type) {
-      throw new Error('Account type LIABILITIES not found. Please ensure gl_accounts table has liability accounts.');
-    }
-    const accountType = accountTypeResult.rows[0].account_type;
-
-    const accountGroupResult = await this.pool.query(
-      `SELECT code FROM account_groups 
-       WHERE (code = 'CURRENT_LIABILITIES' OR name ILIKE '%current%liabilit%')
-         AND is_active = true
-       LIMIT 1`
-    );
-
-    if (!accountGroupResult.rows[0]?.code) {
-      throw new Error('Account group CURRENT_LIABILITIES not found. Please create it in account_groups table.');
-    }
-    const accountGroup = accountGroupResult.rows[0].code;
-
-    // Try to find existing GR/IR account
-    const existingAccount = await this.pool.query(
-      `SELECT account_number FROM gl_accounts 
-       WHERE (account_name ILIKE '%GR%IR%' OR account_name ILIKE '%Goods Receipt%Invoice Receipt%')
-         AND account_type = $1
-         AND is_active = true
-       LIMIT 1`,
-      [accountType]
-    );
-
-    if (existingAccount.rows.length > 0) {
-      return existingAccount.rows[0].account_number;
-    }
-
-    // Query existing GR/IR account names to determine naming pattern
-    const existingGRIRAccounts = await this.pool.query(
-      `SELECT account_name FROM gl_accounts 
-       WHERE (account_name ILIKE '%GR%IR%' OR account_name ILIKE '%Goods Receipt%Invoice Receipt%')
-         AND account_type = $1
-         AND is_active = true
-       LIMIT 3`,
-      [accountType]
-    );
-
-    // Determine account name from existing patterns
-    const accountName = existingGRIRAccounts.rows[0]?.account_name || null;
-
-    if (!accountName) {
-      // Use a descriptive name based on standard accounting terminology
-      const standardNameResult = await this.pool.query(
-        `SELECT account_name FROM gl_accounts 
-         WHERE account_type = $1 
-           AND account_group = $2
-           AND is_active = true
-         LIMIT 1`,
-        [accountType, accountGroup]
-      );
-
-      if (standardNameResult.rows.length > 0) {
-        // Use pattern from existing accounts
-        throw new Error(`GR/IR account not found. Please create a GR/IR account manually or ensure account naming follows existing patterns.`);
-      } else {
-        throw new Error(`Cannot determine GR/IR account name. Please create a GR/IR account manually.`);
-      }
-    }
-
-    // Get account group configuration for liabilities
-    const accountGroupConfig = await this.pool.query(
-      `SELECT number_range_from, number_range_to 
-       FROM account_groups 
-       WHERE (code = 'CURRENT_LIABILITIES' OR name ILIKE '%current%liabilit%')
-         AND is_active = true
-       LIMIT 1`
-    );
-
-    let rangeStart: number;
-    let rangeEnd: number;
-
-    if (accountGroupConfig.rows.length > 0 && accountGroupConfig.rows[0].number_range_from && accountGroupConfig.rows[0].number_range_to) {
-      rangeStart = parseInt(accountGroupConfig.rows[0].number_range_from);
-      rangeEnd = parseInt(accountGroupConfig.rows[0].number_range_to);
-
-      if (isNaN(rangeStart) || isNaN(rangeEnd)) {
-        throw new Error(`Invalid number range in account_groups table for ${accountGroup}. Please set valid number_range_from and number_range_to.`);
-      }
-    } else {
-      // Query existing liability accounts to determine range
-      const existingLiabilityRange = await this.pool.query(
-        `SELECT MIN(CAST(account_number AS INTEGER)) as min_num, MAX(CAST(account_number AS INTEGER)) as max_num
-         FROM gl_accounts 
-         WHERE account_number ~ '^[0-9]+$' 
-           AND account_type = $1
-           AND account_group = $2`,
-        [accountType, accountGroup]
-      );
-
-      if (existingLiabilityRange.rows.length > 0 && existingLiabilityRange.rows[0].min_num) {
-        rangeStart = existingLiabilityRange.rows[0].min_num;
-        rangeEnd = existingLiabilityRange.rows[0].max_num + 100;
-      } else {
-        throw new Error(`Cannot determine account number range for GR/IR accounts. Please set number_range_from and number_range_to in account_groups table for ${accountGroup}.`);
-      }
-    }
-
-    // Find next available account number
-    const accountNumberResult = await this.pool.query(
-      `SELECT COALESCE(MAX(CAST(account_number AS INTEGER)), $1 - 1) + 1 as next_number
-       FROM gl_accounts 
-       WHERE account_number ~ '^[0-9]+$' 
-         AND CAST(account_number AS INTEGER) >= $1 
-         AND CAST(account_number AS INTEGER) < $2`,
-      [rangeStart, rangeEnd]
-    );
-
-    if (!accountNumberResult.rows[0]?.next_number) {
-      throw new Error(`Failed to generate account number for GR/IR account. No available numbers in range ${rangeStart}-${rangeEnd}`);
-    }
-
-    let accountNumber = accountNumberResult.rows[0].next_number.toString();
-
-    // Create the GR/IR account (retry if account number conflict)
-    let retries = 0;
-    while (retries < 10) {
-      try {
-        await this.pool.query(
-          `INSERT INTO gl_accounts (
-            account_number, account_name, account_type, account_group,
-            balance_sheet_account, pl_account, block_posting, reconciliation_account,
-            is_active, posting_allowed, balance_type, created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, true, false, false, true, true, true, 'credit', NOW(), NOW())`,
-          [accountNumber, accountName, accountType, accountGroup]
-        );
-        break;
-      } catch (error: any) {
-        if (error.code === '23505') { // Unique violation
-          // Account number exists, try next one
-          accountNumber = (parseInt(accountNumber) + 1).toString();
-          retries++;
-        } else {
-          throw error;
-        }
-      }
-    }
-
-    return accountNumber;
-  }
-
-  /**
-   * Find or create expense account
-   */
-  private async findOrCreateExpenseAccount(): Promise<string> {
-    // Query account type and group from database
-    const accountTypeResult = await this.pool.query(
-      `SELECT DISTINCT account_type FROM gl_accounts 
-       WHERE account_type = 'EXPENSES' 
-       LIMIT 1`
-    );
-    if (!accountTypeResult.rows[0]?.account_type) {
-      throw new Error('Account type EXPENSES not found. Please ensure gl_accounts table has expense accounts.');
-    }
-    const accountType = accountTypeResult.rows[0].account_type;
-
-    const accountGroupResult = await this.pool.query(
-      `SELECT code FROM account_groups 
-       WHERE (code = 'OPERATING_EXPENSES' OR name ILIKE '%operating%expense%')
-         AND is_active = true
-       LIMIT 1`
-    );
-
-    if (!accountGroupResult.rows[0]?.code) {
-      throw new Error('Account group OPERATING_EXPENSES not found. Please create it in account_groups table.');
-    }
-    const accountGroup = accountGroupResult.rows[0].code;
-
-    // Try to find existing expense account
-    const existingAccount = await this.pool.query(
-      `SELECT account_number FROM gl_accounts 
-       WHERE account_type = $1 
-         AND account_group = $2
-         AND is_active = true
-       LIMIT 1`,
-      [accountType, accountGroup]
-    );
-
-    if (existingAccount.rows.length > 0) {
-      return existingAccount.rows[0].account_number;
-    }
-
-    // Query existing expense account names to determine naming pattern
-    const existingExpenseAccounts = await this.pool.query(
-      `SELECT account_name FROM gl_accounts 
-       WHERE account_type = $1 
-         AND account_group = $2
-         AND is_active = true
-       LIMIT 3`,
-      [accountType, accountGroup]
-    );
-
-    // Determine account name from existing patterns
-    const accountName = existingExpenseAccounts.rows[0]?.account_name || null;
-
-    if (!accountName) {
-      throw new Error(`Cannot determine expense account name. Please create an expense account manually or ensure account naming follows existing patterns.`);
-    }
-
-    // Get account group configuration for expenses
-    const accountGroupConfig = await this.pool.query(
-      `SELECT number_range_from, number_range_to 
-       FROM account_groups 
-       WHERE code = $1
-         AND is_active = true
-       LIMIT 1`,
-      [accountGroup]
-    );
-
-    let rangeStart: number;
-    let rangeEnd: number;
-
-    if (accountGroupConfig.rows.length > 0 && accountGroupConfig.rows[0].number_range_from && accountGroupConfig.rows[0].number_range_to) {
-      rangeStart = parseInt(accountGroupConfig.rows[0].number_range_from);
-      rangeEnd = parseInt(accountGroupConfig.rows[0].number_range_to);
-
-      if (isNaN(rangeStart) || isNaN(rangeEnd)) {
-        throw new Error(`Invalid number range in account_groups table for ${accountGroup}. Please set valid number_range_from and number_range_to.`);
-      }
-    } else {
-      // Query existing expense accounts to determine range
-      const existingExpenseRange = await this.pool.query(
-        `SELECT MIN(CAST(account_number AS INTEGER)) as min_num, MAX(CAST(account_number AS INTEGER)) as max_num
-         FROM gl_accounts 
-         WHERE account_number ~ '^[0-9]+$' 
-           AND account_type = $1
-           AND account_group = $2`,
-        [accountType, accountGroup]
-      );
-
-      if (existingExpenseRange.rows.length > 0 && existingExpenseRange.rows[0].min_num) {
-        rangeStart = existingExpenseRange.rows[0].min_num;
-        rangeEnd = existingExpenseRange.rows[0].max_num + 100;
-      } else {
-        throw new Error(`Cannot determine account number range for expense accounts. Please set number_range_from and number_range_to in account_groups table for ${accountGroup}.`);
-      }
-    }
-
-    // Find next available account number
-    const accountNumberResult = await this.pool.query(
-      `SELECT COALESCE(MAX(CAST(account_number AS INTEGER)), $1 - 1) + 1 as next_number
-       FROM gl_accounts 
-       WHERE account_number ~ '^[0-9]+$' 
-         AND CAST(account_number AS INTEGER) >= $1 
-         AND CAST(account_number AS INTEGER) < $2`,
-      [rangeStart, rangeEnd]
-    );
-
-    if (!accountNumberResult.rows[0]?.next_number) {
-      throw new Error(`Failed to generate account number for expense account. No available numbers in range ${rangeStart}-${rangeEnd}`);
-    }
-
-    let accountNumber = accountNumberResult.rows[0].next_number.toString();
-
-    // Create the expense account (retry if account number conflict)
-    let retries = 0;
-    while (retries < 10) {
-      try {
-        await this.pool.query(
-          `INSERT INTO gl_accounts (
-            account_number, account_name, account_type, account_group,
-            balance_sheet_account, pl_account, block_posting, reconciliation_account,
-            is_active, posting_allowed, balance_type, created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, false, true, false, false, true, true, 'debit', NOW(), NOW())`,
-          [accountNumber, accountName, accountType, accountGroup]
-        );
-        break;
-      } catch (error: any) {
-        if (error.code === '23505') { // Unique violation
-          // Account number exists, try next one
-          accountNumber = (parseInt(accountNumber) + 1).toString();
-          retries++;
-        } else {
-          throw error;
-        }
-      }
-    }
-
-    return accountNumber;
-  }
-
-  /**
-   * Find or create Work in Process account
-   */
-  private async findOrCreateWIPAccount(): Promise<string> {
-    // Query account type and group from database
-    const accountTypeResult = await this.pool.query(
-      `SELECT DISTINCT account_type FROM gl_accounts 
-       WHERE account_type = 'ASSETS' 
-       LIMIT 1`
-    );
-    if (!accountTypeResult.rows[0]?.account_type) {
-      throw new Error('Account type ASSETS not found. Please ensure gl_accounts table has asset accounts.');
-    }
-    const accountType = accountTypeResult.rows[0].account_type;
-
-    const accountGroupResult = await this.pool.query(
-      `SELECT code FROM account_groups 
-       WHERE (code = 'CURRENT_ASSETS' OR name ILIKE '%current%asset%')
-         AND is_active = true
-       LIMIT 1`
-    );
-
-    if (!accountGroupResult.rows[0]?.code) {
-      throw new Error('Account group CURRENT_ASSETS not found. Please create it in account_groups table.');
-    }
-    const accountGroup = accountGroupResult.rows[0].code;
-
-    // Try to find existing WIP account
-    const existingAccount = await this.pool.query(
-      `SELECT account_number FROM gl_accounts 
-       WHERE (account_name ILIKE '%Work in Process%' OR account_name ILIKE '%WIP%')
-         AND account_type = $1
-         AND is_active = true
-       LIMIT 1`,
-      [accountType]
-    );
-
-    if (existingAccount.rows.length > 0) {
-      return existingAccount.rows[0].account_number;
-    }
-
-    // Query existing WIP account names to determine naming pattern
-    const existingWIPAccounts = await this.pool.query(
-      `SELECT account_name FROM gl_accounts 
-       WHERE (account_name ILIKE '%Work in Process%' OR account_name ILIKE '%WIP%')
-         AND account_type = $1
-         AND is_active = true
-       LIMIT 3`,
-      [accountType]
-    );
-
-    // Determine account name from existing patterns
-    const accountName = existingWIPAccounts.rows[0]?.account_name || null;
-
-    if (!accountName) {
-      throw new Error(`Cannot determine WIP account name. Please create a WIP account manually or ensure account naming follows existing patterns.`);
-    }
-
-    // Get account group configuration for WIP (same as inventory)
-    const accountGroupConfig = await this.pool.query(
-      `SELECT number_range_from, number_range_to 
-       FROM account_groups 
-       WHERE code = $1 AND is_active = true
-       LIMIT 1`,
-      [accountGroup]
-    );
-
-    let rangeStart: number;
-    let rangeEnd: number;
-
-    if (accountGroupConfig.rows.length > 0 && accountGroupConfig.rows[0].number_range_from && accountGroupConfig.rows[0].number_range_to) {
-      rangeStart = parseInt(accountGroupConfig.rows[0].number_range_from);
-      rangeEnd = parseInt(accountGroupConfig.rows[0].number_range_to);
-
-      if (isNaN(rangeStart) || isNaN(rangeEnd)) {
-        throw new Error(`Invalid number range in account_groups table for ${accountGroup}. Please set valid number_range_from and number_range_to.`);
-      }
-    } else {
-      // Query existing WIP accounts to determine range
-      const existingWIPRange = await this.pool.query(
-        `SELECT MIN(CAST(account_number AS INTEGER)) as min_num, MAX(CAST(account_number AS INTEGER)) as max_num
-         FROM gl_accounts 
-         WHERE account_number ~ '^[0-9]+$' 
-           AND account_type = $1
-           AND account_group = $2
-           AND (account_name ILIKE '%Work in Process%' OR account_name ILIKE '%WIP%')`,
-        [accountType, accountGroup]
-      );
-
-      if (existingWIPRange.rows.length > 0 && existingWIPRange.rows[0].min_num) {
-        rangeStart = existingWIPRange.rows[0].min_num;
-        rangeEnd = existingWIPRange.rows[0].max_num + 100;
-      } else {
-        throw new Error(`Cannot determine account number range for WIP accounts. Please set number_range_from and number_range_to in account_groups table for ${accountGroup}.`);
-      }
-    }
-
-    // Find next available account number
-    const accountNumberResult = await this.pool.query(
-      `SELECT COALESCE(MAX(CAST(account_number AS INTEGER)), $1 - 1) + 1 as next_number
-       FROM gl_accounts 
-       WHERE account_number ~ '^[0-9]+$' 
-         AND CAST(account_number AS INTEGER) >= $1 
-         AND CAST(account_number AS INTEGER) < $2`,
-      [rangeStart, rangeEnd]
-    );
-
-    if (!accountNumberResult.rows[0]?.next_number) {
-      throw new Error(`Failed to generate account number for WIP account. No available numbers in range ${rangeStart}-${rangeEnd}`);
-    }
-
-    let accountNumber = accountNumberResult.rows[0].next_number.toString();
-
-    // Create the WIP account (retry if account number conflict)
-    let retries = 0;
-    while (retries < 10) {
-      try {
-        await this.pool.query(
-          `INSERT INTO gl_accounts (
-            account_number, account_name, account_type, account_group,
-            balance_sheet_account, pl_account, block_posting, reconciliation_account,
-            is_active, posting_allowed, balance_type, created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, true, false, false, false, true, true, 'debit', NOW(), NOW())`,
-          [accountNumber, accountName, accountType, accountGroup]
-        );
-        break;
-      } catch (error: any) {
-        if (error.code === '23505') { // Unique violation
-          // Account number exists, try next one
-          accountNumber = (parseInt(accountNumber) + 1).toString();
-          retries++;
-        } else {
-          throw error;
-        }
-      }
-    }
-
-    return accountNumber;
-  }
-
-  /**
-   * Find or create Cost of Goods Sold account
-   */
-  private async findOrCreateCOGSAccount(): Promise<string> {
-    // Query account type and group from database
-    const accountTypeResult = await this.pool.query(
-      `SELECT DISTINCT account_type FROM gl_accounts 
-       WHERE account_type = 'EXPENSES' 
-       LIMIT 1`
-    );
-    if (!accountTypeResult.rows[0]?.account_type) {
-      throw new Error('Account type EXPENSES not found. Please ensure gl_accounts table has expense accounts.');
-    }
-    const accountType = accountTypeResult.rows[0].account_type;
-
-    const accountGroupResult = await this.pool.query(
-      `SELECT code FROM account_groups 
-       WHERE (code = 'COST_OF_SALES' OR name ILIKE '%cost%sales%' OR name ILIKE '%cogs%')
-         AND is_active = true
-       LIMIT 1`
-    );
-
-    if (!accountGroupResult.rows[0]?.code) {
-      throw new Error('Account group COST_OF_SALES not found. Please create it in account_groups table.');
-    }
-    const accountGroup = accountGroupResult.rows[0].code;
-
-    // Try to find existing COGS account
-    const existingAccount = await this.pool.query(
-      `SELECT account_number FROM gl_accounts 
-       WHERE (account_name ILIKE '%Cost of Goods Sold%' OR account_name ILIKE '%COGS%')
-         AND account_type = $1
-         AND is_active = true
-       LIMIT 1`,
-      [accountType]
-    );
-
-    if (existingAccount.rows.length > 0) {
-      return existingAccount.rows[0].account_number;
-    }
-
-    // Query existing COGS account names to determine naming pattern
-    const existingCOGSAccounts = await this.pool.query(
-      `SELECT account_name FROM gl_accounts 
-       WHERE (account_name ILIKE '%Cost of Goods Sold%' OR account_name ILIKE '%COGS%')
-         AND account_type = $1
-         AND is_active = true
-       LIMIT 3`,
-      [accountType]
-    );
-
-    // Determine account name from existing patterns
-    const accountName = existingCOGSAccounts.rows[0]?.account_name || null;
-
-    if (!accountName) {
-      throw new Error(`Cannot determine COGS account name. Please create a COGS account manually or ensure account naming follows existing patterns.`);
-    }
-
-    // Get account group configuration for COGS
-    const accountGroupConfig = await this.pool.query(
-      `SELECT number_range_from, number_range_to 
-       FROM account_groups 
-       WHERE code = $1
-         AND is_active = true
-       LIMIT 1`,
-      [accountGroup]
-    );
-
-    let rangeStart: number;
-    let rangeEnd: number;
-
-    if (accountGroupConfig.rows.length > 0 && accountGroupConfig.rows[0].number_range_from && accountGroupConfig.rows[0].number_range_to) {
-      rangeStart = parseInt(accountGroupConfig.rows[0].number_range_from);
-      rangeEnd = parseInt(accountGroupConfig.rows[0].number_range_to);
-
-      if (isNaN(rangeStart) || isNaN(rangeEnd)) {
-        throw new Error(`Invalid number range in account_groups table for ${accountGroup}. Please set valid number_range_from and number_range_to.`);
-      }
-    } else {
-      // Query existing COGS accounts to determine range
-      const existingCOGSRange = await this.pool.query(
-        `SELECT MIN(CAST(account_number AS INTEGER)) as min_num, MAX(CAST(account_number AS INTEGER)) as max_num
-         FROM gl_accounts 
-         WHERE account_number ~ '^[0-9]+$' 
-           AND account_type = $1
-           AND account_group = $2
-           AND (account_name ILIKE '%Cost of Goods Sold%' OR account_name ILIKE '%COGS%')`,
-        [accountType, accountGroup]
-      );
-
-      if (existingCOGSRange.rows.length > 0 && existingCOGSRange.rows[0].min_num) {
-        rangeStart = existingCOGSRange.rows[0].min_num;
-        rangeEnd = existingCOGSRange.rows[0].max_num + 100;
-      } else {
-        throw new Error(`Cannot determine account number range for COGS accounts. Please set number_range_from and number_range_to in account_groups table for ${accountGroup}.`);
-      }
-    }
-
-    // Find next available account number
-    const accountNumberResult = await this.pool.query(
-      `SELECT COALESCE(MAX(CAST(account_number AS INTEGER)), $1 - 1) + 1 as next_number
-       FROM gl_accounts 
-       WHERE account_number ~ '^[0-9]+$' 
-         AND CAST(account_number AS INTEGER) >= $1 
-         AND CAST(account_number AS INTEGER) < $2`,
-      [rangeStart, rangeEnd]
-    );
-
-    if (!accountNumberResult.rows[0]?.next_number) {
-      throw new Error(`Failed to generate account number for COGS account. No available numbers in range ${rangeStart}-${rangeEnd}`);
-    }
-
-    let accountNumber = accountNumberResult.rows[0].next_number.toString();
-
-    // Create the COGS account (retry if account number conflict)
-    let retries = 0;
-    while (retries < 10) {
-      try {
-        await this.pool.query(
-          `INSERT INTO gl_accounts (
-            account_number, account_name, account_type, account_group,
-            balance_sheet_account, pl_account, block_posting, reconciliation_account,
-            is_active, posting_allowed, balance_type, created_at, updated_at
-          ) VALUES ($1, $2, $3, $4, false, true, false, false, true, true, 'debit', NOW(), NOW())`,
-          [accountNumber, accountName, accountType, accountGroup]
-        );
-        break;
-      } catch (error: any) {
-        if (error.code === '23505') { // Unique violation
-          // Account number exists, try next one
-          accountNumber = (parseInt(accountNumber) + 1).toString();
-          retries++;
-        } else {
-          throw error;
-        }
-      }
-    }
-
-    return accountNumber;
-  }
 
   /**
    * Get movement type code from movement_types table by transaction type and direction
@@ -2291,3 +1233,4 @@ export class InventoryFinanceCostService {
     }
   }
 }
+

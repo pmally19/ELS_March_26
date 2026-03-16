@@ -47,6 +47,8 @@ export async function getPlants(req: Request, res: Response) {
         p."_tenantId",
         p."_deletedAt",
         p.valuation_grouping_code_id as "valuationGroupingCodeId",
+        p.region,
+        p.region_id as "regionId",
         cc.name as "companyCodeName",
         vgc.code as "valuationGroupingCode",
         vgc.name as "valuationGroupingName"
@@ -102,6 +104,8 @@ export async function getPlantById(req: Request, res: Response) {
         p."_tenantId",
         p."_deletedAt",
         p.valuation_grouping_code_id as "valuationGroupingCodeId",
+        p.region,
+        p.region_id as "regionId",
         cc.name as "companyCodeName",
         vgc.code as "valuationGroupingCode",
         vgc.name as "valuationGroupingName"
@@ -165,13 +169,15 @@ export async function createPlant(req: Request, res: Response) {
       const result = await pool.query(`
         INSERT INTO plants (
           code, name, company_code_id, type, status, is_active,
-          valuation_grouping_code_id, created_by, updated_by, "_tenantId", "_deletedAt"
+          valuation_grouping_code_id, region, region_id, created_by, updated_by, "_tenantId", "_deletedAt"
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULL
         ) RETURNING *
       `, [
         data.code, data.name, data.companyCodeId, data.type, status, isActive,
         data.valuationGroupingCodeId || null,
+        data.region || null,
+        data.regionId || null,
         (req as any).user?.id ?? 1,
         (req as any).user?.id ?? 1,
         (req as any).user?.tenantId ?? '001'
@@ -255,6 +261,8 @@ export async function createPlant(req: Request, res: Response) {
       status: newPlant.status,
       isActive: newPlant.is_active,
       valuationGroupingCodeId: newPlant.valuation_grouping_code_id,
+      region: newPlant.region,
+      regionId: newPlant.region_id,
       createdAt: newPlant.created_at,
       updatedAt: newPlant.updated_at
     };
@@ -337,15 +345,15 @@ export async function updatePlant(req: Request, res: Response) {
           category = $6, address = $7, city = $8, state = $9, country = $10, 
           postal_code = $11, phone = $12, email = $13, manager = $14, timezone = $15, 
           operating_hours = $16, coordinates = $17, factory_calendar = $18, status = $19, is_active = $20, 
-          valuation_grouping_code_id = $21, updated_at = NOW(), updated_by = $22
-      WHERE id = $23
+          valuation_grouping_code_id = $21, region = $22, region_id = $23, updated_at = NOW(), updated_by = $24
+      WHERE id = $25
       RETURNING *
     `, [
       data.code, data.name, data.description, data.companyCodeId, data.type,
       data.category, data.address, data.city, data.state, resolvedCountry,
       data.postalCode, data.phone, data.email, data.manager, data.timezone,
       data.operatingHours, data.coordinates, data.factoryCalendar, data.status, data.isActive,
-      data.valuationGroupingCodeId || null, (req as any).user?.id ?? 1, id
+      data.valuationGroupingCodeId || null, data.region || null, data.regionId || null, (req as any).user?.id ?? 1, id
     ]);
 
     const updatedPlant = updateResult.rows[0];
@@ -383,6 +391,8 @@ export async function updatePlant(req: Request, res: Response) {
       status: updatedPlant.status,
       isActive: updatedPlant.is_active,
       valuationGroupingCodeId: updatedPlant.valuation_grouping_code_id,
+      region: updatedPlant.region,
+      regionId: updatedPlant.region_id,
       createdAt: updatedPlant.created_at,
       updatedAt: updatedPlant.updated_at
     };
@@ -555,6 +565,8 @@ export async function deactivatePlant(req: Request, res: Response) {
       factoryCalendar: deactivatedPlant.factory_calendar,
       status: deactivatedPlant.status,
       isActive: deactivatedPlant.is_active,
+      region: deactivatedPlant.region,
+      regionId: deactivatedPlant.region_id,
       createdAt: deactivatedPlant.created_at,
       updatedAt: deactivatedPlant.updated_at
     };
@@ -628,12 +640,13 @@ export async function bulkImportPlants(req: Request, res: Response) {
         // Create plant with minimal columns first
         const insertResult = await pool.query(`
           INSERT INTO plants (
-            code, name, company_code_id, type, status, is_active, valuation_grouping_code_id
+            code, name, company_code_id, type, status, is_active, valuation_grouping_code_id, region, region_id
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7
+            $1, $2, $3, $4, $5, $6, $7, $8, $9
           ) RETURNING *
         `, [
-          data.code, data.name, data.companyCodeId, data.type, status, isActive, data.valuationGroupingCodeId || null
+          data.code, data.name, data.companyCodeId, data.type, status, isActive, data.valuationGroupingCodeId || null,
+          data.region || null, data.regionId || null
         ]);
 
         let newPlant = insertResult.rows[0];

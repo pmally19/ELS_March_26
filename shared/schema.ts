@@ -6,6 +6,9 @@ import { z } from "zod";
 // Export document number sequences from separate schema file
 export * from "./document-number-schema";
 
+// Export Accruals and Provisions
+export * from "./accruals-provisions-schema";
+
 // Currency Master Data Tables
 export const currencies = pgTable("currencies", {
   id: serial("id").primaryKey(),
@@ -2302,6 +2305,88 @@ export type TaxRule = typeof taxRules.$inferSelect;
 // ===================================
 // MRP SYSTEM TABLES WITH ACCOUNTING INTEGRATION
 // ===================================
+
+// Procurement Types
+export const procurementTypes = pgTable("procurement_types", {
+  id: serial("id").primaryKey(),
+  code: varchar("code", { length: 10 }).notNull().unique(),
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertProcurementTypeSchema = createInsertSchema(procurementTypes).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertProcurementType = z.infer<typeof insertProcurementTypeSchema>;
+export type ProcurementType = typeof procurementTypes.$inferSelect;
+
+// Lot Sizes
+export const lotSizes = pgTable("lot_sizes", {
+  id: serial("id").primaryKey(),
+  code: varchar("code", { length: 10 }).notNull().unique(),
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertLotSizeSchema = createInsertSchema(lotSizes).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertLotSize = z.infer<typeof insertLotSizeSchema>;
+export type LotSize = typeof lotSizes.$inferSelect;
+
+// MRP Types
+export const mrpTypes = pgTable("mrp_types", {
+  id: serial("id").primaryKey(),
+  code: varchar("code", { length: 10 }).notNull().unique(),
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description"),
+  planningIndicator: boolean("planning_indicator").notNull().default(true),
+  mrpProcedure: varchar("mrp_procedure", { length: 10 }),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+});
+
+export const insertMrpTypeSchema = createInsertSchema(mrpTypes).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertMrpType = z.infer<typeof insertMrpTypeSchema>;
+export type MrpType = typeof mrpTypes.$inferSelect;
+
+// MRP Procedures
+export const mrpProcedures = pgTable("mrp_procedures", {
+  id: serial("id").primaryKey(),
+  code: varchar("code", { length: 10 }).notNull().unique(),
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+});
+
+export const insertMrpProcedureSchema = createInsertSchema(mrpProcedures).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertMrpProcedure = z.infer<typeof insertMrpProcedureSchema>;
+export type MrpProcedure = typeof mrpProcedures.$inferSelect;
 
 // MRP Controllers - Master Data for MRP Controllers
 export const mrpControllers = pgTable("mrp_controllers", {

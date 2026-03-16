@@ -121,6 +121,10 @@ export const salesOrderItems = pgTable("sales_order_items", {
   deliveryStatus: varchar("delivery_status", { length: 20 }).default("NOT_DELIVERED").notNull(),
   billingStatus: varchar("billing_status", { length: 20 }).default("NOT_BILLED").notNull(),
 
+  // Shipping Point
+  shippingPointId: integer("shipping_point_id"),
+  shippingPointCode: varchar("shipping_point_code", { length: 4 }),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -166,8 +170,11 @@ export const deliveryDocuments = pgTable("delivery_documents", {
   shippingMethod: varchar("shipping_method", { length: 50 }),
   trackingNumber: varchar("tracking_number", { length: 100 }),
   carrierId: integer("carrier_id"),
+  shippingPointCode: varchar("shipping_point_code", { length: 4 }),
+  routeCode: varchar("route_code", { length: 6 }),
 
   // Business Data
+  totalAmount: decimal("total_amount", { precision: 15, scale: 2 }),
   totalWeight: decimal("total_weight", { precision: 10, scale: 3 }),
   weightUnit: varchar("weight_unit", { length: 10 }).default("KG"),
   totalVolume: decimal("total_volume", { precision: 10, scale: 3 }),

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ import {
 import {
   ShoppingCart,
   Package,
+  PackageOpen,
   CreditCard,
   TrendingUp,
   Users,
@@ -55,6 +56,7 @@ import {
   Mail,
   Settings,
   TrendingDown,
+  Layers,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -69,8 +71,99 @@ import EnhancedDeliveryDialog from "@/components/delivery/EnhancedDeliveryDialog
 import DeliveryBlockPanel from "@/components/delivery/DeliveryBlockPanel";
 import SplitScheduleLineDialog from "@/components/delivery/SplitScheduleLineDialog";
 import DeliveryDetailDialog from "@/components/delivery/DeliveryDetailDialog";
+import DeliveryTabVL02N from "@/components/delivery/DeliveryTabVL02N";
 import BillingDocumentsTab from "@/components/order-to-cash/BillingDocumentsTab";
 import FinancialPostingTab from "@/components/order-to-cash/FinancialPostingTab";
+
+// Sub-component: a single recent delivery row with two controlled dialogs.
+// Must be a proper component (not an inline render fn) so that useState hooks are valid.
+function RecentDeliveryRow({ item }: { item: any }) {
+  const [detailOpen, setDetailOpen] = React.useState(false);
+  const [pickpackOpen, setPickpackOpen] = React.useState(false);
+  return (
+    <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50 transition-colors">
+      {/* Left: icon + text */}
+      <div className="flex items-center space-x-3 flex-1">
+        <div className={`w-9 h-9 rounded-full flex items-center justify-center ${item.type === 'delivery' ? 'bg-green-100' : 'bg-blue-100'}`}>
+          {item.type === 'delivery' ? (
+            <Truck className="h-4 w-4 text-green-600" />
+          ) : (
+            <Package className="h-4 w-4 text-blue-600" />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold text-sm truncate">{item.display_number || item.document_number || item.transfer_order_number || 'N/A'}</div>
+          <div className="text-xs text-gray-500 truncate">
+            {item.description ||
+              (item.type === 'delivery'
+                ? `${item.from_location || 'Source'} → ${item.to_location || 'Destination'}`
+                : item.type === 'transfer'
+                  ? `${item.from_plant || 'Source'} → ${item.to_plant || 'Destination'}`
+                  : 'Delivery Document')}
+          </div>
+        </div>
+      </div>
+
+      {/* Right: status badge + icon buttons */}
+      <div className="flex items-center gap-2 ml-3 shrink-0">
+        <Badge
+          variant={item.status_display === 'Completed' ? 'default' : item.status_display === 'In Progress' ? 'secondary' : 'outline'}
+          className="text-xs"
+        >
+          {item.status_display || 'N/A'}
+        </Badge>
+
+        {item.type === 'delivery' && (
+          <>
+            {/* Eye — view delivery details & pick/pack status (read-only) */}
+            <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                  title="View Delivery Details & Picking/Packing Status"
+                >
+                  <Eye className="h-4 w-4" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-[95vw] w-full h-[90vh] p-0 overflow-hidden flex flex-col">
+                <DialogHeader className="px-6 pt-5 pb-3 border-b shrink-0">
+                  <DialogTitle>Delivery Details — {item.display_number || item.document_number}</DialogTitle>
+                </DialogHeader>
+                <div className="flex-1 overflow-auto">
+                  {detailOpen && <DeliveryTabVL02N inlineDeliveryId={item.id} hidePgiTab={true} mode="view" />}
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            {/* Package — pick & pack operations */}
+            <Dialog open={pickpackOpen} onOpenChange={setPickpackOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 text-orange-500 hover:text-orange-700 hover:bg-orange-50"
+                  title="Pick & Pack Operations"
+                >
+                  <PackageOpen className="h-4 w-4" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-[95vw] w-full h-[90vh] p-0 overflow-hidden flex flex-col">
+                <DialogHeader className="px-6 pt-5 pb-3 border-b shrink-0">
+                  <DialogTitle>Pick & Pack — {item.display_number || item.document_number}</DialogTitle>
+                </DialogHeader>
+                <div className="flex-1 overflow-auto">
+                  {pickpackOpen && <DeliveryTabVL02N inlineDeliveryId={item.id} hidePgiTab={true} mode="pickpack" />}
+                </div>
+              </DialogContent>
+            </Dialog>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // Task 1: Enhanced Sales Order Processing with Inventory Checking
 export default function OrderToCash() {
@@ -2396,7 +2489,7 @@ export default function OrderToCash() {
           </Card>
         </TabsContent>
 
-        {/* Delivery Tab */}
+        {/* Delivery Tab (VL02N Style with Delivery Creation) */}
         <TabsContent value="delivery" className="space-y-6">
           <Card>
             <CardHeader>
@@ -2608,115 +2701,15 @@ export default function OrderToCash() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  {recentDeliveriesLoading ? (
-                    <div className="flex items-center justify-center p-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                      <span className="ml-2 text-gray-600">Loading recent deliveries...</span>
-                    </div>
-                  ) : recentDeliveries.length === 0 ? (
+                  {recentDeliveries.length === 0 ? (
                     <div className="text-center p-8 text-gray-500">
                       <Truck className="h-12 w-12 mx-auto mb-4 text-gray-300" />
                       <p>No recent deliveries found</p>
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {recentDeliveries.map((item, index) => (
-                        <div key={`${item.type}-${item.id}`} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50 transition-colors">
-                          <div className="flex items-center space-x-3 flex-1">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${item.type === 'delivery' ? 'bg-green-100' : 'bg-blue-100'
-                              }`}>
-                              {item.type === 'delivery' ? (
-                                <Truck className="h-5 w-5 text-green-600" />
-                              ) : (
-                                <Package className="h-5 w-5 text-blue-600" />
-                              )}
-                            </div>
-                            <div className="flex-1">
-                              <div className="font-semibold">{item.display_number || item.document_number || item.transfer_order_number || 'N/A'}</div>
-                              <div className="text-sm text-gray-600">
-                                {item.description ||
-                                  (item.type === 'delivery'
-                                    ? `${item.from_location || 'Source'} → ${item.to_location || 'Destination'}`
-                                    : item.type === 'transfer'
-                                      ? `${item.from_plant || 'Source'} → ${item.to_plant || 'Destination'} Warehouse Transfer`
-                                      : 'Delivery Document')}
-                              </div>
-                              <div className="text-xs text-gray-500">
-                                {item.type === 'delivery' ? 'Processed' : 'Created'}: {
-                                  item.date || item.created_at || item.processed_date
-                                    ? (() => {
-                                      try {
-                                        const date = new Date(item.date || item.created_at || item.processed_date);
-                                        return isNaN(date.getTime()) ? 'N/A' : date.toLocaleString();
-                                      } catch {
-                                        return 'N/A';
-                                      }
-                                    })()
-                                    : 'N/A'
-                                }
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center space-x-3">
-                            <div className="text-right">
-                              <Badge variant={
-                                item.status_display === 'Completed' ? 'default' :
-                                  item.status_display === 'In Progress' ? 'secondary' :
-                                    'outline'
-                              }>
-                                {item.status_display || 'N/A'}
-                              </Badge>
-                              <div className="text-sm text-gray-600 mt-1">
-                                {item.item_count || item.itemCount || 0} {item.item_count === 1 || item.itemCount === 1 ? 'item' : 'items'}
-                              </div>
-                            </div>
-                            {item.type === 'delivery' && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => {
-                                  setSelectedDeliveryIdForView(item.id);
-                                  setShowDeliveryDetailDialog(true);
-                                }}
-                                className="text-xs"
-                              >
-                                <Eye className="h-3 w-3 mr-1" />
-                                View
-                              </Button>
-                            )}
-                            {item.type === 'delivery' && item.status_display === 'Pending' && (
-                              <div className="flex space-x-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleConfirmDelivery(item.id)}
-                                  className="text-xs"
-                                >
-                                  <CheckCircle className="h-3 w-3 mr-1" />
-                                  Confirm
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  onClick={() => handlePostGoodsIssue(item.id)}
-                                  className="text-xs"
-                                >
-                                  <Package className="h-3 w-3 mr-1" />
-                                  Complete Delivery
-                                </Button>
-                              </div>
-                            )}
-                            {item.type === 'delivery' && item.status_display === 'Confirmed' && (
-                              <Button
-                                size="sm"
-                                onClick={() => handlePostGoodsIssue(item.id)}
-                                className="text-xs"
-                              >
-                                <Package className="h-3 w-3 mr-1" />
-                                Post GI
-                              </Button>
-                            )}
-                          </div>
-                        </div>
+                      {recentDeliveries.map((item) => (
+                        <RecentDeliveryRow key={`${item.type}-${item.id}`} item={item} />
                       ))}
                     </div>
                   )}
@@ -2725,6 +2718,7 @@ export default function OrderToCash() {
             </CardContent>
           </Card>
         </TabsContent>
+
 
         {/* Post Goods Issue Tab - NEW DEDICATED TAB */}
         <TabsContent value="pgi" className="space-y-6">
@@ -4330,10 +4324,17 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
   const [selectedPricingItemIndex, setSelectedPricingItemIndex] = useState<number | null>(null);
 
   // Manual price overrides for pricing procedure steps (PR00, FR10 etc.)
-  // Key = condition_type_code (e.g. 'PR00'), Value = user-entered rate as string
-  const [manualPriceOverrides, setManualPriceOverrides] = useState<Record<string, string>>({});
+  // Structure: { [itemIndex: number]: { [conditionTypeCode: string]: string } }
+  const [manualPriceOverrides, setManualPriceOverrides] = useState<Record<number, Record<string, string>>>({});
   const setManualRate = (conditionCode: string, value: string) => {
-    setManualPriceOverrides(prev => ({ ...prev, [conditionCode]: value }));
+    if (selectedPricingItemIndex === null) return;
+    setManualPriceOverrides(prev => ({
+      ...prev,
+      [selectedPricingItemIndex]: {
+        ...(prev[selectedPricingItemIndex] || {}),
+        [conditionCode]: value
+      }
+    }));
   };
 
   /**
@@ -4949,10 +4950,62 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
   const selectedProcedureId = (() => {
     if (!orderData.pricing_procedure) return null;
     const found = (pricingProcedures as any[]).find(
-      (pp: any) => pp.procedure_code === orderData.pricing_procedure || String(pp.id) === orderData.pricing_procedure
+      (pp: any) => String(pp.procedure_code) === String(orderData.pricing_procedure)
     );
     return found ? found.id : null;
   })();
+
+  // ── Reactive Pricing Procedure Determination ─────────────────────────────────
+  // Tracks the auto-determined value so we can detect when user overrides it.
+  // Must be declared AFTER orderData, customers, documentTypes are in scope.
+  const [determinedPricingProcedure, setDeterminedPricingProcedure] = useState<string | null>(null);
+  const [pricingDetermineLoading, setPricingDetermineLoading] = useState(false);
+
+  useEffect(() => {
+    const customer = (customers as any[])?.find((c: any) => String(c.id) === String(orderData.customer_id));
+    const selectedDocType = documentTypes.find((dt: any) => String(dt.code).trim() === orderData.document_type);
+    const documentPP = selectedDocType?.document_pricing_procedure;
+    const customerPP = customer?.customer_pricing_procedure;
+    const salesOrgCode = customer?.sales_org_code;
+    const distChannelCode = customer?.distribution_channel_code;
+    const divisionCode = customer?.division_code;
+
+    // Only run when all 5 determination keys are available
+    if (!salesOrgCode || !distChannelCode || !divisionCode || !customerPP || !documentPP) {
+      return;
+    }
+
+    setPricingDetermineLoading(true);
+    fetch('/api/pricing/determine-procedure', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sales_org_code: salesOrgCode,
+        distribution_channel_code: distChannelCode,
+        division_code: divisionCode,
+        customer_pricing_procedure: customerPP,
+        document_pricing_procedure: documentPP,
+      }),
+    })
+      .then(res => res.json())
+      .then(result => {
+        if (result.matched && result.pricing_procedure) {
+          setDeterminedPricingProcedure(result.pricing_procedure);
+          setOrderData(prev => ({ ...prev, pricing_procedure: result.pricing_procedure }));
+          setAutoFilledFields(prev => new Set(prev).add('pricing_procedure'));
+        } else {
+          setDeterminedPricingProcedure(null);
+          setAutoFilledFields(prev => {
+            const u = new Set(prev);
+            u.delete('pricing_procedure');
+            return u;
+          });
+        }
+      })
+      .catch(() => setDeterminedPricingProcedure(null))
+      .finally(() => setPricingDetermineLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderData.customer_id, orderData.document_type, orderData.sales_org_id, orderData.distribution_channel_id, orderData.division_id]);
 
   const { data: procedureSteps = [], isLoading: procedureStepsLoading } = useQuery({
     queryKey: ['/api/pricing-procedures/steps', selectedProcedureId],
@@ -4977,7 +5030,13 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
     queryKey: ['/api/pricing-procedures/preview', orderData.pricing_procedure, orderData.customer_id,
       orderData.sales_org_id, orderData.distribution_channel_id, orderData.division_id,
       selectedPricingItemIndex,
-      JSON.stringify(orderData.items?.map((i: any) => ({ mid: i.material_id, q: i.quantity, p: i.unit_price }))),
+      JSON.stringify(orderData.items?.map((i: any) => ({ 
+        mid: i.material_id, 
+        q: i.quantity, 
+        p: i.unit_price,
+        pl: i.plant_code,
+        sl: i.storage_location
+      }))),
       JSON.stringify(manualPriceOverrides)],
     enabled: !!orderData.pricing_procedure && !!hasItemsForPreview,
     queryFn: async () => {
@@ -5211,6 +5270,62 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
     }
   };
 
+  // Auto-determine shipping point
+  const determineShippingPoint = async (index: number, plantCode: string, shippingCondition: string, loadingGroup: string) => {
+    if (!plantCode || !shippingCondition || !loadingGroup) {
+      console.log('Missing data for SP determination:', { plantCode, shippingCondition, loadingGroup });
+      return;
+    }
+
+    try {
+      // Find matching rule from the master data
+      const response = await fetch(`/api/master-data/shipping-point-determination`);
+      if (response.ok) {
+        const rulesData = await response.json();
+        const rules = rulesData.value || rulesData; // Handle both wrapped ({value: []}) and straight array responses
+
+        // Remove leading zeroes for comparison (e.g., '02' -> '2')
+        const normalizedCondition = shippingCondition.replace(/^0+/, '');
+        const normalizedLoadingGroup = loadingGroup.replace(/^0+/, '');
+
+        console.log('SP Determination Inputs:', {
+          plantCode,
+          rawCondition: shippingCondition, normCondition: normalizedCondition,
+          rawLoadingGroup: loadingGroup, normLoadingGroup: normalizedLoadingGroup
+        });
+
+        // Look for an exact match on plant, shipping condition, and loading group
+        const matchingRule = rules.find((r: any) => {
+          const ruleCond = r.shippingConditionKey?.toString().replace(/^0+/, '');
+          const ruleGroup = r.loadingGroupCode?.toString().replace(/^0+/, '');
+
+          const isMatch = r.plantCode === plantCode && ruleCond === normalizedCondition && ruleGroup === normalizedLoadingGroup;
+          if (r.plantCode === plantCode) {
+            console.log('Checking rule:', { ruleCond, ruleGroup, isMatch, rule: r });
+          }
+          return isMatch;
+        });
+
+        console.log('Found matching SP rule:', matchingRule);
+
+        if (matchingRule && matchingRule.proposedShippingPoint) {
+          updateItem(index, 'shipping_point_code', matchingRule.proposedShippingPoint);
+          // Also set the ID if we have it in shippingPointList
+          const sp = shippingPointList?.find((s: any) => s.code === matchingRule.proposedShippingPoint);
+          if (sp) {
+            updateItem(index, 'shipping_point_id', sp.id.toString());
+          }
+        } else {
+          // Clear it if no match found
+          updateItem(index, 'shipping_point_code', '');
+          updateItem(index, 'shipping_point_id', '');
+        }
+      }
+    } catch (err) {
+      console.error('Error determining shipping point:', err);
+    }
+  };
+
   const handleSubmit = () => {
     // Validate required fields
     if (!orderData.customer_id || orderData.customer_id === '') {
@@ -5352,7 +5467,7 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
       company_code_id: orderData.company_code_id ? parseInt(orderData.company_code_id) : null,
       items: orderData.items.map((item, index) => ({
         ...item,
-        manual_conditions: manualPriceOverrides || undefined,
+        manual_conditions: manualPriceOverrides[index] || undefined,
         material_id: parseInt(item.material_id),
         quantity: parseInt(item.quantity),
         unit_price: parseFloat(item.unit_price),
@@ -5956,41 +6071,140 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
             </div>
 
             <div>
-              <Label htmlFor="pricing_procedure">Pricing Procedure <span className="text-red-500">*</span></Label>
-              <Select
-                value={orderData.pricing_procedure || ""}
-                onValueChange={(value) => {
-                  setOrderData(prev => ({ ...prev, pricing_procedure: value }));
-                }}
-              >
-                <SelectTrigger id="pricing_procedure" className={autoFilledFields.has('pricing_procedure') ? 'bg-green-50 border-green-300' : ''}>
-                  <SelectValue placeholder="Select pricing procedure" />
-                </SelectTrigger>
-                <SelectContent>
-                  {pricingProcedures.length > 0 ? (
-                    pricingProcedures.map((pp: any) => (
-                      <SelectItem key={pp.id} value={pp.procedure_code ? String(pp.procedure_code) : (String(pp.id))}>
-                        {pp.procedure_name || pp.description} ({pp.procedure_code})
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                      No pricing procedures available
+              <Label htmlFor="pricing_procedure">
+                Pricing Procedure <span className="text-red-500">*</span>
+                {autoFilledFields.has('pricing_procedure') && orderData.pricing_procedure === determinedPricingProcedure && (
+                  <span className="ml-2 text-xs text-green-700 font-normal bg-green-50 px-1.5 py-0.5 rounded border border-green-200">
+                    ✓ Auto-determined from pricing rules
+                  </span>
+                )}
+                {autoFilledFields.has('pricing_procedure') && orderData.pricing_procedure !== determinedPricingProcedure && determinedPricingProcedure && (
+                  <span className="ml-2 text-xs text-amber-700 font-normal bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                    ⚠ Manually overridden
+                  </span>
+                )}
+              </Label>
+
+              {pricingDetermineLoading ? (
+                <div className="flex items-center gap-2 h-9 px-3 border rounded-md bg-gray-50 text-sm text-muted-foreground">
+                  <span className="animate-spin inline-block w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full" />
+                  Determining pricing procedure…
+                </div>
+              ) : autoFilledFields.has('pricing_procedure') && orderData.pricing_procedure === determinedPricingProcedure ? (
+                /* ── Auto-determined: read-only display + override button ── */
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 flex items-center gap-2 h-9 px-3 border border-green-300 rounded-md bg-green-50 text-sm font-medium text-green-800">
+                      {(() => {
+                        const pp = (pricingProcedures as any[]).find((p: any) =>
+                          String(p.procedure_code) === String(orderData.pricing_procedure)
+                        );
+                        return pp
+                          ? `${pp.procedure_code} — ${pp.procedure_name || pp.description}`
+                          : orderData.pricing_procedure;
+                      })()}
                     </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 text-xs h-9"
+                      onClick={() => {
+                        // Switch to override mode — clear the auto-fill mark
+                        setAutoFilledFields(prev => {
+                          const u = new Set(prev);
+                          u.delete('pricing_procedure');
+                          return u;
+                        });
+                      }}
+                    >
+                      Override
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                /* ── Manual selection (override mode or no match) ── */
+                <div className="space-y-1">
+                  <Select
+                    value={orderData.pricing_procedure || ''}
+                    onValueChange={(value) => {
+                      const isOverride = !!determinedPricingProcedure && value !== determinedPricingProcedure;
+                      if (isOverride) {
+                        toast({
+                          title: '⚠️ Pricing Procedure Overridden',
+                          description: `You are manually selecting "${value}" instead of the auto-determined "${determinedPricingProcedure}". This may affect pricing calculations.`,
+                          variant: 'destructive',
+                          duration: 5000,
+                        });
+                      }
+                      setOrderData(prev => ({ ...prev, pricing_procedure: value }));
+                    }}
+                  >
+                    <SelectTrigger
+                      id="pricing_procedure"
+                      className={
+                        determinedPricingProcedure && orderData.pricing_procedure !== determinedPricingProcedure
+                          ? 'border-amber-400 bg-amber-50'
+                          : ''
+                      }
+                    >
+                      <SelectValue placeholder={
+                        !orderData.customer_id || !orderData.document_type
+                          ? 'Select customer & document type first'
+                          : 'No matching rule — select manually'
+                      } />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {pricingProcedures.length > 0 ? (
+                        // Deduplicate by procedure_code
+                        Array.from(
+                          new Map((pricingProcedures as any[]).map((pp: any) => [pp.procedure_code, pp])).values()
+                        ).map((pp: any) => (
+                          <SelectItem key={pp.id} value={pp.procedure_code ? String(pp.procedure_code) : String(pp.id)}>
+                            {pp.procedure_name || pp.description} ({pp.procedure_code})
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                          No pricing procedures available
+                        </div>
+                      )}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Warning: all 5 keys present but no rule matched */}
+                  {orderData.customer_id && orderData.document_type && !determinedPricingProcedure && !pricingDetermineLoading && (
+                    <p className="text-xs text-amber-600 flex items-start gap-1">
+                      <span className="shrink-0 mt-0.5">⚠️</span>
+                      <span>
+                        No determination rule matched this Sales Area + Pricing Procedure combination.
+                        Select manually or{' '}
+                        <a href="/master-data/pricing-procedure-determination" className="underline font-medium">
+                          configure a rule
+                        </a>.
+                      </span>
+                    </p>
                   )}
-                </SelectContent>
-              </Select>
+
+                  {/* 'Revert to auto' button if user overrode but a determination exists */}
+                  {determinedPricingProcedure && orderData.pricing_procedure !== determinedPricingProcedure && (
+                    <button
+                      type="button"
+                      className="text-xs text-blue-600 hover:underline"
+                      onClick={() => {
+                        setOrderData(prev => ({ ...prev, pricing_procedure: determinedPricingProcedure }));
+                        setAutoFilledFields(prev => new Set(prev).add('pricing_procedure'));
+                      }}
+                    >
+                      ↩ Revert to auto-determined ({determinedPricingProcedure})
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
-            <div>
-              <Label htmlFor="tax_code">Tax Code <span className="text-red-500">*</span></Label>
-              <Input
-                id="tax_code"
-                value={orderData.tax_code || ''}
-                onChange={(e) => setOrderData(prev => ({ ...prev, tax_code: e.target.value }))}
-                placeholder="Enter tax code"
-              />
-            </div>
+
+
 
             <div>
               <Label htmlFor="sales_office_code">
@@ -6411,7 +6625,10 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                       if (selected.unit || selected.base_uom) { updateItem(index, 'unit', selected.unit || selected.base_uom || 'PC'); itemAutoFilled.add('unit'); }
                       if (selected.plant_id || selected.product_plant_id) { updateItem(index, 'plant_id', selected.plant_id || selected.product_plant_id || ''); itemAutoFilled.add('plant_id'); }
                       if (selected.plant_name) updateItem(index, 'plant_name', selected.plant_name);
-                      if (selected.plant_code || selected.product_plant_code) updateItem(index, 'plant_code', selected.plant_code || selected.product_plant_code || '');
+
+                      const plantCode = selected.plant_code || selected.product_plant_code || '';
+                      if (plantCode) updateItem(index, 'plant_code', plantCode);
+
                       if (selected.storage_location_id) { updateItem(index, 'storage_location_id', selected.storage_location_id); itemAutoFilled.add('storage_location_id'); }
                       if (selected.storage_location_name) updateItem(index, 'storage_location_name', selected.storage_location_name);
                       if (selected.storage_location_code) updateItem(index, 'storage_location_code', selected.storage_location_code);
@@ -6419,6 +6636,13 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                       updateItem(index, 'item_category_group', icGroup);
                       const salesDocType = orderData.document_type || 'OR';
                       determineItemCategory(index, salesDocType, icGroup);
+
+                      if (plantCode) {
+                        console.log('Selected Material:', selected);
+                        const loadingGroup = selected.loadingGroup || selected.loading_group || selected.loadingGroupCode || '04'; // Default to 04 or 0001 if mostly used
+                        determineShippingPoint(index, plantCode, orderData.shipping_condition, loadingGroup);
+                      }
+
                       fetchInventoryStatus(selected.id.toString());
                       // Auto-fill unit_price from PR00 condition record (falls back to catalog price)
                       fetchConditionPrice(index, selected.id, selected.price ?? null, itemAutoFilled).then(() => {
@@ -6524,14 +6748,25 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— Not set —</SelectItem>
-                      <SelectItem value="TAN">TAN - Standard Item</SelectItem>
-                      <SelectItem value="TACP">TACP - Cash Sales</SelectItem>
-                      <SelectItem value="TAB">TAB - Individual PO</SelectItem>
-                      <SelectItem value="TANN">TANN - Free of Charge</SelectItem>
-                      <SelectItem value="KLN">KLN - Consignment</SelectItem>
-                      {item.item_category && !['TAN', 'TACP', 'TAB', 'TANN', 'KLN'].includes(item.item_category) && (
-                        <SelectItem value={item.item_category}>{item.item_category} (Auto)</SelectItem>
+                      {itemCategories.length > 0 ? (
+                        itemCategories.map((ic: any) => (
+                          <SelectItem key={ic.code || ic.id} value={ic.code}>
+                            {ic.code} - {ic.name}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <>
+                          <SelectItem value="TAN">TAN - Standard Item</SelectItem>
+                          <SelectItem value="TACP">TACP - Cash Sales</SelectItem>
+                          <SelectItem value="TAB">TAB - Individual PO</SelectItem>
+                          <SelectItem value="TANN">TANN - Free of Charge</SelectItem>
+                          <SelectItem value="KLN">KLN - Consignment</SelectItem>
+                        </>
                       )}
+                      {item.item_category &&
+                        (itemCategories.length > 0 ? !itemCategories.find((ic: any) => ic.code === item.item_category) : !['TAN', 'TACP', 'TAB', 'TANN', 'KLN'].includes(item.item_category)) && (
+                          <SelectItem value={item.item_category}>{item.item_category} (Auto)</SelectItem>
+                        )}
                     </SelectContent>
                   </Select>
 
@@ -6734,9 +6969,11 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                     <tbody>
                       {(procedureSteps as any[]).map((step: any, idx: number) => {
                         const previewCond = (pricingPreview?.conditions as any[] || []).find(
-                          (c: any) => c.conditionType === step.condition_type_code || c.step === step.step_number
+                          (c: any) => c.step === step.step_number
                         );
-                        const isManuallySet = !!manualPriceOverrides[step.condition_type_code];
+
+                        const currentItemOverrides = selectedPricingItemIndex !== null ? (manualPriceOverrides[selectedPricingItemIndex] || {}) : {};
+                        const isManuallySet = !!currentItemOverrides[step.condition_type_code];
                         const isSubtotal = !!(step.is_subtotal || step.subtotal);
                         const isTax = step.account_key === 'MWS' || !!step.is_tax;
                         const isDiscount = step.condition_class === 'B' || (previewCond?.calculatedValue < 0);
@@ -6845,7 +7082,7 @@ function CreateSalesOrderDialog({ open, onOpenChange, onSubmit, isLoading, custo
                                   type="number"
                                   step="0.01"
                                   placeholder={!step.manual_entry ? '' : isManuallySet ? '' : 'Override...'}
-                                  value={manualPriceOverrides[step.condition_type_code] || ''}
+                                  value={currentItemOverrides[step.condition_type_code] || ''}
                                   onChange={(e) => setManualRate(step.condition_type_code, e.target.value)}
                                   disabled={!step.manual_entry}
                                   title={!step.manual_entry ? 'Not allowed by pricing procedure configuration' : 'Enter manual condition rate'}

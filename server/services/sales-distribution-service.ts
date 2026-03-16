@@ -19,6 +19,7 @@ import {
   numberRangeObjects,
   copyControlHeaders,
   copyControlItems,
+  shippingPointDetermination,
   type SalesOrganization,
   type DistributionChannel,
   type Division,
@@ -831,6 +832,41 @@ export class SalesDistributionService {
     `);
 
     return result.rows;
+  }
+
+  async determineShippingPoint(
+    shippingCondition: string,
+    loadingGroup: string,
+    plant: string
+  ): Promise<string | null> {
+    try {
+      const result = await db
+        .select({ proposedShippingPoint: shippingPointDetermination.proposedShippingPoint })
+        .from(shippingPointDetermination)
+        .where(
+          and(
+            eq(shippingPointDetermination.shippingConditionKey, shippingCondition),
+            eq(shippingPointDetermination.loadingGroupCode, loadingGroup),
+            eq(shippingPointDetermination.plantCode, plant),
+            eq(shippingPointDetermination.isActive, true)
+          )
+        )
+        .limit(1);
+
+      return result[0]?.proposedShippingPoint || null;
+    } catch (error) {
+      console.error("Error determining shipping point:", error);
+      return null;
+    }
+  }
+
+  async getShippingPointByCode(code: string) {
+    const [result] = await db
+      .select()
+      .from(shippingPoints)
+      .where(eq(shippingPoints.code, code))
+      .limit(1);
+    return result;
   }
 }
 

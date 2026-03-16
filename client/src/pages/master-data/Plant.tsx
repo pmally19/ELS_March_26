@@ -88,6 +88,8 @@ type Plant = {
   factoryCalendar: string | null;
   status: string;
   isActive: boolean;
+  region: string | null;
+  regionId: number | null;
   createdAt: string;
   updatedAt: string;
   // Audit trail fields
@@ -149,6 +151,8 @@ const plantSchema = z.object({
   factoryCalendar: z.string().optional(),
   status: z.string().default("active"),
   isActive: z.boolean().default(true),
+  region: z.string().optional().nullable(),
+  regionId: z.coerce.number().optional().nullable(),
 });
 
 // Plant Management Page
@@ -198,6 +202,15 @@ export default function PlantPage() {
       return await response.json();
     },
     retry: 1,
+  });
+
+  // Fetch regions for dropdown selection
+  const { data: regions = [] } = useQuery<any[]>({
+    queryKey: ['/api/master-data/regions'],
+    queryFn: async () => {
+      const response = await apiRequest('/api/master-data/regions');
+      return await response.json();
+    }
   });
 
   // Fetch countries for dropdown selection
@@ -252,8 +265,11 @@ export default function PlantPage() {
           timezone: p.timezone || null,
           operatingHours: p.operatingHours || p.operating_hours || null,
           coordinates: p.coordinates || null,
+          factoryCalendar: p.factoryCalendar || p.factory_calendar || null,
           status: p.status || 'active',
           isActive: p.isActive !== undefined ? p.isActive : (p.is_active !== undefined ? p.is_active : true),
+          region: p.region || null,
+          regionId: p.regionId || p.region_id || null,
           createdAt: p.createdAt || p.created_at || null,
           updatedAt: p.updatedAt || p.updated_at || null,
           _tenantId: p['_tenantId'] ?? null,
@@ -333,14 +349,24 @@ export default function PlantPage() {
       factoryCalendar: "",
       status: "active",
       isActive: true,
+      region: "",
+      regionId: null,
     },
   });
+
+  // Watch region field to filter countries
+  const selectedRegionId = form.watch('regionId');
+
+  // Filter countries based on selected region
+  const filteredCountriesList = selectedRegionId
+    ? countriesList.filter((c: any) => Number(c.regionId) === Number(selectedRegionId))
+    : countriesList;
 
   // Watch country field to cascade state dropdown
   const selectedCountry = form.watch('country');
   const selectedCountryId = (() => {
     if (!selectedCountry) return null;
-    const found = (countriesList as any[]).find(
+    const found = (filteredCountriesList as any[]).find(
       (c: any) => c.name === selectedCountry || c.code === selectedCountry
     );
     return found ? found.id : null;
@@ -382,6 +408,8 @@ export default function PlantPage() {
         factoryCalendar: editingPlant.factoryCalendar || "",
         status: editingPlant.status,
         isActive: editingPlant.isActive,
+        region: editingPlant.region || "",
+        regionId: editingPlant.regionId || null,
       });
     } else {
       form.reset({
@@ -406,6 +434,8 @@ export default function PlantPage() {
         factoryCalendar: "",
         status: "active",
         isActive: true,
+        region: "",
+        regionId: null,
       });
     }
   }, [editingPlant, form]);
@@ -543,6 +573,8 @@ export default function PlantPage() {
       companyCodeId: Number(values.companyCodeId || 0),
       valuationGroupingCodeId: values.valuationGroupingCodeId || null, // Include valuation grouping code
       isActive: values.isActive !== undefined ? values.isActive : true, // Use form value or database default
+      region: values.region || null,
+      regionId: values.regionId || null,
     };
 
     if (editingPlant) {
@@ -587,6 +619,8 @@ export default function PlantPage() {
       factoryCalendar: plant.factoryCalendar || "",
       status: plant.status || "active", // Use database value or default to 'active'
       isActive: plant.isActive !== undefined ? plant.isActive : true, // Use database value or default to true
+      region: plant.region || "",
+      regionId: plant.regionId || null,
     };
 
     form.reset(formData);
@@ -1270,6 +1304,46 @@ export default function PlantPage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
+                        name="regionId"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Region</FormLabel>
+                            <Select
+                              onValueChange={(value) => {
+                                const regionId = value === "none" ? null : parseInt(value);
+                                field.onChange(regionId);
+                                
+                                // Update region name when ID changes
+                                const selectedRegion = regions.find((r: any) => r.id === regionId);
+                                form.setValue('region', selectedRegion ? selectedRegion.name : '');
+                                
+                                // Reset country and state when region changes
+                                form.setValue('country', '');
+                                form.setValue('state', '');
+                              }}
+                              value={field.value?.toString() || "none"}
+                            >
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select region" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                <SelectItem value="none">None</SelectItem>
+                                {regions.map((r: any) => (
+                                  <SelectItem key={r.id} value={r.id.toString()}>
+                                    {r.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
                         name="country"
                         render={({ field }) => (
                           <FormItem>
@@ -1289,10 +1363,12 @@ export default function PlantPage() {
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                {countriesList.length === 0 ? (
-                                  <SelectItem value="no-countries" disabled>No countries available</SelectItem>
+                                {filteredCountriesList.length === 0 ? (
+                                  <SelectItem value="no-countries" disabled>
+                                    {selectedRegionId ? "No countries in this region" : "No countries available"}
+                                  </SelectItem>
                                 ) : (
-                                  countriesList.map((c: any) => (
+                                  filteredCountriesList.map((c: any) => (
                                     <SelectItem key={c.id} value={c.name}>
                                       {c.code} - {c.name}
                                     </SelectItem>
@@ -1304,7 +1380,9 @@ export default function PlantPage() {
                           </FormItem>
                         )}
                       />
+                    </div>
 
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
                         name="state"
@@ -1338,9 +1416,7 @@ export default function PlantPage() {
                           </FormItem>
                         )}
                       />
-                    </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
                         name="postalCode"
@@ -1358,7 +1434,9 @@ export default function PlantPage() {
                           </FormItem>
                         )}
                       />
+                    </div>
 
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
                         name="phone"
@@ -1376,9 +1454,7 @@ export default function PlantPage() {
                           </FormItem>
                         )}
                       />
-                    </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
                         name="email"
@@ -1399,7 +1475,9 @@ export default function PlantPage() {
                           </FormItem>
                         )}
                       />
+                    </div>
 
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
                         name="manager"

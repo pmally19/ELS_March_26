@@ -190,4 +190,123 @@ router.put('/:id/status', async (req, res) => {
     }
 });
 
+// --- PICKING ---
+router.get('/:id/picking', async (req, res) => {
+    try {
+        const po = await deliveryService.getPickingOrder(parseInt(req.params.id));
+        res.json({ success: true, data: po });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.post('/:id/start-picking', async (req, res) => {
+    try {
+        const userId = req.body.userId || 1;
+        const result = await deliveryService.startPicking(parseInt(req.params.id), userId);
+        res.json({ success: true, data: result });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.put('/:id/picking', async (req, res) => {
+    try {
+        const result = await deliveryService.confirmPicking(parseInt(req.params.id), req.body.items);
+        res.json({ success: true, data: result });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// --- PACKING ---
+router.get('/:id/handling-units', async (req, res) => {
+    try {
+        const hus = await deliveryService.getHandlingUnits(parseInt(req.params.id));
+        res.json({ success: true, data: hus });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.post('/:id/handling-units', async (req, res) => {
+    try {
+        const userId = req.body.userId || 1;
+        const result = await deliveryService.createHandlingUnit(
+            parseInt(req.params.id), req.body.packagingTypeId, req.body.items, userId
+        );
+        res.json({ success: true, data: result });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.post('/:id/confirm-packing', async (req, res) => {
+    try {
+        const result = await deliveryService.confirmPacking(parseInt(req.params.id));
+        res.json({ success: true, data: result });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// --- LOADING ---
+router.put('/:id/loading', async (req, res) => {
+    try {
+        const result = await deliveryService.saveLoadingDetails(parseInt(req.params.id), req.body);
+        res.json({ success: true, data: result });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// --- MASTER DATA (Packaging Types) ---
+import { pool } from '../db';
+router.get('/master-data/packaging-types', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM packaging_material_types ORDER BY name');
+        res.json(result.rows);
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.post('/master-data/packaging-types', async (req, res) => {
+    try {
+        const { code, name, max_weight, weight_unit, is_active } = req.body;
+        const result = await pool.query(`
+            INSERT INTO packaging_material_types (code, name, max_weight, weight_unit, is_active)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING *
+        `, [code, name, max_weight || null, weight_unit || 'KG', is_active !== false]);
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.put('/master-data/packaging-types/:id', async (req, res) => {
+    try {
+        const { code, name, max_weight, weight_unit, is_active } = req.body;
+        const result = await pool.query(`
+            UPDATE packaging_material_types 
+            SET code = $1, name = $2, max_weight = $3, weight_unit = $4, is_active = $5
+            WHERE id = $6
+            RETURNING *
+        `, [code, name, max_weight || null, weight_unit || 'KG', is_active !== false, parseInt(req.params.id)]);
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.delete('/master-data/packaging-types/:id', async (req, res) => {
+    try {
+        await pool.query('DELETE FROM packaging_material_types WHERE id = $1', [parseInt(req.params.id)]);
+        res.json({ success: true });
+    } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 export default router;

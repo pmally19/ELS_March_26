@@ -84,13 +84,23 @@ export const userRoles = pgTable("user_roles", {
 });
 
 // Units of Measure
-export const uom = pgTable("uom", {
-  ...commonFields,
+export const uom = pgTable("units_of_measure", {
+  id: serial("id").primaryKey(),
   code: text("code").notNull().unique(),
   name: text("name").notNull(),
   description: text("description"),
-  category: text("category").notNull(), // weight, volume, length, etc.
-  isBase: boolean("is_base").default(false).notNull(), // is this a base unit?
+  category: text("category").notNull(),
+  dimension: text("dimension"),
+  conversionFactor: numeric("conversion_factor").default("1"),
+  baseUomId: integer("base_uom_id"),
+  isBase: boolean("is_base").default(false).notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  active: boolean("active").default(true),
+  version: integer("version").default(1).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdBy: integer("created_by"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: integer("updated_by"),
   _tenantId: text("_tenantId").default("001"),
   _deletedAt: timestamp("_deletedAt", { withTimezone: true }),
 });
@@ -114,10 +124,18 @@ export const uomRelations = relations(uom, ({ one, many }) => ({
 }));
 
 export const uomConversions = pgTable("uom_conversions", {
-  ...commonFields,
+  id: serial("id").primaryKey(),
   fromUomId: integer("from_uom_id").notNull().references(() => uom.id),
   toUomId: integer("to_uom_id").notNull().references(() => uom.id),
   conversionFactor: numeric("conversion_factor").notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  active: boolean("active").default(true),
+  notes: text("notes"),
+  version: integer("version").default(1).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdBy: integer("created_by"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedBy: integer("updated_by"),
 });
 
 export const uomConversionRelations = relations(uomConversions, ({ one }) => ({

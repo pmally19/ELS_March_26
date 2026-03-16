@@ -7,10 +7,10 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
-import { 
-  Building2, 
-  CreditCard, 
-  DollarSign, 
+import {
+  Building2,
+  CreditCard,
+  DollarSign,
   FileSpreadsheet,
   Banknote,
   ArrowLeftRight,
@@ -25,8 +25,8 @@ interface BankAccount {
   account_name: string;
   bank_name: string;
   account_type: string;
-  current_balance: number;
-  available_balance: number;
+  current_balance: number | string; // Changed to allow string if backend sends formatted data
+  available_balance: number | string;
   currency: string;
   company_name: string;
   gl_account_name: string;
@@ -84,29 +84,29 @@ interface EDITransaction {
 export default function BankAccounts() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  
-  const { data: bankAccounts, isLoading: loadingAccounts } = useQuery({
+
+  const { data: bankAccounts = [], isLoading: loadingAccounts } = useQuery({
     queryKey: ['/api/finance/bank-accounts'],
     queryFn: () => fetch('/api/finance/bank-accounts').then(res => res.json())
   });
-  
-  const { data: lockboxData, isLoading: loadingLockbox } = useQuery({
+
+  const { data: lockboxData = [], isLoading: loadingLockbox } = useQuery({
     queryKey: ['/api/finance/bank-accounts/lockbox'],
     queryFn: () => fetch('/api/finance/bank-accounts/lockbox').then(res => res.json())
   });
-  
-  const { data: lockboxTransactions, isLoading: loadingTransactions } = useQuery({
+
+  const { data: lockboxTransactions = [], isLoading: loadingTransactions } = useQuery({
     queryKey: ['/api/finance/bank-accounts/lockbox/transactions'],
     queryFn: () => fetch('/api/finance/bank-accounts/lockbox/transactions').then(res => res.json())
   });
-  
-  const { data: ediTransactions, isLoading: loadingEDI } = useQuery({
+
+  const { data: ediTransactions = [], isLoading: loadingEDI } = useQuery({
     queryKey: ['/api/finance/bank-accounts/edi'],
     queryFn: () => fetch('/api/finance/bank-accounts/edi').then(res => res.json())
   });
 
   const applyCashMutation = useMutation({
-    mutationFn: (data: any) => 
+    mutationFn: (data: any) =>
       fetch('/api/finance/bank-accounts/lockbox/apply-cash', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -118,8 +118,18 @@ export default function BankAccounts() {
     }
   });
 
-  const formatCurrency = (amount: number) => 
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+  // FIX: Added safety check for NaN values
+  const formatCurrency = (amount: any) => {
+    let cleanAmount = 0;
+    if (typeof amount === 'string') {
+      cleanAmount = parseFloat(amount.replace(/[^0-9.-]+/g, ""));
+    } else {
+      cleanAmount = amount;
+    }
+
+    const finalAmount = isNaN(cleanAmount) || cleanAmount === null ? 0 : cleanAmount;
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(finalAmount);
+  };
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
@@ -133,10 +143,19 @@ export default function BankAccounts() {
     return <Badge variant={variants[status] || 'secondary'}>{status}</Badge>;
   };
 
+  // FIX: Handle string-to-number conversion to prevent $NaN
   const getTotalBalance = () => {
-    if (!bankAccounts) return 0;
-    return bankAccounts.reduce((sum: number, account: BankAccount) => sum + account.current_balance, 0);
+    if (!Array.isArray(bankAccounts)) return 0;
+    return bankAccounts.reduce((sum: number, account: BankAccount) => {
+      let val = account.current_balance;
+      if (typeof val === 'string') {
+        val = parseFloat(val.replace(/[^0-9.-]+/g, ""));
+      }
+      return sum + (Number(val) || 0);
+    }, 0);
   };
+
+  const todayStr = new Date().toISOString().split('T')[0];
 
   return (
     <div className="space-y-6">
@@ -147,7 +166,6 @@ export default function BankAccounts() {
         </div>
       </div>
 
-      {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -159,7 +177,7 @@ export default function BankAccounts() {
             <p className="text-xs text-muted-foreground">Across all accounts</p>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Active Accounts</CardTitle>
@@ -170,7 +188,7 @@ export default function BankAccounts() {
             <p className="text-xs text-muted-foreground">Bank relationships</p>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Today's Lockbox</CardTitle>
@@ -178,14 +196,16 @@ export default function BankAccounts() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatCurrency(lockboxData?.filter((d: LockboxProcessing) => 
-                d.processing_date === new Date().toISOString().split('T')[0]
-              ).reduce((sum: number, d: LockboxProcessing) => sum + d.deposit_amount, 0) || 0)}
+              {formatCurrency(
+                (Array.isArray(lockboxData) ? lockboxData : [])
+                  .filter((d: LockboxProcessing) => d.processing_date === todayStr)
+                  .reduce((sum: number, d: LockboxProcessing) => sum + (Number(d.deposit_amount) || 0), 0)
+              )}
             </div>
             <p className="text-xs text-muted-foreground">Customer payments</p>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">EDI Processing</CardTitle>
@@ -229,7 +249,7 @@ export default function BankAccounts() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {bankAccounts?.map((account: BankAccount) => (
+                    {Array.isArray(bankAccounts) && bankAccounts.map((account: BankAccount) => (
                       <TableRow key={account.id}>
                         <TableCell className="font-medium">{account.account_name}</TableCell>
                         <TableCell>{account.bank_name}</TableCell>
@@ -273,7 +293,7 @@ export default function BankAccounts() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {lockboxData?.map((processing: LockboxProcessing) => (
+                    {Array.isArray(lockboxData) && lockboxData.map((processing: LockboxProcessing) => (
                       <TableRow key={processing.id}>
                         <TableCell>{new Date(processing.processing_date).toLocaleDateString()}</TableCell>
                         <TableCell className="font-mono">{processing.lockbox_number}</TableCell>
@@ -315,7 +335,7 @@ export default function BankAccounts() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {lockboxTransactions?.map((transaction: LockboxTransaction) => (
+                    {Array.isArray(lockboxTransactions) && lockboxTransactions.map((transaction: LockboxTransaction) => (
                       <TableRow key={transaction.id}>
                         <TableCell className="font-mono">{transaction.check_number}</TableCell>
                         <TableCell>{transaction.customer_account}</TableCell>
@@ -335,8 +355,8 @@ export default function BankAccounts() {
                         <TableCell>{getStatusBadge(transaction.cash_application_status)}</TableCell>
                         <TableCell>
                           {transaction.cash_application_status === 'pending' && (
-                            <Button 
-                              size="sm" 
+                            <Button
+                              size="sm"
                               onClick={() => applyCashMutation.mutate({
                                 transactionId: transaction.id,
                                 invoiceNumbers: transaction.invoice_references || [],
@@ -381,7 +401,7 @@ export default function BankAccounts() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {ediTransactions?.map((edi: EDITransaction) => (
+                    {Array.isArray(ediTransactions) && ediTransactions.map((edi: EDITransaction) => (
                       <TableRow key={edi.id}>
                         <TableCell className="font-mono">{edi.edi_transaction_set}</TableCell>
                         <TableCell>

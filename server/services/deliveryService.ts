@@ -1,4 +1,7 @@
 import { pool } from '../db';
+import { salesDistributionService } from './sales-distribution-service';
+import { pricingCalculationService } from './pricing-calculation';
+import { mmfiIntegrationService } from './mm-fi-integration-service';
 
 interface DeliveryItemData {
     salesOrderItemId: number;
@@ -9,6 +12,7 @@ interface DeliveryItemData {
     unit: string;
     storageLocation?: string;
     batch?: string;
+    itemCategory?: string;
 }
 
 interface CreateDeliveryData {
@@ -24,6 +28,7 @@ interface CreateDeliveryData {
     movementType?: string;
     items: DeliveryItemData[];
     createdBy: number;
+    totalAmount?: number;
 }
 
 /**
@@ -61,30 +66,91 @@ export class DeliveryService {
             const maxNumber = parseInt(countResult.rows[0]?.max_number || '0');
             const deliveryNumber = `DL${currentYear}${(maxNumber + 1).toString().padStart(6, '0')}`;
 
+            // 1.5 Calculate total amount if not provided
+            let totalAmount = data.totalAmount;
+            if (totalAmount === undefined && data.items.length > 0) {
+              const soiIds = data.items.map(item => item.salesOrderItemId);
+              const amountsResult = await client.query(
+                `SELECT SUM(net_amount) as total FROM sales_order_items WHERE id = ANY($1)`,
+                [soiIds]
+              );
+              totalAmount = parseFloat(amountsResult.rows[0]?.total || '0');
+            }
+
+            // 1.6 Determine shipping point and plant if not provided
+            let finalShippingPoint = data.shippingPoint;
+            let finalPlant = data.plant;
+            let finalShippingCondition = data.shippingCondition;
+
+            if (data.items.length > 0) {
+                try {
+                    const firstItem = data.items[0];
+                    
+                    // Get material details for loading group and plant
+                    const materialResult = await client.query(
+                        `SELECT loading_group, plant_code FROM materials WHERE id = $1`,
+                        [firstItem.materialId]
+                    );
+                    
+                    if (materialResult.rows.length > 0) {
+                        const loadingGroup = materialResult.rows[0].loading_group || '01';
+                        if (!finalPlant) finalPlant = materialResult.rows[0].plant_code || '1010';
+                        
+                        // Get shipping condition from customer if not provided
+                        if (!finalShippingCondition) {
+                            const customerResult = await client.query(
+                                `SELECT shipping_condition_key FROM erp_customers WHERE id = $1`,
+                                [data.customerId]
+                            );
+                            finalShippingCondition = customerResult.rows[0]?.shipping_condition_key || '01';
+                        }
+
+                        // Determine shipping point if missing
+                        if (!finalShippingPoint) {
+                            const spCode = await salesDistributionService.determineShippingPoint(
+                                finalShippingCondition,
+                                loadingGroup,
+                                finalPlant
+                            );
+                            if (spCode) {
+                                finalShippingPoint = spCode;
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error('Error in delivery shipping point determination:', err);
+                }
+            }
+
+            if (!finalShippingPoint) finalShippingPoint = 'SHIP';
+            if (!finalPlant) finalPlant = 'PLAN';
+            if (!finalShippingCondition) finalShippingCondition = '01';
+
             // 2. Create delivery document header
             const headerResult = await client.query(`
         INSERT INTO delivery_documents (
           delivery_number, sales_order_id, customer_id, delivery_date,
           shipping_point, plant, status, created_by,
           delivery_type_code, delivery_priority, shipping_condition,
-          route_code, movement_type, inventory_posting_status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          route_code, movement_type, inventory_posting_status, total_amount
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING *
       `, [
                 deliveryNumber,
                 data.salesOrderId,
                 data.customerId,
                 data.deliveryDate,
-                data.shippingPoint || 'SHIP',
-                data.plant || 'PLAN',
+                finalShippingPoint,
+                finalPlant,
                 'PENDING',
                 data.createdBy,
                 data.deliveryType || 'LF',
                 data.deliveryPriority || '02',
-                data.shippingCondition || '01',
+                finalShippingCondition,
                 data.routeCode,
                 data.movementType || '601',
-                'NOT_POSTED'
+                'NOT_POSTED',
+                totalAmount || 0
             ]);
 
             const delivery = headerResult.rows[0];
@@ -96,8 +162,9 @@ export class DeliveryService {
           INSERT INTO delivery_items (
             delivery_id, sales_order_item_id, line_item, material_id,
             delivery_quantity, pgi_quantity, unit, storage_location, batch,
-            schedule_line_id, movement_type, inventory_posting_status, stock_type
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            schedule_line_id, movement_type, inventory_posting_status, stock_type,
+            item_category
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         `, [
                     delivery.id,
                     item.salesOrderItemId,
@@ -111,7 +178,8 @@ export class DeliveryService {
                     item.scheduleLineId,
                     data.movementType || '601',
                     'NOT_POSTED',
-                    'UNRESTRICTED'
+                    'UNRESTRICTED',
+                    item.itemCategory || null
                 ]);
             }
 
@@ -182,6 +250,7 @@ export class DeliveryService {
             SELECT di.*,
                    m.description AS material_description,
                    m.code        AS material_code,
+                   m.loading_group,
                    -- keep legacy aliases for backward compat
                    m.description AS product_name,
                    m.code        AS product_code
@@ -254,6 +323,10 @@ export class DeliveryService {
                 throw new Error('Goods issue already posted for this delivery');
             }
 
+            if (delivery.picking_status !== 'COMPLETED') {
+                throw new Error('Cannot post goods issue: Picking is not completed. Please complete picking first.');
+            }
+
             // Generate material document number
             const year = new Date().getFullYear();
             const mdCountResult = await client.query(`
@@ -280,13 +353,23 @@ export class DeliveryService {
                 // Create material movement
                 const movementNumber = `MM-${materialDocNumber}-${item.line_item}`;
 
+                // 3.5 Calculate COGS using VPRS (Material Price)
+                const unitCost = await pricingCalculationService.getMaterialCost(
+                    item.material_id, 
+                    item.product_code || null, 
+                    delivery.plant, 
+                    item.storage_location
+                );
+                const cogsAmount = unitCost * item.delivery_quantity;
+
                 await client.query(`
           INSERT INTO stock_movements (
             movement_number, movement_type, material_id, material_code, material_name,
             quantity, unit_of_measure, from_location, delivery_order_id,
             sales_order_id, reference_document, reference_type,
-            batch_number, status, posted_by
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            batch_number, status, posted_by,
+            unit_price, total_value, cogs_amount, plant_code, storage_location
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         `, [
                     movementNumber,
                     'Goods Issue',
@@ -302,8 +385,27 @@ export class DeliveryService {
                     'Delivery',
                     item.batch,
                     'Posted',
-                    userId
+                    userId,
+                    unitCost,      // unit_price
+                    cogsAmount,    // total_value
+                    cogsAmount,    // cogs_amount
+                    delivery.plant,
+                    item.storage_location
                 ]);
+
+                // 3.6 Post to GL if integration service persists
+                try {
+                    await mmfiIntegrationService.postStockMovementToGL(
+                        item.material_id,
+                        '601', // Movement Type for Sales Delivery
+                        item.delivery_quantity,
+                        unitCost,
+                        delivery.plant
+                    );
+                } catch (glError) {
+                    console.error(`Financial posting failed for item ${item.product_code}:`, glError);
+                    // In a real SAP system, this might block PGI, but here we'll log it
+                }
 
                 // Reduce inventory in stock_balances if exists
                 await client.query(`
@@ -393,10 +495,226 @@ export class DeliveryService {
       RETURNING *
     `, [status, id]);
 
-        if (result.rows.length === 0) {
-            throw new Error('Delivery not found');
-        }
+    }
 
+    // --- PICKING ---
+
+    async getPickingOrder(deliveryId: number) {
+        const orderResult = await pool.query(`
+            SELECT * FROM picking_orders WHERE delivery_id = $1
+        `, [deliveryId]);
+
+        if (orderResult.rows.length === 0) return null;
+
+        const itemsResult = await pool.query(`
+            SELECT pi.*, di.line_item, di.delivery_quantity, m.code as material_code, m.description as material_name
+            FROM picking_order_items pi
+            JOIN delivery_items di ON pi.delivery_item_id = di.id
+            LEFT JOIN materials m ON di.material_id = m.id
+            WHERE pi.picking_order_id = $1
+            ORDER BY di.line_item
+        `, [orderResult.rows[0].id]);
+
+        return {
+            ...orderResult.rows[0],
+            items: itemsResult.rows
+        };
+    }
+
+    async startPicking(deliveryId: number, userId: number) {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            // Generate picking number
+            const year = new Date().getFullYear();
+            const countResult = await client.query(`SELECT COUNT(*) FROM picking_orders WHERE picking_number LIKE $1`, [`TO${year}%`]);
+            const nextNum = parseInt(countResult.rows[0].count) + 1;
+            const pickingNumber = `TO${year}${nextNum.toString().padStart(6, '0')}`;
+
+            const orderResult = await client.query(`
+                INSERT INTO picking_orders (picking_number, delivery_id, status, started_at, created_by)
+                VALUES ($1, $2, 'IN_PROGRESS', NOW(), $3)
+                RETURNING *
+            `, [pickingNumber, deliveryId, userId]);
+
+            const pickingOrderId = orderResult.rows[0].id;
+
+            const deliveryItems = await client.query(`
+                SELECT id, line_item, material_id, delivery_quantity, unit, storage_location, batch
+                FROM delivery_items
+                WHERE delivery_id = $1
+                ORDER BY line_item
+            `, [deliveryId]);
+
+            for (const item of deliveryItems.rows) {
+                await client.query(`
+                    INSERT INTO picking_order_items (
+                        picking_order_id, delivery_item_id, material_id, required_qty, unit, from_storage_bin, batch
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                `, [
+                    pickingOrderId, item.id, item.material_id, item.delivery_quantity, item.unit,
+                    `BIN-${item.storage_location?.trim() || 'RECEIVING'}`, item.batch
+                ]);
+            }
+
+            await client.query(`
+                UPDATE delivery_documents
+                SET picking_status = 'IN_PROGRESS', picking_start_date = NOW(), updated_at = NOW()
+                WHERE id = $1
+            `, [deliveryId]);
+
+            await client.query('COMMIT');
+            return await this.getPickingOrder(deliveryId);
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    async confirmPicking(deliveryId: number, items: any[]) {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const po = await client.query(`SELECT id FROM picking_orders WHERE delivery_id = $1`, [deliveryId]);
+            if (po.rows.length === 0) throw new Error('Picking order not found');
+            const pickingOrderId = po.rows[0].id;
+
+            let allComplete = true;
+
+            for (const item of items) {
+                const updateRes = await client.query(`
+                    UPDATE picking_order_items
+                    SET picked_qty = $1, status = CASE WHEN $1 >= required_qty THEN 'PICKED' ELSE 'PARTIAL' END, updated_at = NOW()
+                    WHERE id = $2 AND picking_order_id = $3
+                    RETURNING status
+                `, [item.picked_qty, item.id, pickingOrderId]);
+
+                if (updateRes.rows.length === 0 || updateRes.rows[0].status !== 'PICKED') {
+                    allComplete = false;
+                }
+            }
+
+            if (allComplete) {
+                await client.query(`UPDATE picking_orders SET status = 'COMPLETED', completed_at = NOW(), updated_at = NOW() WHERE id = $1`, [pickingOrderId]);
+                await client.query(`UPDATE delivery_documents SET picking_status = 'COMPLETED', picking_completion_date = NOW(), updated_at = NOW() WHERE id = $1`, [deliveryId]);
+            } else {
+                // If not all complete, ensure it's marked as IN_PROGRESS
+                await client.query(`UPDATE picking_orders SET status = 'IN_PROGRESS', updated_at = NOW() WHERE id = $1`, [pickingOrderId]);
+                await client.query(`UPDATE delivery_documents SET picking_status = 'IN_PROGRESS', updated_at = NOW() WHERE id = $1`, [deliveryId]);
+            }
+
+            await client.query('COMMIT');
+            return { success: true, allComplete };
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    // --- PACKING ---
+
+    async getHandlingUnits(deliveryId: number) {
+        const result = await pool.query(`
+            SELECT hu.*, pt.name as packaging_material_name, pt.code as packaging_material_code, pt.weight_unit 
+            FROM handling_units hu
+            LEFT JOIN packaging_material_types pt ON hu.packaging_material_id = pt.id
+            WHERE hu.delivery_id = $1
+            ORDER BY hu.created_at
+        `, [deliveryId]);
+
+        for (const hu of result.rows) {
+            const items = await pool.query(`
+                SELECT hi.*, di.line_item, m.code as material_code, m.description as material_name
+                FROM handling_unit_items hi
+                JOIN delivery_items di ON hi.delivery_item_id = di.id
+                LEFT JOIN materials m ON hi.material_id = m.id
+                WHERE hi.hu_id = $1
+                ORDER BY di.line_item
+            `, [hu.id]);
+            hu.items = items.rows;
+        }
+        return result.rows;
+    }
+
+    async createHandlingUnit(deliveryId: number, packagingTypeId: number, items: any[], userId: number) {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const year = new Date().getFullYear();
+            const countResult = await client.query(`SELECT COUNT(*) FROM handling_units WHERE hu_number LIKE $1`, [`HU${year}%`]);
+            const nextNum = parseInt(countResult.rows[0].count) + 1;
+            const huNumber = `HU${year}${nextNum.toString().padStart(6, '0')}`;
+
+            // Calculate weight
+            let netWeight = 0;
+            for (const item of items) {
+                const di = await client.query(`SELECT weight FROM delivery_items WHERE id = $1`, [item.delivery_item_id]);
+                netWeight += (parseFloat(di.rows[0]?.weight || 0) * (item.packed_qty || 1));
+            }
+
+            const huResult = await client.query(`
+                INSERT INTO handling_units (hu_number, delivery_id, packaging_material_id, net_weight, gross_weight, created_by)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING *
+            `, [huNumber, deliveryId, packagingTypeId, netWeight, netWeight * 1.1, userId]);
+
+            const huId = huResult.rows[0].id;
+
+            for (const item of items) {
+                await client.query(`
+                    INSERT INTO handling_unit_items (hu_id, delivery_item_id, material_id, packed_qty)
+                    VALUES ($1, $2, $3, $4)
+                `, [huId, item.delivery_item_id, item.material_id, item.packed_qty]);
+            }
+
+            await client.query(`UPDATE delivery_documents SET hu_count = hu_count + 1, packing_status = 'IN_PROGRESS', updated_at = NOW() WHERE id = $1`, [deliveryId]);
+
+            await client.query('COMMIT');
+            return huResult.rows[0];
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    async confirmPacking(deliveryId: number) {
+        const result = await pool.query(`
+            UPDATE delivery_documents
+            SET packing_status = 'COMPLETED', packing_date = NOW(), updated_at = NOW()
+            WHERE id = $1
+            RETURNING *
+        `, [deliveryId]);
+        return result.rows[0];
+    }
+
+    // --- LOADING ---
+
+    async saveLoadingDetails(deliveryId: number, data: any) {
+        const result = await pool.query(`
+            UPDATE delivery_documents
+            SET loading_point = COALESCE($1, loading_point),
+                carrier_id = COALESCE($2, carrier_id),
+                tracking_reference = COALESCE($3, tracking_reference),
+                loading_start_date = COALESCE($4, loading_start_date),
+                loading_completion_date = COALESCE($5, loading_completion_date),
+                loading_status = $6,
+                updated_at = NOW()
+            WHERE id = $7
+            RETURNING *
+        `, [
+            data.loading_point, data.carrier_id, data.tracking_reference,
+            data.loading_start_date, data.loading_completion_date,
+            data.is_completed ? 'COMPLETED' : 'IN_PROGRESS',
+            deliveryId
+        ]);
         return result.rows[0];
     }
 }

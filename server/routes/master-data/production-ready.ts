@@ -1400,85 +1400,9 @@ export function registerProductionMasterDataRoutes(app: Express) {
     }
   });
 
-  // Plants - using exact database columns with proper defaults
-  app.post("/api/master-data/plant", async (req: Request, res: Response) => {
-    try {
-      const { code, name, company_code_id, companyCodeId, type, status, isActive } = req.body;
 
-      // Validate required fields
-      if (!code || !name) {
-        return res.status(400).json({ message: "Code and name are required" });
-      }
 
-      // Handle both field name formats from frontend
-      const companyCode = company_code_id || companyCodeId;
 
-      // Detect optional columns
-      const cols = await checkColumnsExist('plants', ['created_by', 'updated_by', 'version', 'active']);
-      const includeAudit = cols['created_by'] && cols['updated_by'] && cols['version'];
-      const includeActive = !!cols['active'];
-
-      const baseCols = ['code', 'name', 'company_code_id', 'type', 'status', 'is_active'];
-      const baseVals = [code, name, companyCode || null, type || null, status || 'active', isActive !== false];
-      const dynamicCols = [...baseCols];
-      const dynamicParams: any[] = [...baseVals];
-
-      if (includeAudit) {
-        dynamicCols.push('created_by', 'updated_by', 'version');
-        dynamicParams.push(1, 1, 1);
-      }
-      if (includeActive) {
-        dynamicCols.push('active');
-        dynamicParams.push(true);
-      }
-
-      const placeholders = dynamicParams.map((_, i) => `$${i + 1}`).join(', ');
-      const sql = `INSERT INTO plants (${dynamicCols.join(', ')}) VALUES (${placeholders}) RETURNING *`;
-      const result = await pool.query(sql, dynamicParams);
-      return res.status(201).json(result.rows[0]);
-    } catch (error: any) {
-      console.error("Error creating plant:", error);
-      return res.status(500).json({ message: "Failed to create plant", error: error.message });
-    }
-  });
-
-  // Company Codes - handle duplicates and character limits
-  // Company code creation route - COMMENTED OUT to use the proper route in company-code.ts
-  // The proper route includes fiscal year variant handling
-  // app.post("/api/master-data/company-code", async (req: Request, res: Response) => {
-  //   try {
-  //     const { code, name, currency, country } = req.body;
-  //     
-  //     // Validate required fields
-  //     if (!code || !name) {
-  //       return res.status(400).json({ message: "Code and name are required" });
-  //     }
-  //     
-  //     // Ensure code fits varchar(10) limit
-  //     const shortCode = code.substring(0, 10);
-  //     
-  //     // Check if code already exists
-  //     const existing = await pool.query('SELECT id FROM company_codes WHERE code = $1', [shortCode]);
-  //     if (existing.rows.length > 0) {
-  //       return res.status(409).json({ message: "Company code already exists" });
-  //     }
-  //     
-  //     const result = await pool.query(`
-  //       INSERT INTO company_codes (code, name, currency, country, created_at, updated_at)
-  //       VALUES ($1, $2, $3, $4, NOW(), NOW())
-  //       RETURNING *
-  //     `, [shortCode, name, currency, country]);
-  //     
-  //     return res.status(201).json(result.rows[0]);
-  //   } catch (error: any) {
-  //     console.error("Error creating company code:", error);
-  //     return res.status(500).json({ message: "Failed to create company code", error: error.message });
-  //   }
-  // });
-
-  // ===================================================================
-  // VENDOR-MATERIAL ASSIGNMENT ENDPOINTS
-  // ===================================================================
 
   // GET: Get all raw materials (for dropdown)
   app.get("/api/master-data/vendor-materials/raw-materials", async (req: Request, res: Response) => {

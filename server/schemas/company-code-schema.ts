@@ -21,4 +21,9 @@ export const companyCodeSchema = z.object({
   email: z.string().transform(val => val === "" ? null : val).nullable().optional(),
   website: z.string().transform(val => val === "" ? null : val).nullable().optional(),
   logoUrl: z.string().transform(val => val === "" ? null : val).nullable().optional(),
+  region: z.string().transform(val => val === "" ? null : val).nullable().optional(),
+  regionId: z.union([z.number(), z.string()]).transform(val => {
+    if (val === "" || val === null || val === undefined) return null;
+    return Number(val);
+  }).nullable().optional(),
 });

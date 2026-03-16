@@ -123,10 +123,10 @@ export default function ARPaymentRecording({ onBack }: ARPaymentRecordingProps) 
 
   // Fetch customers
   const { data: customers, isLoading: customersLoading, error: customersError, isError: isCustomersError } = useQuery({
-    queryKey: ['/api/master-data/customers'],
+    queryKey: ['/api/master-data/customer'],
     queryFn: async () => {
       try {
-        const response = await apiRequest('/api/master-data/customers');
+        const response = await apiRequest('/api/master-data/customer');
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }

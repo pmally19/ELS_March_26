@@ -126,9 +126,11 @@ async function autoCreateARDocument(invoiceData) {
 }
 
 /**
- * Create GL posting entries (SAP Standard: Debit AR, Credit Revenue)
+ * Create GL posting entries via the shared helper (BKPF/BSEG pattern)
+ * Dr: Accounts Receivable (01), Cr: Revenue (50), Cr: Tax Payable (50)
  */
 async function createGLPosting(client, data) {
+  const { postGLDocument } = await import('../services/gl-posting-helper.js');
   const {
     ar_document_number,
     invoice_number,
@@ -141,119 +143,99 @@ async function createGLPosting(client, data) {
 
   const postingDate = new Date();
   const description = `Invoice ${invoice_number} - AR Document ${ar_document_number}`;
+  const fiscalYear = postingDate.getFullYear();
+  const fiscalPeriod = postingDate.getMonth() + 1;
 
-  // Debit: Accounts Receivable (GL Account 1200 or configured AR account)
-  await client.query(`
-    INSERT INTO gl_entries (
-      document_number,
-      gl_account_id,
-      account_number,
-      debit_amount,
-      credit_amount,
-      description,
-      posting_date,
-      transaction_date,
-      reference_type,
-      reference_id,
-      reference_number,
-      currency_code,
-      created_by,
-      created_at
-    )
-    VALUES (
-      $1,
-      (SELECT id FROM gl_accounts WHERE account_number = '1200' OR account_name LIKE '%Accounts Receivable%' LIMIT 1),
-      '1200',
-      $2,
-      0,
-      $3 || ' - Debit AR',
-      $4,
-      $4,
-      'ar_document',
-      (SELECT id FROM accounts_receivable WHERE ar_document_number = $1 LIMIT 1),
-      $5,
-      $6,
-      1,
-      NOW()
-    )
-  `, [ar_document_number, total_amount, description, postingDate, invoice_number, currency]);
+  // Resolve GL account IDs for AR, Revenue, Tax
+  const arAccountRes = await client.query(
+    `SELECT id FROM gl_accounts WHERE account_number = '1200' OR account_name ILIKE '%Accounts Receivable%' LIMIT 1`
+  );
+  const revenueAccountRes = await client.query(
+    `SELECT id FROM gl_accounts WHERE account_number = '4000' OR account_name ILIKE '%Revenue%' LIMIT 1`
+  );
 
-  // Credit: Revenue (GL Account 4000 or configured Revenue account)
-  await client.query(`
-    INSERT INTO gl_entries (
-      document_number,
-      gl_account_id,
-      account_number,
-      debit_amount,
-      credit_amount,
-      description,
-      posting_date,
-      transaction_date,
-      reference_type,
-      reference_id,
-      reference_number,
-      currency_code,
-      created_by,
-      created_at
-    )
-    VALUES (
-      $1,
-      (SELECT id FROM gl_accounts WHERE account_number = '4000' OR account_name LIKE '%Revenue%' LIMIT 1),
-      '4000',
-      0,
-      $2,
-      $3 || ' - Credit Revenue',
-      $4,
-      $4,
-      'invoice',
-      $5,
-      $6,
-      $7,
-      1,
-      NOW()
-    )
-  `, [ar_document_number, net_amount, description, postingDate, invoice_id, invoice_number, currency]);
+  const arAccountId = arAccountRes.rows[0]?.id || null;
+  const revenueAccountId = revenueAccountRes.rows[0]?.id || null;
 
-  // If tax amount > 0, post tax payable
-  if (tax_amount > 0) {
-    await client.query(`
-      INSERT INTO gl_entries (
-        document_number,
-        gl_account_id,
-        account_number,
-        debit_amount,
-        credit_amount,
-        description,
-        posting_date,
-        transaction_date,
-        reference_type,
-        reference_id,
-        reference_number,
-        currency_code,
-        created_by,
-        created_at
-      )
-      VALUES (
-        $1,
-        (SELECT id FROM gl_accounts WHERE account_number = '2200' OR account_name LIKE '%Tax Payable%' LIMIT 1),
-        '2200',
-        0,
-        $2,
-        $3 || ' - Credit Tax Payable',
-        $4,
-        $4,
-        'invoice',
-        $5,
-        $6,
-        $7,
-        1,
-        NOW()
-      )
-    `, [ar_document_number, tax_amount, description, postingDate, invoice_id, invoice_number, currency]);
+  const lines = [];
+
+  // Dr: Accounts Receivable (PK 01)
+  if (arAccountId) {
+    lines.push({
+      glAccountId: arAccountId,
+      glAccount: '1200',
+      postingKey: '01',
+      debitCredit: 'D',
+      amount: total_amount,
+      description: `${description} - Debit AR`,
+      sourceModule: 'SD',
+      sourceDocumentId: invoice_id,
+      sourceDocumentType: 'INVOICE'
+    });
   }
+
+  // Cr: Revenue (PK 50)
+  if (revenueAccountId) {
+    lines.push({
+      glAccountId: revenueAccountId,
+      glAccount: '4000',
+      postingKey: '50',
+      debitCredit: 'C',
+      amount: net_amount,
+      description: `${description} - Credit Revenue`,
+      sourceModule: 'SD',
+      sourceDocumentId: invoice_id,
+      sourceDocumentType: 'INVOICE'
+    });
+  }
+
+  // Cr: Tax Payable (PK 50) if tax > 0
+  if (tax_amount > 0) {
+    const taxAccountRes = await client.query(
+      `SELECT id FROM gl_accounts WHERE account_number = '2200' OR account_name ILIKE '%Tax Payable%' LIMIT 1`
+    );
+    const taxAccountId = taxAccountRes.rows[0]?.id || null;
+    if (taxAccountId) {
+      lines.push({
+        glAccountId: taxAccountId,
+        glAccount: '2200',
+        postingKey: '50',
+        debitCredit: 'C',
+        amount: tax_amount,
+        description: `${description} - Credit Tax Payable`,
+        sourceModule: 'SD',
+        sourceDocumentId: invoice_id,
+        sourceDocumentType: 'INVOICE'
+      });
+    }
+  }
+
+  if (lines.length === 0) {
+    console.warn(`[AR GL] No GL accounts found for posting ${ar_document_number} — check GL account setup.`);
+    return;
+  }
+
+  const header = {
+    documentNumber: ar_document_number,
+    documentType: 'RV',
+    postingDate,
+    fiscalYear,
+    fiscalPeriod,
+    reference: invoice_number,
+    headerText: description,
+    sourceModule: 'SD',
+    sourceDocumentId: invoice_id,
+    sourceDocumentType: 'INVOICE'
+  };
+
+  const result = await postGLDocument(client, header, lines);
+  if (!result.success) throw new Error(`GL posting failed for AR doc ${ar_document_number}: ${result.error}`);
 
   console.log(`✅ GL Posting created for AR Document: ${ar_document_number}`);
 }
+
+
+
 
 /**
  * Check if AR document already exists for an invoice

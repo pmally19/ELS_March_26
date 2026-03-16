@@ -62,56 +62,6 @@ router.get("/", function (req, res) { return __awaiter(void 0, void 0, void 0, f
 }); });
 
 /**
- * Get individual bank account by ID
- */
-router.get("/:id", function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
-    var id, result, error_1a;
-    return __generator(this, function (_a) {
-        switch (_a.label) {
-            case 0:
-                id = req.params.id;
-                _a.label = 1;
-            case 1:
-                _a.trys.push([1, 3, , 4]);
-                return [4 /*yield*/, pool.query(`
-      SELECT 
-        ba.id,
-        ba.account_number,
-        ba.account_name,
-        ba.bank_name,
-        ba.account_type,
-        ba.current_balance,
-        ba.available_balance,
-        ba.currency,
-        ba.company_code_id,
-        cc.name as company_name,
-        ba.gl_account_id,
-        gl.account_name as gl_account_name,
-        ba.is_active,
-        ba.created_at
-      FROM bank_accounts ba
-      LEFT JOIN company_codes cc ON ba.company_code_id = cc.id
-      LEFT JOIN gl_accounts gl ON ba.gl_account_id = gl.id
-      WHERE ba.id = }); });
-    `, [id])];
-            case 2:
-                result = _a.sent();
-                if (result.rows.length === 0) {
-                    res.status(404).json({ error: "Bank account not found" });
-                    return [2 /*return*/];
-                }
-                res.json(result.rows[0]);
-                return [3 /*break*/, 4];
-            case 3:
-                error_1a = _a.sent();
-                console.error("Error fetching bank account:", error_1a);
-                res.status(500).json({ error: "Failed to fetch bank account" });
-                return [3 /*break*/, 4];
-            case 4: return [2 /*return*/];
-        }
-    });
-}); });
-/**
  * Get lockbox processing data
  */
 router.get("/lockbox", function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
@@ -226,6 +176,57 @@ router.post("/lockbox/apply-cash", function (req, res) { return __awaiter(void 0
                 res.status(500).json({ error: "Failed to process cash application" });
                 return [3 /*break*/, 11];
             case 11: return [2 /*return*/];
+        }
+    });
+}); });
+
+/**
+ * Get individual bank account by ID
+ */
+router.get("/:id", function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
+    var id, result, error_1a;
+    return __generator(this, function (_a) {
+        switch (_a.label) {
+            case 0:
+                id = req.params.id;
+                _a.label = 1;
+            case 1:
+                _a.trys.push([1, 3, , 4]);
+                return [4 /*yield*/, pool.query(`
+      SELECT 
+        ba.id,
+        ba.account_number,
+        ba.account_name,
+        ba.bank_name,
+        ba.account_type,
+        ba.current_balance,
+        ba.available_balance,
+        ba.currency,
+        ba.company_code_id,
+        cc.name as company_name,
+        ba.gl_account_id,
+        gl.account_name as gl_account_name,
+        ba.is_active,
+        ba.created_at
+      FROM bank_accounts ba
+      LEFT JOIN company_codes cc ON ba.company_code_id = cc.id
+      LEFT JOIN gl_accounts gl ON ba.gl_account_id = gl.id
+      WHERE ba.id = $1
+    `, [id])];
+            case 2:
+                result = _a.sent();
+                if (result.rows.length === 0) {
+                    res.status(404).json({ error: "Bank account not found" });
+                    return [2 /*return*/];
+                }
+                res.json(result.rows[0]);
+                return [3 /*break*/, 4];
+            case 3:
+                error_1a = _a.sent();
+                console.error("Error fetching bank account:", error_1a);
+                res.status(500).json({ error: "Failed to fetch bank account" });
+                return [3 /*break*/, 4];
+            case 4: return [2 /*return*/];
         }
     });
 }); });
