@@ -69,6 +69,17 @@ const tileConfigurations: Record<string, any> = {
       { key: 'parent_business_area_code', label: 'Parent Business Area Code', type: 'text' },
       { key: 'is_active', label: 'Active', type: 'checkbox' }
     ]
+  },
+  'packaging-types': {
+    title: 'Packaging Material Types',
+    apiEndpoint: '/api/delivery/master-data/packaging-types',
+    fields: [
+      { key: 'code', label: 'Code', type: 'text', required: true },
+      { key: 'name', label: 'Name', type: 'text', required: true },
+      { key: 'max_weight', label: 'Max Weight', type: 'number' },
+      { key: 'weight_unit', label: 'Weight Unit', type: 'select', options: [] },
+      { key: 'is_active', label: 'Active', type: 'checkbox' }
+    ]
   }
 };
 
@@ -82,7 +93,7 @@ function GenericMasterDataTile({ tileId }: { tileId: string }) {
   const [formData, setFormData] = useState<Record<string, any>>({});
 
   const config = tileConfigurations[tileId];
-  
+
   // Fetch company codes for business areas dropdown
   const { data: companyCodes = [] } = useQuery({
     queryKey: ['/api/master-data/company-code'],
@@ -97,7 +108,22 @@ function GenericMasterDataTile({ tileId }: { tileId: string }) {
     },
     enabled: tileId === 'business-areas',
   });
-  
+
+  // Fetch units of measure for dropdowns
+  const { data: unitsOfMeasure = [] } = useQuery({
+    queryKey: ['/api/master-data/units-of-measure'],
+    queryFn: async () => {
+      try {
+        const response = await apiRequest('/api/master-data/units-of-measure');
+        if (!response.ok) return [];
+        return response.json();
+      } catch {
+        return [];
+      }
+    },
+    enabled: tileId === 'packaging-types',
+  });
+
   if (!config) {
     return (
       <div className="space-y-6">
@@ -134,7 +160,7 @@ function GenericMasterDataTile({ tileId }: { tileId: string }) {
   const filteredItems = items?.filter((item: any) => {
     if (!searchTerm) return true;
     const searchLower = searchTerm.toLowerCase();
-    return Object.values(item).some(value => 
+    return Object.values(item).some(value =>
       String(value).toLowerCase().includes(searchLower)
     );
   }) || [];
@@ -189,7 +215,7 @@ function GenericMasterDataTile({ tileId }: { tileId: string }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     try {
       const isEditing = !!editingItem;
       const url = isEditing ? `${config.apiEndpoint}/${editingItem.id}` : config.apiEndpoint;
@@ -227,7 +253,7 @@ function GenericMasterDataTile({ tileId }: { tileId: string }) {
 
   const renderField = (field: any) => {
     const value = formData[field.key] || '';
-    
+
     // Handle dynamic options for company_code_id
     let options = field.options || [];
     if (field.key === 'company_code_id' && tileId === 'business-areas' && companyCodes.length > 0) {
@@ -235,8 +261,13 @@ function GenericMasterDataTile({ tileId }: { tileId: string }) {
         value: cc.id?.toString() || cc.code,
         label: `${cc.code || ''} - ${cc.name || cc.description || ''}`.trim()
       }));
+    } else if (field.key === 'weight_unit' && tileId === 'packaging-types' && unitsOfMeasure.length > 0) {
+      options = unitsOfMeasure.map((uom: any) => ({
+        value: uom.code,
+        label: `${uom.code} - ${uom.name}`.trim()
+      }));
     }
-    
+
     switch (field.type) {
       case 'select':
         // Handle dynamic options (array of objects with value/label)
@@ -429,7 +460,7 @@ function GenericMasterDataTile({ tileId }: { tileId: string }) {
               {editingItem ? 'Update the information below.' : 'Fill in the information below to create a new item.'}
             </DialogDescription>
           </DialogHeader>
-          
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {config.fields.map((field: any) => (
@@ -442,7 +473,7 @@ function GenericMasterDataTile({ tileId }: { tileId: string }) {
                 </div>
               ))}
             </div>
-            
+
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
                 Cancel
@@ -463,16 +494,17 @@ export default function UnifiedMasterDataTile({ tileId }: UnifiedMasterDataTileP
   switch (tileId) {
     case 'credit-limit-groups':
       return <CreditLimitGroups />;
-    
+
     case 'business-areas':
       return <BusinessArea />;
-    
+
     // Use generic component for configured tiles
     case 'warehouse-types':
     case 'movement-types':
     case 'material-types':
+    case 'packaging-types':
       return <GenericMasterDataTile tileId={tileId} />;
-    
+
     // Add more cases for other master data tiles as needed
     default:
       return (

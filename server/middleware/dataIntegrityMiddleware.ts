@@ -243,6 +243,8 @@ export class DataIntegrityMiddleware {
           code VARCHAR(10) UNIQUE NOT NULL,
           name VARCHAR(255) NOT NULL,
           country VARCHAR(100),
+          region VARCHAR(100),
+          region_id INTEGER REFERENCES regions(id),
           currency VARCHAR(3),
           active BOOLEAN DEFAULT true,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,

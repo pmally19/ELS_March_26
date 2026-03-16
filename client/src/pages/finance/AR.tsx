@@ -2560,9 +2560,9 @@ function PaymentForm({ onSubmit, openItems, isLoading }: any) {
 
   // Fetch all customers from API
   const { data: customersData, isLoading: isLoadingCustomers } = useQuery({
-    queryKey: ['/api/master-data/customers'],
+    queryKey: ['/api/master-data/customer'],
     queryFn: async () => {
-      const response = await fetch('/api/master-data/customers');
+      const response = await fetch('/api/master-data/customer');
       if (!response.ok) throw new Error('Failed to fetch customers');
       return response.json();
     },

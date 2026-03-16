@@ -492,6 +492,24 @@ export default function PricingProcedures() {
                   </FormItem>
                 )}
               />
+              <FormField
+                control={form.control}
+                name="is_active"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center space-x-2 space-y-0">
+                    <FormControl>
+                      <input
+                        type="checkbox"
+                        checked={field.value}
+                        onChange={(e) => field.onChange(e.target.checked)}
+                        className="h-4 w-4 rounded border-gray-300"
+                      />
+                    </FormControl>
+                    <FormLabel>Active</FormLabel>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
                   Cancel
@@ -537,19 +555,22 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
 
   // Form schema for Steps
   const stepFormSchema = z.object({
-    condition_type_code: z.string().optional(), // Made optional for subtotal steps
+    condition_type_code: z.string().nullish(), // Made optional for subtotal steps
+    description: z.string().nullish(),
+    counter: z.coerce.number().optional().nullable(),
     step_number: z.coerce.number().min(1, "Step number must be positive"),
     is_mandatory: z.boolean().default(false),
-    account_key: z.string().optional(),
+    account_key: z.string().nullish(),
     // New ERP-compatible fields
     from_step: z.union([z.string(), z.number()]).optional().transform(v => v === "" || v === 0 || Number.isNaN(Number(v)) ? null : Number(v)),
     to_step: z.union([z.string(), z.number()]).optional().transform(v => v === "" || v === 0 || Number.isNaN(Number(v)) ? null : Number(v)),
-    requirement: z.string().optional(),
+    requirement: z.string().nullish(),
     is_statistical: z.boolean().default(false),
     is_printable: z.boolean().default(true),
     is_subtotal: z.boolean().default(false),
     manual_entry: z.boolean().default(false),
-    accrual_key: z.string().optional()
+    accrual_key: z.string().nullish(),
+    comments: z.string().nullish(),
   }).refine(
     (data) => {
       // If is_subtotal is false, condition_type_code is required (Standard Step)
@@ -665,7 +686,8 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
   const startEdit = (step: any) => {
     setEditingStep(step);
     stepForm.reset({
-      condition_type_code: step.condition_type_code,
+      condition_type_code: step.condition_type_code || "",
+      counter: step.counter,
       step_number: step.step_number,
       is_mandatory: step.is_mandatory,
       account_key: step.account_key || "",
@@ -676,7 +698,9 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
       is_printable: step.is_printable !== false,
       is_subtotal: step.is_subtotal || false,
       manual_entry: step.manual_entry || false,
-      accrual_key: step.accrual_key || ""
+      accrual_key: step.accrual_key || "",
+      comments: step.comments || "",
+      description: step.description || ""
     });
   };
 
@@ -736,7 +760,7 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
                     name="condition_type_code"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="text-xs">Condtion Type</FormLabel>
+                        <FormLabel className="text-xs">Condition Type</FormLabel>
                         <Select
                           onValueChange={(val) => {
                             const value = val === "none" ? "" : val;
@@ -866,7 +890,7 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
                           <input
                             type="checkbox"
                             checked={field.value}
-                            onChange={field.onChange}
+                            onChange={(e) => field.onChange(e.target.checked)}
                             className="h-4 w-4 rounded border-gray-300"
                           />
                         </FormControl>
@@ -886,7 +910,7 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
                           <input
                             type="checkbox"
                             checked={field.value}
-                            onChange={field.onChange}
+                            onChange={(e) => field.onChange(e.target.checked)}
                             className="h-4 w-4 rounded border-gray-300"
                           />
                         </FormControl>
@@ -905,7 +929,7 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
                           <input
                             type="checkbox"
                             checked={field.value}
-                            onChange={field.onChange}
+                            onChange={(e) => field.onChange(e.target.checked)}
                             className="h-4 w-4 rounded border-gray-300"
                           />
                         </FormControl>
@@ -925,7 +949,7 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
                           <input
                             type="checkbox"
                             checked={field.value}
-                            onChange={field.onChange}
+                            onChange={(e) => field.onChange(e.target.checked)}
                             className="h-4 w-4 rounded border-gray-300"
                           />
                         </FormControl>
@@ -993,7 +1017,7 @@ function StepManager({ procedureCode, procedureId, conditionTypes, accountKeys }
                       <input
                         type="checkbox"
                         checked={field.value}
-                        onChange={field.onChange}
+                        onChange={(e) => field.onChange(e.target.checked)}
                         className="h-4 w-4 rounded border-gray-300"
                       />
                     </FormControl>

@@ -39,11 +39,11 @@ router.get("/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const [customerType] = await db.select().from(customerTypes).where(eq(customerTypes.id, id));
-    
+
     if (!customerType) {
       return res.status(404).json({ error: "Customer type not found" });
     }
-    
+
     res.json(customerType);
   } catch (error) {
     console.error("Error fetching customer type:", error);
@@ -55,14 +55,17 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const validatedData = customerTypeSchema.parse(req.body);
-    
+
+    const dbPayload = {
+      ...validatedData,
+      defaultCreditLimit: validatedData.defaultCreditLimit === "" ? null : validatedData.defaultCreditLimit,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
     const [newCustomerType] = await db
       .insert(customerTypes)
-      .values({
-        ...validatedData,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      })
+      .values(dbPayload)
       .returning();
 
     res.status(201).json(newCustomerType);
@@ -82,12 +85,18 @@ router.put("/:id", async (req, res) => {
     const id = parseInt(req.params.id);
     const validatedData = customerTypeSchema.partial().parse(req.body);
 
+    const dbPayload = {
+      ...validatedData,
+      updatedAt: new Date()
+    };
+
+    if (dbPayload.defaultCreditLimit === "") {
+      dbPayload.defaultCreditLimit = null;
+    }
+
     const [updatedCustomerType] = await db
       .update(customerTypes)
-      .set({
-        ...validatedData,
-        updatedAt: new Date()
-      })
+      .set(dbPayload)
       .where(eq(customerTypes.id, id))
       .returning();
 
@@ -110,7 +119,7 @@ router.put("/:id", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    
+
     const [deletedCustomerType] = await db
       .delete(customerTypes)
       .where(eq(customerTypes.id, id))
@@ -160,12 +169,15 @@ router.post("/import", async (req, res) => {
         };
 
         const validatedData = customerTypeSchema.parse(customerTypeData);
-        
-        await db.insert(customerTypes).values({
+
+        const dbPayload = {
           ...validatedData,
+          defaultCreditLimit: validatedData.defaultCreditLimit === "" ? null : validatedData.defaultCreditLimit,
           createdAt: new Date(),
           updatedAt: new Date()
-        });
+        };
+
+        await db.insert(customerTypes).values(dbPayload);
 
         imported++;
       } catch (error) {

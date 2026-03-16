@@ -38,42 +38,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get specific procedure steps by ID
-router.get('/:id/steps', async (req, res) => {
-  try {
-    const { id } = req.params;
-    console.log(`[PRICING-PROCEDURES] Fetching steps for procedure ID: ${id}`);
-
-    const result = await pool.query(`
-      SELECT 
-        pps.id,
-        pps.procedure_id,
-        pps.counter,
-        pps.step_number,
-        pps.condition_type_code,
-        pps.description,
-        pps.from_step,
-        pps.to_step,
-        pps.manual_entry,
-        pps.comments,
-        pps.is_mandatory,
-        pps.account_key,
-        pps.created_at,
-        -- Fetch condition name using subquery to handle company-specific types
-        (SELECT condition_name FROM condition_types ct WHERE ct.condition_code = pps.condition_type_code LIMIT 1) as condition_name
-      FROM pricing_procedure_steps pps
-      WHERE pps.procedure_id = $1
-      ORDER BY pps.counter ASC
-    `, [id]);
-
-    console.log(`[PRICING-PROCEDURES] Found ${result.rows.length} steps for ID ${id}`);
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching procedure steps:', error);
-    res.status(500).json({ error: 'Failed to fetch procedure steps' });
-  }
-});
-
 // Create pricing procedure
 router.post('/', async (req, res) => {
   try {
@@ -117,14 +81,20 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { procedure_name, description, is_active } = req.body;
+    const { procedure_code, procedure_name, description, is_active } = req.body;
 
     const result = await pool.query(`
       UPDATE pricing_procedures 
-      SET procedure_name = $1, description = $2, is_active = $3, updated_at = CURRENT_TIMESTAMP, updated_by = $4
-      WHERE id = $5 AND "_deletedAt" IS NULL
+      SET 
+        procedure_code = COALESCE($1, procedure_code),
+        procedure_name = COALESCE($2, procedure_name), 
+        description = COALESCE($3, description), 
+        is_active = COALESCE($4, is_active), 
+        updated_at = CURRENT_TIMESTAMP, 
+        updated_by = $5
+      WHERE id = $6 AND "_deletedAt" IS NULL
       RETURNING *
-    `, [procedure_name, description, is_active, (req as any).user?.id || 1, id]);
+    `, [procedure_code, procedure_name, description, is_active, (req as any).user?.id || 1, id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Pricing procedure not found' });
@@ -628,11 +598,14 @@ router.post('/:procedureCode/preview', async (req, res) => {
       distributionChannelId: distributionChannelId ? parseInt(distributionChannelId) : undefined,
       divisionId: divisionId ? parseInt(divisionId) : undefined,
       quantity: parseFloat(firstItem.quantity || 1),
-      manualOverrides: manualOverrides as Record<string, string>,
+      manualOverrides: (manualOverrides as Record<string, any>)[0] || {},
+      fallbackPrice: parseFloat(firstItem.unit_price || 0),
       departureCountry: firstDepartureLoc.country,
       departureState: firstDepartureLoc.state,
       destinationCountry,
       destinationState,
+      plantCode: firstItem.plant_code,
+      storageLocation: firstItem.storage_location,
     };
 
     const result = await pricingCalculationService.calculatePricing(
@@ -674,11 +647,14 @@ router.post('/:procedureCode/preview', async (req, res) => {
             distributionChannelId: distributionChannelId ? parseInt(distributionChannelId) : undefined,
             divisionId: divisionId ? parseInt(divisionId) : undefined,
             quantity: parseFloat(item.quantity || 1),
-            manualOverrides: manualOverrides as Record<string, string>,
+            manualOverrides: (manualOverrides as Record<string, any>)[i] || {},
+            fallbackPrice: parseFloat(item.unit_price || 0),
             departureCountry: itemDepartureLoc.country,
             departureState: itemDepartureLoc.state,
             destinationCountry,
             destinationState,
+            plantCode: item.plant_code,
+            storageLocation: item.storage_location,
           }
         );
 

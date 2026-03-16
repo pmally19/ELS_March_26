@@ -14,10 +14,13 @@ export async function getCompanyCodes(req: Request, res: Response) {
         fyv.variant_id as fiscal_year_variant_code,
         fyv.description as fiscal_year_description,
         coa.chart_id as chart_of_accounts_code,
-        coa.description as chart_of_accounts_name
+        coa.description as chart_of_accounts_name,
+        r.name as region_name,
+        r.code as region_code
       FROM company_codes cc
       LEFT JOIN fiscal_year_variants fyv ON cc.fiscal_year_variant_id = fyv.id
       LEFT JOIN chart_of_accounts coa ON cc.chart_of_accounts_id = coa.id
+      LEFT JOIN regions r ON cc.region_id = r.id
       WHERE cc."_isActive" IS NOT false
       ORDER BY cc.code
     `);
@@ -44,10 +47,13 @@ export async function getCompanyCodeById(req: Request, res: Response) {
         fyv.variant_id as fiscal_year_variant_code,
         fyv.description as fiscal_year_description,
         coa.chart_id as chart_of_accounts_code,
-        coa.description as chart_of_accounts_name
+        coa.description as chart_of_accounts_name,
+        r.name as region_name,
+        r.code as region_code
       FROM company_codes cc
       LEFT JOIN fiscal_year_variants fyv ON cc.fiscal_year_variant_id = fyv.id
       LEFT JOIN chart_of_accounts coa ON cc.chart_of_accounts_id = coa.id
+      LEFT JOIN regions r ON cc.region_id = r.id
       WHERE cc.id = ${id}
         AND cc."_isActive" IS NOT false
     `);
@@ -150,7 +156,7 @@ export async function createCompanyCode(req: Request, res: Response) {
     // created_at / updated_at already exist on the table (not redundant)
     const insertResult = await db.execute(sql`
       INSERT INTO company_codes (
-        code, name, city, country, currency, language, active,
+        code, name, city, country, region, region_id, currency, language, active,
         description, tax_id, address, state, postal_code, phone, email, website, logo_url,
         fiscal_year_variant_id, chart_of_accounts_id,
         created_at, updated_at,
@@ -158,7 +164,7 @@ export async function createCompanyCode(req: Request, res: Response) {
         "_isActive", "_deletedAt"
       )
       VALUES (
-        ${data.code}, ${data.name}, ${data.city || null}, ${data.country}, ${data.currency}, ${data.language || null}, ${data.active},
+        ${data.code}, ${data.name}, ${data.city || null}, ${data.country}, ${data.region || null}, ${data.regionId || null}, ${data.currency}, ${data.language || null}, ${data.active},
         ${data.description || null}, ${data.taxId || null}, ${data.address || null}, ${data.state || null}, ${data.postalCode || null}, ${data.phone || null}, ${data.email || null}, ${data.website || null}, ${data.logoUrl || null},
         ${fiscalYearVariantId}, ${chartOfAccountsId},
         NOW(), NOW(),
@@ -305,6 +311,8 @@ export async function updateCompanyCode(req: Request, res: Response) {
         name = ${data.name}, 
         city = ${data.city || null}, 
         country = ${data.country}, 
+        region = ${data.region || null},
+        region_id = ${data.regionId || null},
         currency = ${data.currency}, 
         language = ${data.language || null}, 
         active = ${data.active},
@@ -481,10 +489,38 @@ export async function bulkImportCompanyCodes(req: Request, res: Response) {
           continue;
         }
 
+        // Get chart_of_accounts_id from chartOfAccounts (chart_id string)
+        let chartOfAccountsId = null;
+        if (data.chartOfAccounts && data.chartOfAccounts.trim() !== '') {
+          const trimmedChartId = data.chartOfAccounts.trim();
+          const coaResult = await db.execute(sql`SELECT id FROM chart_of_accounts WHERE chart_id = ${trimmedChartId}`);
+          if (coaResult.rows.length > 0) {
+            chartOfAccountsId = coaResult.rows[0].id;
+          }
+        }
+
+        // Get fiscal_year_variant_id from fiscalYear (variant_id string)
+        let fiscalYearVariantId = null;
+        if (data.fiscalYear && data.fiscalYear.trim() !== '') {
+          const trimmedFiscalYear = data.fiscalYear.trim();
+          const fyvResult = await db.execute(sql`SELECT id FROM fiscal_year_variants WHERE variant_id = ${trimmedFiscalYear}`);
+          if (fyvResult.rows.length > 0) {
+            fiscalYearVariantId = fyvResult.rows[0].id;
+          }
+        }
+
         // Create company code
         const insertResult = await db.execute(sql`
-          INSERT INTO company_codes (code, name, city, country, currency, language, active, created_at, updated_at)
-          VALUES (${data.code}, ${data.name}, ${data.city || null}, ${data.country}, ${data.currency}, ${data.language || null}, ${data.active}, NOW(), NOW())
+          INSERT INTO company_codes (
+            code, name, description, city, country, currency, tax_id, address, state, postal_code, phone, email, website, logo_url,
+            language, active, fiscal_year_variant_id, chart_of_accounts_id, created_at, updated_at
+          )
+          VALUES (
+            ${data.code}, ${data.name}, ${data.description || null}, ${data.city || null}, ${data.country}, ${data.currency},
+            ${data.taxId || null}, ${data.address || null}, ${data.state || null}, ${data.postalCode || null},
+            ${data.phone || null}, ${data.email || null}, ${data.website || null}, ${data.logoUrl || null},
+            ${data.language || null}, ${data.active}, ${fiscalYearVariantId}, ${chartOfAccountsId}, NOW(), NOW()
+          )
           RETURNING *
         `);
 

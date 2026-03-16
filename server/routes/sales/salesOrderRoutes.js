@@ -1,6 +1,7 @@
 import express from 'express';
 import { pool } from '../../db.ts';
 import { InventoryTrackingService } from '../../services/inventoryTrackingService.js';
+import { salesDistributionService } from '../../services/sales-distribution-service.ts';
 
 const router = express.Router();
 const inventoryTrackingService = new InventoryTrackingService(pool);
@@ -129,6 +130,58 @@ router.post('/', async (req, res) => {
     const tax_amount = subtotal * 0.1;
     const shipping_amount = subtotal > 1000 ? 0 : 50;
     const total_amount = subtotal + tax_amount + shipping_amount;
+    
+    // Determine shipping point and condition if not fully provided
+    let finalShippingPointId = shipping_point_id;
+    let finalShippingCondition = shipping_condition;
+
+    if (items.length > 0) {
+      try {
+        // 1. Get shipping condition from customer if not provided
+        if (!finalShippingCondition && customer_id) {
+          const customerResult = await client.query(
+            `SELECT "shipping_condition_key" FROM erp_customers WHERE id = $1`,
+            [customer_id]
+          );
+          if (customerResult.rows.length > 0 && customerResult.rows[0].shipping_condition_key) {
+            finalShippingCondition = customerResult.rows[0].shipping_condition_key;
+          }
+        }
+        
+        // Default if still empty
+        if (!finalShippingCondition) finalShippingCondition = '01';
+
+        // 2. Get loading group and plant from first material if we need to determine shipping point
+        if (!finalShippingPointId) {
+          const materialResult = await client.query(
+            `SELECT loading_group, plant_code FROM materials WHERE id = $1`,
+            [items[0].product_id]
+          );
+          
+          if (materialResult.rows.length > 0) {
+            const loadingGroup = materialResult.rows[0].loading_group || '01';
+            const plantCode = materialResult.rows[0].plant_code || '1010';
+
+            // 3. Determine shipping point code
+            const spCode = await salesDistributionService.determineShippingPoint(
+              finalShippingCondition,
+              loadingGroup,
+              plantCode
+            );
+
+            if (spCode) {
+              // 4. Look up shipping point ID
+              const spRecord = await salesDistributionService.getShippingPointByCode(spCode);
+              if (spRecord) {
+                finalShippingPointId = spRecord.id;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error in shipping point determination:', err);
+      }
+    }
 
     // Create tables if they don't exist
     await client.query(`
@@ -189,15 +242,15 @@ router.post('/', async (req, res) => {
         payment_terms, shipping_method, currency, subtotal, tax_amount,
         shipping_amount, total_amount, notes, sales_rep, priority,
         shipping_condition, shipping_point_id
-      ) VALUES (
-        $1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
-      ) RETURNING id
-    `, [
-      order_number, customer_name, order_date, delivery_date,
-      payment_terms, shipping_method, currency, subtotal, tax_amount,
-      shipping_amount, total_amount, notes, sales_rep, priority,
-      shipping_condition, shipping_point_id
-    ]);
+    ) VALUES (
+      $1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+    ) RETURNING id
+  `, [
+    order_number, customer_name, order_date, delivery_date,
+    payment_terms, shipping_method, currency, subtotal, tax_amount,
+    shipping_amount, total_amount, notes, sales_rep, priority,
+    finalShippingCondition, finalShippingPointId
+  ]);
 
     const order_id = orderResult.rows[0].id;
 

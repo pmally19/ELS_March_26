@@ -62,6 +62,7 @@ router.post("/determine-procedure", async (req: Request, res: Response) => {
         AND dv.code = $3
         AND cpp.procedure_code = $4
         AND dpp.procedure_code = $5
+        AND ppd."_deletedAt" IS NULL
       LIMIT 1
     `, [sales_org_code, distribution_channel_code, division_code, customer_pricing_procedure, document_pricing_procedure]);
 

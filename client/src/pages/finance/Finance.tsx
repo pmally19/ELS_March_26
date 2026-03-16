@@ -298,8 +298,39 @@ export default function Finance() {
         </Card>
       </div>
 
-      {/* Second Row (3 tiles) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
+      {/* Second Row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+
+        <Card className="hover:shadow-lg transition-shadow cursor-pointer border-2 border-indigo-200 bg-indigo-50/30" onClick={() => window.location.href = '/finance/financial-statements-viewer'}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-indigo-700">
+              📑 Financial Statements
+            </CardTitle>
+            <CardDescription>
+              Generate custom balance sheets and profit & loss reports
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <div>• Custom Report Templates</div>
+              <div>• Real-time Balance Rollups</div>
+              <div>• Export to CSV & Print</div>
+              <div className="pt-2 border-t mt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full text-indigo-600 border-indigo-200"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.location.href = '/finance/report-template-builder';
+                  }}
+                >
+                  ⚙️ Manage Templates
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <Card className="hover:shadow-lg transition-shadow cursor-pointer" onClick={() => window.location.href = '/finance/reconciliation'}>
           <CardHeader>

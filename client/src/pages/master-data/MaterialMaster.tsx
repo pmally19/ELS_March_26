@@ -88,14 +88,14 @@ export default function MaterialMaster() {
   const [formData, setFormData] = useState({
     material_code: "",
     description: "",
-    material_type: "", // Will be set dynamically when material types are loaded
-    valuation_class: "",
-    base_unit: "", // No default - must be selected
-    industry_sector: "", // No default - must be selected
-    material_group: "",
-    mrp_type: "", // No default - must be selected from master data
-    procurement_type: "", // F=External, E=In-house, X=Both
-    lot_size: "", // EX=Exact, FX=Fixed, MB=Monthly, etc.
+    material_type: undefined as string | undefined,
+    valuation_class: undefined as string | undefined,
+    base_unit: undefined as string | undefined,
+    industry_sector: undefined as string | undefined,
+    material_group: undefined as string | undefined,
+    mrp_type: undefined as string | undefined,
+    procurement_type: undefined as string | undefined,
+    lot_size: undefined as string | undefined,
     reorder_point: 0,
     safety_stock: 0,
     min_stock: 0, // Minimum stock level
@@ -103,28 +103,28 @@ export default function MaterialMaster() {
     lead_time: 0, // Lead time in days
     planned_delivery_time: 0, // Days (if Procurement Type = F)
     production_time: 0, // Days (if Procurement Type = E)
-    mrp_controller: "", // MRP Controller code
+    mrp_controller: undefined as string | undefined,
     base_price: 0,
     gross_weight: 0,
     net_weight: 0,
-    weight_unit: "", // No default - must be selected
+    weight_unit: undefined as string | undefined,
     volume: 0,
-    volume_unit: "", // No default - must be selected
-    price_control: "", // S=Standard Price, V=Moving Average
-    sales_organization: "", // Sales organization code
-    distribution_channel: "", // Distribution channel code
-    division: "", // Division code
-    purchase_organization: "", // Purchase organization code
-    purchasing_group: "", // Purchasing group code
-    production_storage_location: "", // Production storage location
+    volume_unit: undefined as string | undefined,
+    price_control: undefined as string | undefined,
+    sales_organization: undefined as string | undefined,
+    distribution_channel: undefined as string | undefined,
+    division: undefined as string | undefined,
+    purchase_organization: undefined as string | undefined,
+    purchasing_group: undefined as string | undefined,
+    production_storage_location: undefined as string | undefined,
     is_active: true, // Required field - must be explicitly set
-    plant_code: "", // Plant assignment
-    profit_center: "", // Profit center code
-    cost_center: "", // Cost center code
-    item_category_group: "", // Item category group code
-    material_assignment_group_code: "", // Material assignment group code
-    loading_group: "", // Loading group code
-    tax_classification_code: "" // Tax classification code
+    plant_code: undefined as string | undefined,
+    profit_center: undefined as string | undefined,
+    cost_center: undefined as string | undefined,
+    item_category_group: undefined as string | undefined,
+    material_assignment_group_code: undefined as string | undefined,
+    loading_group: undefined as string | undefined,
+    tax_classification_code: undefined as string | undefined
   });
   const [selectedPlantId, setSelectedPlantId] = useState('');
   const [activeMaterialView, setActiveMaterialView] = useState('basic');
@@ -140,12 +140,17 @@ export default function MaterialMaster() {
   });
 
   // Fetch Units of Measure and filter to Weight category
+  // Fetch Units of Measure and filter by category
   const { data: allUom = [] } = useQuery({
     queryKey: ["/api/master-data/units-of-measure"],
   });
-  // Show all UOMs to maximize choices; sort by code
-  const weightUoms: Array<{ id: number; code: string; name: string; category?: string }> = Array.isArray(allUom)
-    ? [...allUom].sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
+
+  const weightUoms = Array.isArray(allUom)
+    ? allUom.filter((u: any) => u.category === 'MASS').sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
+    : [];
+
+  const volumeUoms = Array.isArray(allUom)
+    ? allUom.filter((u: any) => u.category === 'VOLUME').sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
     : [];
 
   // Fetch Material Types for dropdown
@@ -233,10 +238,20 @@ export default function MaterialMaster() {
     })).sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
     : [];
 
-  // Fetch Plants for dropdown
-  const { data: plantsRaw = [], isLoading: plantsLoading } = useQuery({
-    queryKey: ["/api/master-data/plant"],
-  });
+
+  // --- MRP Config Data ---
+  const { data: mrpTypesRaw = [], isLoading: mrpTypesLoading } = useQuery({ queryKey: ["/api/master-data/mrp-config/mrp-types"] });
+  const mrpTypes = Array.isArray(mrpTypesRaw) ? mrpTypesRaw.map((mt: any) => ({ ...mt, name: mt.name || mt.description || "" })) : [];
+
+  const { data: procurementTypesRaw = [], isLoading: procurementTypesLoading } = useQuery({ queryKey: ["/api/master-data/mrp-config/procurement-types"] });
+  const procurementTypes = Array.isArray(procurementTypesRaw) ? procurementTypesRaw : [];
+
+  const { data: lotSizesRaw = [], isLoading: lotSizesLoading } = useQuery({ queryKey: ["/api/master-data/mrp-config/lot-sizes"] });
+  const lotSizes = Array.isArray(lotSizesRaw) ? lotSizesRaw : [];
+
+  const { data: mrpProceduresRaw = [], isLoading: mrpProceduresLoading } = useQuery({ queryKey: ["/api/master-data/mrp-config/mrp-procedures"] });
+  const mrpProcedures = Array.isArray(mrpProceduresRaw) ? mrpProceduresRaw : [];
+
 
   // Fetch Profit Centers for dropdown
   const { data: profitCenters = [] } = useQuery({
@@ -256,7 +271,6 @@ export default function MaterialMaster() {
       const response = await fetch("/api/master-data/cost-center");
       if (!response.ok) return [];
       const data = await response.json();
-      // Handle both array response and object with data property
       return Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : []);
     },
   });
@@ -275,10 +289,15 @@ export default function MaterialMaster() {
     }))
     : [];
 
+  // Fetch Plants for dropdown
+  const { data: plantsRaw = [], isLoading: plantsLoading } = useQuery({
+    queryKey: ["/api/master-data/plant"],
+  });
+
   // Normalize plants data to handle field name variations and ensure consistent structure
   const plants = Array.isArray(plantsRaw)
     ? plantsRaw
-      .filter((p: any) => p.isActive !== false && p.is_active !== false) // Only show active plants
+      .filter((p: any) => p.isActive !== false && p.is_active !== false)
       .map((p: any) => ({
         id: p.id,
         code: p.code || p.plant_code || '',
@@ -307,11 +326,6 @@ export default function MaterialMaster() {
       .sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
     : [];
 
-  // Fetch MRP Types for dropdown
-  const { data: mrpTypes = [], isLoading: mrpTypesLoading } = useQuery({
-    queryKey: ["/api/master-data/mrp-types"],
-  });
-
   // Fetch MRP Controllers for dropdown
   const { data: mrpControllersRaw = [], isLoading: mrpControllersLoading } = useQuery({
     queryKey: ["/api/master-data/mrp-controllers"],
@@ -320,13 +334,13 @@ export default function MaterialMaster() {
   // Normalize MRP Controllers data (convert snake_case to camelCase and filter active)
   const mrpControllers = Array.isArray(mrpControllersRaw)
     ? mrpControllersRaw
-      .filter((mc: any) => mc.is_active !== false) // Only show active controllers
+      .filter((mc: any) => mc.is_active !== false)
       .map((mc: any) => ({
         id: mc.id,
         controller_code: mc.controller_code,
         controller_name: mc.controller_name,
         description: mc.description,
-        mrp_controller: mc.controller_code, // Alias for compatibility
+        mrp_controller: mc.controller_code,
         is_active: mc.is_active
       }))
       .sort((a: any, b: any) => String(a.controller_code).localeCompare(String(b.controller_code)))
@@ -340,7 +354,7 @@ export default function MaterialMaster() {
   // Normalize Industry Sectors data and filter active
   const industrySectors = Array.isArray(industrySectorsRaw)
     ? industrySectorsRaw
-      .filter((is: any) => is.active !== false) // Only show active sectors
+      .filter((is: any) => is.active !== false)
       .map((is: any) => ({
         id: is.id,
         code: is.code,
@@ -351,7 +365,7 @@ export default function MaterialMaster() {
       .sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)))
     : [];
 
-  // Fetch Purchase Groups for dropdown (using purchasing-group endpoint which now queries correct table)
+  // Fetch Purchase Groups for dropdown
   const { data: purchaseGroupsRaw = [], isLoading: purchaseGroupsLoading } = useQuery({
     queryKey: ["/api/master-data/purchasing-groups"],
   });
@@ -518,9 +532,16 @@ export default function MaterialMaster() {
       updates.industry_sector = selectedMaterialType.default_industry_sector;
     }
 
-    // Apply updates if any
-    if (Object.keys(updates).length > 0) {
-      setFormData(prev => ({ ...prev, ...updates }));
+    // Apply updates if any - only set non-empty string values
+    const filteredUpdates: any = {};
+    Object.keys(updates).forEach(key => {
+      const val = updates[key];
+      if (val !== undefined && val !== null && val !== '') {
+        filteredUpdates[key] = val;
+      }
+    });
+    if (Object.keys(filteredUpdates).length > 0) {
+      setFormData(prev => ({ ...prev, ...filteredUpdates }));
     }
   }, [formData.material_type, materialTypes, editingMaterial]);
 
@@ -661,16 +682,20 @@ export default function MaterialMaster() {
     }
   }, []);
 
-  // Helper function to determine field enable/disable based on MRP Type
+  // Helper function to determine field enable/disable using MRP Procedure as the bridge
   const getMrpFieldDisabled = (fieldName: string): boolean => {
     if (!formData.mrp_type) {
       return false; // Enable all if no MRP type selected yet
     }
 
-    const mrpType = formData.mrp_type.toUpperCase();
+    const selectedMrpTypeObj = Array.isArray(mrpTypes) ? (mrpTypes as any[]).find((mt: any) => mt.code === formData.mrp_type) : null;
+    if (!selectedMrpTypeObj) return false;
 
-    // ND - No Planning: Disable ALL MRP fields
-    if (mrpType === 'ND') {
+    // The MRP Procedure acts as the bridge determining which fields are applicable
+    const mrpProcedure = (selectedMrpTypeObj.mrpProcedure || selectedMrpTypeObj.mrp_procedure || '').toUpperCase();
+
+    // N - No Planning (e.g. ND): Disable ALL MRP fields
+    if (mrpProcedure === 'N') {
       const mrpFields = [
         'procurement_type',
         'lot_size',
@@ -683,22 +708,22 @@ export default function MaterialMaster() {
       return mrpFields.includes(fieldName);
     }
 
-    // VB - Reorder Point Planning: Enable reorder point, safety stock, lot size; Disable procurement type, delivery/production time
-    if (mrpType === 'VB' || mrpType === 'VM') {
+    // V - Reorder Point Planning (e.g. VB, VM): Enable reorder point, safety stock, lot size
+    if (mrpProcedure === 'V') {
       if (fieldName === 'procurement_type' || fieldName === 'planned_delivery_time' || fieldName === 'production_time') {
-        return true; // Disable
+        return true; // Disable these for reorder point planning in standard configuration
       }
       if (fieldName === 'reorder_point' || fieldName === 'safety_stock' || fieldName === 'lot_size') {
         return false; // Enable
       }
     }
 
-    // PD - Full MRP: Enable all fields
-    if (mrpType === 'PD') {
+    // P - Full MRP (e.g. PD, R1, ST): Enable all fields
+    if (mrpProcedure === 'P') {
       return false; // Enable all
     }
 
-    // Default: Enable all for other MRP types
+    // Default: Enable all for other/unmapped MRP procedures
     return false;
   };
 
@@ -902,10 +927,10 @@ export default function MaterialMaster() {
       material_code: "",
       description: "",
       material_type: defaultMaterialType,
-      valuation_class: "",
-      base_unit: "", // No default - must be selected
-      industry_sector: "", // No default - must be selected
-      material_group: "",
+      valuation_class: undefined as string | undefined,
+      base_unit: undefined as string | undefined,
+      industry_sector: undefined as string | undefined,
+      material_group: undefined as string | undefined,
       mrp_type: "", // No default - must be selected
       procurement_type: "",
       lot_size: "",
@@ -920,9 +945,9 @@ export default function MaterialMaster() {
       base_price: 0,
       gross_weight: 0,
       net_weight: 0,
-      weight_unit: "", // No default - must be selected
+      weight_unit: undefined as string | undefined,
       volume: 0,
-      volume_unit: "", // No default - must be selected
+      volume_unit: undefined as string | undefined,
       price_control: "",
       sales_organization: "",
       distribution_channel: "",
@@ -1435,7 +1460,7 @@ export default function MaterialMaster() {
                         <div>
                           <label className="text-sm font-medium">Material Type <span className="text-red-500">*</span> {materialTypesLoading ? "(Loading...)" : `(${Array.isArray(materialTypes) ? materialTypes.length : 0} types)`}</label>
                           <Select
-                            value={formData.material_type}
+                            value={formData.material_type || undefined}
                             onValueChange={(val) => {
                               console.log('Material type changed to:', val);
                               // Clear valuation class when material type changes
@@ -1528,7 +1553,7 @@ export default function MaterialMaster() {
                         <div>
                           <label className="text-sm font-medium">Base Unit <span className="text-red-500">*</span></label>
                           <Select
-                            value={formData.base_unit}
+                            value={formData.base_unit || undefined}
                             onValueChange={(val) => setFormData({ ...formData, base_unit: val })}
                             required
                           >
@@ -1541,7 +1566,9 @@ export default function MaterialMaster() {
                                   <SelectItem key={u.id} value={u.code}>{u.code} — {u.name}</SelectItem>
                                 ))
                               ) : (
-                                <SelectItem value="" disabled>No units available</SelectItem>
+                                <SelectItem value="__no_units__" disabled>
+                                  No units available
+                                </SelectItem>
                               )}
                             </SelectContent>
                           </Select>
@@ -1635,7 +1662,7 @@ export default function MaterialMaster() {
                         <div>
                           <label className="text-sm font-medium">Weight Unit</label>
                           <Select
-                            value={formData.weight_unit}
+                            value={formData.weight_unit || undefined}
                             onValueChange={(val) => setFormData({ ...formData, weight_unit: val })}
                           >
                             <SelectTrigger>
@@ -1647,7 +1674,9 @@ export default function MaterialMaster() {
                                   <SelectItem key={u.id} value={u.code}>{u.code} — {u.name}</SelectItem>
                                 ))
                               ) : (
-                                <SelectItem value="" disabled>No weight units available</SelectItem>
+                                <SelectItem value="__no_weight_units__" disabled>
+                                  No weight units available
+                                </SelectItem>
                               )}
                             </SelectContent>
                           </Select>
@@ -1666,19 +1695,21 @@ export default function MaterialMaster() {
                         <div>
                           <label className="text-sm font-medium">Volume Unit</label>
                           <Select
-                            value={formData.volume_unit}
+                            value={formData.volume_unit || undefined}
                             onValueChange={(val) => setFormData({ ...formData, volume_unit: val })}
                           >
                             <SelectTrigger>
                               <SelectValue placeholder="Select volume unit" />
                             </SelectTrigger>
                             <SelectContent>
-                              {Array.isArray(allUom) && allUom.length > 0 ? (
-                                (allUom as any[]).slice().sort((a: any, b: any) => String(a.code).localeCompare(String(b.code))).map((u: any) => (
+                              {Array.isArray(volumeUoms) && volumeUoms.length > 0 ? (
+                                volumeUoms.map((u: any) => (
                                   <SelectItem key={u.id} value={u.code}>{u.code} — {u.name}</SelectItem>
                                 ))
                               ) : (
-                                <SelectItem value="" disabled>No volume units available</SelectItem>
+                                <SelectItem value="__no_volume_units__" disabled>
+                                  No volume units available
+                                </SelectItem>
                               )}
                             </SelectContent>
                           </Select>
@@ -1801,7 +1832,7 @@ export default function MaterialMaster() {
                         <div>
                           <label className="text-sm font-medium">MRP Type {mrpTypesLoading ? "(Loading...)" : `(${Array.isArray(mrpTypes) ? mrpTypes.length : 0} types)`}</label>
                           <Select
-                            value={formData.mrp_type}
+                            value={formData.mrp_type || undefined}
                             onValueChange={(val) => setFormData({ ...formData, mrp_type: val })}
                             disabled={mrpTypesLoading}
                           >
@@ -1814,8 +1845,8 @@ export default function MaterialMaster() {
                                   Loading MRP types...
                                 </SelectItem>
                               ) : Array.isArray(mrpTypes) && mrpTypes.length > 0 ? (
-                                (mrpTypes as any[]).slice().sort((a: any, b: any) => String(a.code).localeCompare(String(b.code))).map((mrpType: any) => (
-                                  <SelectItem key={mrpType.id} value={mrpType.code}>
+                                (mrpTypes as any[]).slice().sort((a: any, b: any) => String(a.code).localeCompare(String(b.code))).filter((mrpType: any) => mrpType.code && mrpType.code !== '').map((mrpType: any) => (
+                                  <SelectItem key={mrpType.id || mrpType.code} value={mrpType.code}>
                                     {mrpType.code} — {mrpType.name}
                                   </SelectItem>
                                 ))
@@ -1837,7 +1868,7 @@ export default function MaterialMaster() {
                             )}
                           </label>
                           <Select
-                            value={formData.procurement_type}
+                            value={formData.procurement_type || undefined}
                             onValueChange={(val) => setFormData({ ...formData, procurement_type: val })}
                             disabled={getMrpFieldDisabled('procurement_type')}
                           >
@@ -1861,7 +1892,7 @@ export default function MaterialMaster() {
                             )}
                           </label>
                           <Select
-                            value={formData.lot_size}
+                            value={formData.lot_size || undefined}
                             onValueChange={(val) => setFormData({ ...formData, lot_size: val })}
                             disabled={getMrpFieldDisabled('lot_size')}
                           >
@@ -1869,7 +1900,7 @@ export default function MaterialMaster() {
                               <SelectValue placeholder="Select lot size" />
                             </SelectTrigger>
                             <SelectContent>
-                              {lotSizeOptions.map((option) => (
+                              {(lotSizeOptions || []).filter((opt: any) => opt && opt.value).map((option: any) => (
                                 <SelectItem key={option.value} value={option.value}>
                                   {option.label}
                                 </SelectItem>
@@ -1885,7 +1916,7 @@ export default function MaterialMaster() {
                             )}
                           </label>
                           <Select
-                            value={formData.mrp_controller}
+                            value={formData.mrp_controller || undefined}
                             onValueChange={(val) => setFormData({ ...formData, mrp_controller: val })}
                             disabled={getMrpFieldDisabled('mrp_controller') || mrpControllersLoading}
                           >
@@ -1974,13 +2005,13 @@ export default function MaterialMaster() {
                         <div>
                           <label className="text-sm font-medium">Production Storage Location {storageLocationsLoading ? "(Loading...)" : `(${storageLocations.length} available)`}</label>
                           <Select
-                            value={formData.production_storage_location}
+                            value={formData.production_storage_location || undefined}
                             onValueChange={(val) => setFormData({ ...formData, production_storage_location: val })}
                             disabled={storageLocationsLoading || !formData.plant_code}
                           >
                             <SelectTrigger>
                               <SelectValue placeholder={
-                                formData.plant_code.length === 0
+                                !formData.plant_code
                                   ? "Select plant(s) first"
                                   : "Select storage location"
                               } />
@@ -2036,7 +2067,7 @@ export default function MaterialMaster() {
                         <div>
                           <label className="text-sm font-medium">Sales Organization</label>
                           <Select
-                            value={formData.sales_organization}
+                            value={formData.sales_organization || undefined}
                             onValueChange={(val) => setFormData({ ...formData, sales_organization: val })}
                           >
                             <SelectTrigger>
@@ -2045,8 +2076,8 @@ export default function MaterialMaster() {
                             <SelectContent>
                               {salesOrganizationsLoading ? (
                                 <SelectItem value="__loading__" disabled>Loading...</SelectItem>
-                              ) : salesOrganizations.length > 0 ? (
-                                salesOrganizations.map((org: any) => (
+                              ) : Array.isArray(salesOrganizations) && (salesOrganizations as any[]).length > 0 ? (
+                                (salesOrganizations as any[]).map((org: any) => (
                                   <SelectItem key={org.id} value={org.code}>
                                     {org.code} — {org.name}
                                   </SelectItem>
@@ -2060,7 +2091,7 @@ export default function MaterialMaster() {
                         <div>
                           <label className="text-sm font-medium">Distribution Channel</label>
                           <Select
-                            value={formData.distribution_channel}
+                            value={formData.distribution_channel || undefined}
                             onValueChange={(val) => setFormData({ ...formData, distribution_channel: val })}
                           >
                             <SelectTrigger>
@@ -2069,8 +2100,8 @@ export default function MaterialMaster() {
                             <SelectContent>
                               {distributionChannelsLoading ? (
                                 <SelectItem value="__loading__" disabled>Loading...</SelectItem>
-                              ) : distributionChannels.length > 0 ? (
-                                distributionChannels.map((channel: any) => (
+                              ) : Array.isArray(distributionChannels) && (distributionChannels as any[]).length > 0 ? (
+                                (distributionChannels as any[]).map((channel: any) => (
                                   <SelectItem key={channel.id} value={channel.code}>
                                     {channel.code} — {channel.name}
                                   </SelectItem>
@@ -2083,9 +2114,9 @@ export default function MaterialMaster() {
                         </div>
 
                         <div>
-                          <label className="text-sm font-medium">Division {divisionsLoading ? "(Loading...)" : `(${divisions.length})`}</label>
+                          <label className="text-sm font-medium">Division {divisionsLoading ? "(Loading...)" : `(${Array.isArray(divisions) ? (divisions as any[]).length : 0})`}</label>
                           <Select
-                            value={formData.division}
+                            value={formData.division || undefined}
                             onValueChange={(val) => setFormData({ ...formData, division: val })}
                           >
                             <SelectTrigger>
@@ -2094,8 +2125,8 @@ export default function MaterialMaster() {
                             <SelectContent>
                               {divisionsLoading ? (
                                 <SelectItem value="__loading__" disabled>Loading...</SelectItem>
-                              ) : divisions.length > 0 ? (
-                                divisions.map((div: any) => (
+                              ) : Array.isArray(divisions) && (divisions as any[]).length > 0 ? (
+                                (divisions as any[]).map((div: any) => (
                                   <SelectItem key={div.id} value={div.code}>
                                     {div.code} — {div.description || div.name}
                                   </SelectItem>
@@ -2256,7 +2287,7 @@ export default function MaterialMaster() {
                         <div>
                           <label className="text-sm font-medium">Purchase Organization {purchaseOrganizationsLoading ? "(Loading...)" : `(${purchaseOrganizations.length})`}</label>
                           <Select
-                            value={formData.purchase_organization}
+                            value={formData.purchase_organization || undefined}
                             onValueChange={(val) => setFormData({ ...formData, purchase_organization: val })}
                           >
                             <SelectTrigger>
@@ -2280,7 +2311,7 @@ export default function MaterialMaster() {
                         <div>
                           <label className="text-sm font-medium">Purchase Group {purchaseGroupsLoading ? "(Loading...)" : `(${purchaseGroups.length})`}</label>
                           <Select
-                            value={formData.purchasing_group}
+                            value={formData.purchasing_group || undefined}
                             onValueChange={(val) => setFormData({ ...formData, purchasing_group: val })}
                           >
                             <SelectTrigger>
@@ -2404,7 +2435,7 @@ export default function MaterialMaster() {
                         <div>
                           <label className="text-sm font-medium">Price Control</label>
                           <Select
-                            value={formData.price_control}
+                            value={formData.price_control || undefined}
                             onValueChange={(val) => setFormData({ ...formData, price_control: val })}
                           >
                             <SelectTrigger>

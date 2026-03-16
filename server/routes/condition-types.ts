@@ -10,9 +10,12 @@ router.get('/', async (req, res) => {
       SELECT ct.*,
         ccl.class_code as condition_class_code,
         ccl.class_name as condition_class_name,
+        seq.sequence_code as access_sequence_code,
+        seq.sequence_name as access_sequence_name,
         ct."_tenantId" as tenant_id
       FROM condition_types ct
       LEFT JOIN condition_classes ccl ON ct.condition_class_id = ccl.id
+      LEFT JOIN access_sequences seq ON ct.access_sequence_id = seq.id
       ORDER BY ct.sequence_number, ct.condition_code
     `);
     res.json(result.rows);
@@ -70,6 +73,22 @@ router.get('/condition-classes', async (req, res) => {
   }
 });
 
+// Get access sequences for dropdown
+router.get('/access-sequences', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, sequence_code, sequence_name, description
+      FROM access_sequences
+      WHERE is_active = true
+      ORDER BY sequence_code
+    `);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching access sequences:', error);
+    res.status(500).json({ error: 'Failed to fetch access sequences' });
+  }
+});
+
 // Create new condition type (client-level — no company code per SAP standard)
 router.post('/', async (req, res) => {
   try {
@@ -86,7 +105,15 @@ router.post('/', async (req, res) => {
       is_mandatory,
       is_active,
       account_key,
-      condition_class_id
+      condition_class_id,
+      access_sequence_id,
+      plus_minus,
+      manual_entries,
+      is_group_condition,
+      is_header_condition,
+      is_item_condition,
+      rounding_rule,
+      rounding_precision
     } = req.body;
 
     // Check if condition code already exists (globally unique, client-level)
@@ -104,14 +131,19 @@ router.post('/', async (req, res) => {
         condition_code, condition_name, condition_category, calculation_type,
         description, default_value, min_value, max_value, sequence_number,
         is_mandatory, is_active, account_key, condition_class_id,
+        access_sequence_id, plus_minus, manual_entries, is_group_condition,
+        is_header_condition, is_item_condition, rounding_rule, rounding_precision,
         created_by, updated_by, "_tenantId"
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
       RETURNING *
     `, [
       condition_code, condition_name, condition_category, calculation_type,
       description, default_value, min_value, max_value, sequence_number,
       is_mandatory ?? false, is_active ?? true, account_key,
       condition_class_id || null,
+      access_sequence_id || null, plus_minus || null, manual_entries || null,
+      is_group_condition ?? false, is_header_condition ?? false, is_item_condition ?? true,
+      rounding_rule || null, rounding_precision || null,
       (req as any).user?.id || 1,
       (req as any).user?.id || 1,
       (req as any).user?.tenantId || '001'
@@ -143,7 +175,15 @@ router.put('/:id', async (req, res) => {
       is_mandatory,
       is_active,
       account_key,
-      condition_class_id
+      condition_class_id,
+      access_sequence_id,
+      plus_minus,
+      manual_entries,
+      is_group_condition,
+      is_header_condition,
+      is_item_condition,
+      rounding_rule,
+      rounding_precision
     } = body;
 
     const updates: string[] = [];
@@ -163,6 +203,14 @@ router.put('/:id', async (req, res) => {
     if (is_active !== undefined) { updates.push(`is_active = $${paramIndex++}`); values.push(is_active); }
     if (account_key !== undefined) { updates.push(`account_key = $${paramIndex++}`); values.push(account_key); }
     if (condition_class_id !== undefined) { updates.push(`condition_class_id = $${paramIndex++}`); values.push(condition_class_id || null); }
+    if (access_sequence_id !== undefined) { updates.push(`access_sequence_id = $${paramIndex++}`); values.push(access_sequence_id || null); }
+    if (plus_minus !== undefined) { updates.push(`plus_minus = $${paramIndex++}`); values.push(plus_minus); }
+    if (manual_entries !== undefined) { updates.push(`manual_entries = $${paramIndex++}`); values.push(manual_entries); }
+    if (is_group_condition !== undefined) { updates.push(`is_group_condition = $${paramIndex++}`); values.push(is_group_condition); }
+    if (is_header_condition !== undefined) { updates.push(`is_header_condition = $${paramIndex++}`); values.push(is_header_condition); }
+    if (is_item_condition !== undefined) { updates.push(`is_item_condition = $${paramIndex++}`); values.push(is_item_condition); }
+    if (rounding_rule !== undefined) { updates.push(`rounding_rule = $${paramIndex++}`); values.push(rounding_rule); }
+    if (rounding_precision !== undefined) { updates.push(`rounding_precision = $${paramIndex++}`); values.push(rounding_precision); }
 
     updates.push(`updated_at = now()`);
     updates.push(`updated_by = $${paramIndex++}`);

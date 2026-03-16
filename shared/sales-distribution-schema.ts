@@ -284,6 +284,24 @@ export const itemCategories = pgTable("sd_item_categories", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Item Category Determination (SAP T184)
+export const itemCategoryDetermination = pgTable("sd_item_category_determination", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  documentType: varchar("document_type", { length: 4 }).notNull(), // e.g. 'OR'
+  itemCategoryGroup: varchar("item_category_group", { length: 10 }).notNull(), // e.g. 'NORM'
+  itemUsage: varchar("item_usage", { length: 10 }),
+  higherLevelItemCategory: varchar("higher_level_item_category", { length: 4 }),
+  defaultItemCategory: varchar("default_item_category", { length: 4 }).notNull(), // e.g. 'TAN'
+  manualItemCategory1: varchar("manual_item_category_1", { length: 4 }),
+  manualItemCategory2: varchar("manual_item_category_2", { length: 4 }),
+  manualItemCategory3: varchar("manual_item_category_3", { length: 4 }),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_sd_item_cat_det").on(table.documentType, table.itemCategoryGroup),
+]);
+
 // Pricing Configuration
 
 // Condition Tables
@@ -500,6 +518,8 @@ export const insertWeightGroupSchema = createInsertSchema(weightGroups);
 export const selectWeightGroupSchema = createSelectSchema(weightGroups);
 export const insertTransportationGroupSchema = createInsertSchema(transportationGroups);
 export const selectTransportationGroupSchema = createSelectSchema(transportationGroups);
+export const insertItemCategoryDeterminationSchema = createInsertSchema(itemCategoryDetermination);
+export const selectItemCategoryDeterminationSchema = createSelectSchema(itemCategoryDetermination);
 
 
 
@@ -539,6 +559,8 @@ export const insertShippingPointDeterminationSchema = createInsertSchema(shippin
 export const selectShippingPointDeterminationSchema = createSelectSchema(shippingPointDetermination);
 export type ShippingPointDetermination = typeof shippingPointDetermination.$inferSelect;
 export type InsertShippingPointDetermination = typeof shippingPointDetermination.$inferInsert;
+export type ItemCategoryDetermination = typeof itemCategoryDetermination.$inferSelect;
+export type InsertItemCategoryDetermination = typeof itemCategoryDetermination.$inferInsert;
 
 
 

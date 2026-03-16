@@ -375,18 +375,28 @@ export default function BillingDocumentsTab() {
               <div className="grid grid-cols-2 gap-4">
                 <Card>
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-sm">Customer Information</CardTitle>
+                    <CardTitle className="text-sm">Customer Information (Sold-To/Bill-To)</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-2 text-sm">
-                    <div>
-                      <span className="font-medium">Name:</span> {selectedInvoice.customer_name}
+                  <CardContent className="space-y-4 text-sm">
+                    <div className="space-y-1">
+                      <div><span className="font-medium">Name:</span> {selectedInvoice.customer_name}</div>
+                      <div><span className="font-medium">Email:</span> {selectedInvoice.customer_email}</div>
+                      <div>
+                        <span className="font-medium">Address:</span><br/> 
+                        {selectedInvoice.customer_address}<br/>
+                        {[selectedInvoice.city, selectedInvoice.state, selectedInvoice.postal_code].filter(Boolean).join(', ')}
+                      </div>
                     </div>
-                    <div>
-                      <span className="font-medium">Email:</span> {selectedInvoice.customer_email}
-                    </div>
-                    <div>
-                      <span className="font-medium">Address:</span> {selectedInvoice.customer_address}
-                    </div>
+
+                    {selectedInvoice.ship_to_address && (
+                      <div className="space-y-1 pt-2 border-t">
+                        <span className="font-semibold text-xs text-gray-500 uppercase">Ship-To Address</span>
+                        <div>
+                          {selectedInvoice.ship_to_address}<br/>
+                          {[selectedInvoice.ship_to_city, selectedInvoice.ship_to_state].filter(Boolean).join(', ')}
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
@@ -480,7 +490,7 @@ export default function BillingDocumentsTab() {
                                     <td className="px-3 py-1">{cond.condition_name ?? cond.name ?? '-'}</td>
                                     <td className="px-3 py-1 font-mono text-blue-600 text-xs">{cond.account_key ?? '-'}</td>
                                     <td className="px-3 py-1 text-right">{parseFloat(cond.base_value || 0).toFixed(2)}</td>
-                                    <td className="px-3 py-1 text-right">{cond.rate != null ? parseFloat(cond.rate).toFixed(2) + '%' : '-'}</td>
+                                    <td className="px-3 py-1 text-right">{cond.rate != null ? parseFloat(cond.rate).toFixed(2) + (cond.calculation_type === '%' || cond.calculationType === '%' ? '%' : '') : '-'}</td>
                                     <td className={"px-3 py-1 text-right font-semibold " + (
                                       isTax ? 'text-amber-700' : isNegative ? 'text-red-600' : isCost ? 'text-gray-400' : 'text-gray-900'
                                     )}>

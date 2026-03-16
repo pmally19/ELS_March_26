@@ -86,9 +86,9 @@ export function CreateManualInvoiceDialog({ open, onOpenChange }: CreateManualIn
 
   // Fetch customers
   const { data: customers = [], isLoading: customersLoading } = useQuery({
-    queryKey: ["/api/master-data/customers"],
+    queryKey: ["/api/master-data/customer"],
     queryFn: async () => {
-      const response = await fetch("/api/master-data/customers");
+      const response = await fetch("/api/master-data/customer");
       if (!response.ok) throw new Error("Failed to fetch customers");
       const data = await response.json();
       return Array.isArray(data) ? data : [];

@@ -1359,31 +1359,50 @@ AND(account_name ILIKE '%inventory%' OR account_name ILIKE '%stock%')
         throw new Error(`GL entries are not balanced.Debits: ${totalDebitAmount.toFixed(2)}, Credits: ${totalCreditAmount.toFixed(2)}, Difference: ${balanceDifference.toFixed(2)} `);
       }
 
-      // Post GL entries
-      for (const entry of glEntries) {
-        await client.query(`
-          INSERT INTO gl_entries(
-    document_number,
-    gl_account_id,
-    amount,
-    debit_credit_indicator,
-    posting_date,
-    posting_status
-  ) VALUES($1, $2, $3, $4, $5, 'posted')
-        `, [
-          finalAccountingDocNumber,
-          entry.gl_account_id,
-          entry.amount,
-          entry.debit_credit_indicator,
-          postingDate
-        ]);
+      // Post GL entries via shared helper (journal_entries + journal_entry_line_items)
+      const { postGLDocument } = await import('./gl-posting-helper.js');
+
+      const companyCodeIdRes = await client.query(
+        `SELECT id FROM company_codes WHERE code = $1 LIMIT 1`, [companyCode]
+      );
+      const companyCodeId = companyCodeIdRes.rows[0]?.id || null;
+
+      const glHeader = {
+        documentNumber: finalAccountingDocNumber,
+        documentType: 'RE',
+        companyCodeId,
+        postingDate: new Date(postingDate),
+        fiscalYear: new Date().getFullYear(),
+        fiscalPeriod: new Date().getMonth() + 1,
+        reference: String(invoice.invoice_number),
+        headerText: `AP Invoice posting for ${invoice.invoice_number}`,
+        sourceModule: 'PURCHASE',
+        sourceDocumentId: invoice.id,
+        sourceDocumentType: 'AP_INVOICE'
+      };
+
+      const glLines = glEntries.map(entry => ({
+        glAccountId: entry.gl_account_id,
+        postingKey: entry.debit_credit_indicator === 'D' ? '31' : '50',
+        debitCredit: entry.debit_credit_indicator as 'D' | 'C',
+        amount: entry.amount,
+        description: `AP Invoice ${invoice.invoice_number}`,
+        sourceModule: 'PURCHASE',
+        sourceDocumentId: invoice.id,
+        sourceDocumentType: 'AP_INVOICE'
+      }));
+
+      const glResult = await postGLDocument(client, glHeader, glLines);
+      if (!glResult.success) {
+        throw new Error(`GL posting failed: ${glResult.error}`);
       }
 
-      console.log(`✅ Posted AP Invoice ${invoice.invoice_number} to GL with document ${finalAccountingDocNumber} `);
-      console.log(`   Debits: ${totalDebitAmount.toFixed(2)}, Credits: ${totalCreditAmount.toFixed(2)} `);
+      console.log(`✅ Posted AP Invoice ${invoice.invoice_number} to GL with document ${finalAccountingDocNumber}`);
+      console.log(`   Debits: ${totalDebitAmount.toFixed(2)}, Credits: ${totalCreditAmount.toFixed(2)}`);
 
       // Return accounting document number for AP open item creation
       return finalAccountingDocNumber;
+
 
     } catch (error: any) {
       console.error('Error creating AP invoice GL entries:', error);

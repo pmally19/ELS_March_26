@@ -88,6 +88,10 @@ type CompanyCode = {
   email?: string; // Add this
   website?: string; // Add this
   logoUrl?: string; // Add this
+  region?: string; // Add this
+  region_id?: number | null; // Add this
+  regionName?: string; // Join result
+  regionCode?: string; // Join result
   created_at: string;
   updated_at: string;
 };
@@ -121,6 +125,8 @@ const companyCodeSchema = z.object({
   email: z.union([z.string().email("Invalid email format"), z.literal("")]).optional(),
   website: z.union([z.string().url("Invalid website URL"), z.literal("")]).optional(),
   logoUrl: z.string().optional(),
+  region: z.string().optional(),
+  regionId: z.string().optional(), // Use string for Select value consistency
   active: z.boolean().default(true),
 });
 
@@ -170,9 +176,25 @@ export default function CompanyCodePage() {
             code: c.code || "",
             name: c.name || "",
             currencyCode: c.currencyCode || "",
+            regionId: c.regionId,
           })) : [];
       } catch (error) {
         console.error("Error fetching countries:", error);
+        return [];
+      }
+    },
+  });
+
+  // Fetch regions from API
+  const { data: regionsArr = [], isLoading: regionsLoading } = useQuery<any[]>({
+    queryKey: ['/api/master-data/regions'],
+    queryFn: async () => {
+      try {
+        const response = await apiRequest('/api/master-data/regions');
+        const data = await response.json();
+        return Array.isArray(data) ? data.filter((r: any) => r.isActive !== false) : [];
+      } catch (error) {
+        console.error("Error fetching regions:", error);
         return [];
       }
     },
@@ -206,7 +228,11 @@ export default function CompanyCodePage() {
         fiscalYearVariantCode: item.fiscal_year_variant_code || null,
         fiscalYearDescription: item.fiscal_year_description || null,
         chartOfAccountsCode: item.chart_of_accounts_code || null,
-        chartOfAccountsName: item.chart_of_accounts_name || null
+        chartOfAccountsName: item.chart_of_accounts_name || null,
+        taxId: item.tax_id || item.taxId || null,
+        postalCode: item.postal_code || item.postalCode || null,
+        logoUrl: item.logo_url || item.logoUrl || null,
+        regionId: item.region_id || item.regionId || null
       })) : [];
       setCompanyCodes(mappedData);
       setFilteredCompanyCodes(mappedData);
@@ -366,6 +392,8 @@ export default function CompanyCodePage() {
       email: "",
       website: "",
       logoUrl: "",
+      region: "",
+      regionId: "",
       active: true,
     },
   });
@@ -390,6 +418,8 @@ export default function CompanyCodePage() {
         description: editingCompanyCode.description || "",
         currency: editingCompanyCode.currency,
         country: editingCompanyCode.country,
+        region: editingCompanyCode.region || "",
+        regionId: editingCompanyCode.region_id ? String(editingCompanyCode.region_id) : "",
         taxId: editingCompanyCode.taxId || "",
         fiscalYear: fiscalYearValue,
         chartOfAccounts: chartOfAccountsValue,
@@ -410,7 +440,8 @@ export default function CompanyCodePage() {
         description: "",
         currency: "USD",
         country: "",
-        taxId: "",
+        region: "",
+        regionId: "",
         fiscalYear: fiscalYearVariants.length > 0 ? fiscalYearVariants[0].variant_id : "",
         address: "",
         city: "",
@@ -429,6 +460,20 @@ export default function CompanyCodePage() {
   const [countryStates, setCountryStates] = useState<Array<{ id: number; code: string; name: string }>>([]);
   const [statesLoading, setStatesLoading] = useState(false);
   const watchedCountry = form.watch("country");
+  const watchedRegionId = form.watch("regionId");
+
+  // Filter countries based on selected region
+  const filteredCountries = watchedRegionId
+    ? countries.filter((c: any) => String(c.regionId) === watchedRegionId)
+    : countries;
+
+  useEffect(() => {
+    if (!watchedRegionId) return;
+    const selectedRegion = regionsArr.find((r: any) => String(r.id) === watchedRegionId);
+    if (selectedRegion) {
+      form.setValue("region", selectedRegion.name);
+    }
+  }, [watchedRegionId, regionsArr]);
 
   useEffect(() => {
     if (!watchedCountry || !countries.length) return;
@@ -454,9 +499,12 @@ export default function CompanyCodePage() {
       setCountryStates([]);
     }
 
-    // Reset state field when country changes
-    form.setValue("state", "");
-  }, [watchedCountry, countries]);
+    // Reset state field when country changes, but ONLY if it's a user action
+    // We check if the current value matches the one from editingCompanyCode
+    if (!editingCompanyCode || watchedCountry !== editingCompanyCode.country) {
+      form.setValue("state", "");
+    }
+  }, [watchedCountry, countries, editingCompanyCode]);
 
   // Create company code mutation
   const createCompanyCodeMutation = useMutation({
@@ -492,7 +540,11 @@ export default function CompanyCodePage() {
             fiscalYearVariantCode: item.fiscal_year_variant_code || null,
             fiscalYearDescription: item.fiscal_year_description || null,
             chartOfAccountsCode: item.chart_of_accounts_code || null,
-            chartOfAccountsName: item.chart_of_accounts_name || null
+            chartOfAccountsName: item.chart_of_accounts_name || null,
+            taxId: item.tax_id || item.taxId || null,
+            postalCode: item.postal_code || item.postalCode || null,
+            logoUrl: item.logo_url || item.logoUrl || null,
+            regionId: item.region_id || item.regionId || null
           })) : [];
           setCompanyCodes(mappedData);
           setFilteredCompanyCodes(mappedData);
@@ -537,7 +589,11 @@ export default function CompanyCodePage() {
             fiscalYearVariantCode: item.fiscal_year_variant_code || null,
             fiscalYearDescription: item.fiscal_year_description || null,
             chartOfAccountsCode: item.chart_of_accounts_code || null,
-            chartOfAccountsName: item.chart_of_accounts_name || null
+            chartOfAccountsName: item.chart_of_accounts_name || null,
+            taxId: item.tax_id || item.taxId || null,
+            postalCode: item.postal_code || item.postalCode || null,
+            logoUrl: item.logo_url || item.logoUrl || null,
+            regionId: item.region_id || item.regionId || null
           })) : [];
           setCompanyCodes(mappedData);
           setFilteredCompanyCodes(mappedData);
@@ -859,6 +915,7 @@ export default function CompanyCodePage() {
                   <TableRow>
                     <TableHead className="w-[100px]">Code</TableHead>
                     <TableHead>Name</TableHead>
+                    <TableHead className="hidden lg:table-cell">Region</TableHead>
                     <TableHead className="hidden sm:table-cell">Country</TableHead>
                     <TableHead className="hidden md:table-cell">Currency</TableHead>
                     <TableHead className="hidden md:table-cell">Fiscal Year</TableHead>
@@ -918,6 +975,7 @@ export default function CompanyCodePage() {
                         >
                           <TableCell className="font-medium">{companyCode.code}</TableCell>
                           <TableCell>{companyCode.name}</TableCell>
+                          <TableCell className="hidden lg:table-cell">{(companyCode as any).regionName || companyCode.region || '—'}</TableCell>
                           <TableCell className="hidden sm:table-cell">{countryDisplay}</TableCell>
                           <TableCell className="hidden md:table-cell">{companyCode.currency}</TableCell>
                           <TableCell className="hidden md:table-cell">{fiscalYearDisplay}</TableCell>
@@ -1074,8 +1132,50 @@ export default function CompanyCodePage() {
                         </FormItem>
                       )}
                     />
-
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="regionId"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Region</FormLabel>
+                            <Select
+                              onValueChange={(val) => {
+                                field.onChange(val);
+                                // Reset country when region changes
+                                form.setValue("country", "");
+                              }}
+                              defaultValue={field.value}
+                              value={field.value}
+                              disabled={regionsLoading}
+                            >
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder={regionsLoading ? "Loading regions..." : "Select region"} />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {regionsLoading ? (
+                                  <SelectItem value="loading" disabled>Loading regions...</SelectItem>
+                                ) : regionsArr.length === 0 ? (
+                                  <SelectItem value="none" disabled>No regions available</SelectItem>
+                                ) : (
+                                  regionsArr.map((region: any) => (
+                                    <SelectItem key={region.id} value={String(region.id)}>
+                                      {region.code ? `${region.code} - ` : ""}{region.name}
+                                    </SelectItem>
+                                  ))
+                                )}
+                              </SelectContent>
+                            </Select>
+                            <FormDescription>
+                              Select a region to filter countries
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
                       <FormField
                         control={form.control}
                         name="country"
@@ -1098,10 +1198,12 @@ export default function CompanyCodePage() {
                               <SelectContent>
                                 {countriesLoading ? (
                                   <SelectItem value="loading" disabled>Loading countries...</SelectItem>
-                                ) : countries.length === 0 ? (
-                                  <SelectItem value="none" disabled>No countries available</SelectItem>
+                                ) : filteredCountries.length === 0 ? (
+                                  <SelectItem value="none" disabled>
+                                    {watchedRegionId ? "No countries in this region" : "Select a region first"}
+                                  </SelectItem>
                                 ) : (
-                                  countries.map((country: any) => (
+                                  filteredCountries.map((country: any) => (
                                     <SelectItem key={country.id} value={country.code}>
                                       {country.code} - {country.name}
                                     </SelectItem>
@@ -1116,7 +1218,9 @@ export default function CompanyCodePage() {
                           </FormItem>
                         )}
                       />
+                    </div>
 
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
                         name="currency"
@@ -1151,9 +1255,7 @@ export default function CompanyCodePage() {
                           </FormItem>
                         )}
                       />
-                    </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
                         name="fiscalYear"
@@ -1188,7 +1290,9 @@ export default function CompanyCodePage() {
                           </FormItem>
                         )}
                       />
+                    </div>
 
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
                         name="chartOfAccounts"
@@ -1686,6 +1790,10 @@ export default function CompanyCodePage() {
                         <div className="flex justify-between">
                           <dt className="text-sm font-medium text-gray-500">State:</dt>
                           <dd className="text-sm text-gray-900">{viewingCompanyCodeDetails.state || "—"}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-sm font-medium text-gray-500">Region:</dt>
+                          <dd className="text-sm text-gray-900">{(viewingCompanyCodeDetails as any).regionName || viewingCompanyCodeDetails.region || "—"}</dd>
                         </div>
                         <div className="flex justify-between">
                           <dt className="text-sm font-medium text-gray-500">Country:</dt>

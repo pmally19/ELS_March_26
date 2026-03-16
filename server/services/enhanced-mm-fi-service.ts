@@ -1,10 +1,9 @@
 import { db, pool } from "../db";
 import { 
-  products,
+  materials,
   glAccounts,
-  accountDetermination,
   stockMovements,
-  purchaseOrders
+  orders
 } from "@shared/schema";
 import { 
   accountDeterminationRules,
@@ -324,8 +323,8 @@ export class EnhancedMMFIService {
       // Get material details
       const [material] = await db
         .select()
-        .from(products)
-        .where(eq(products.id, materialId));
+        .from(materials)
+        .where(eq(materials.id, materialId));
 
       if (!material) {
         throw new Error(`Material not found: ${materialId}`);
@@ -421,8 +420,8 @@ export class EnhancedMMFIService {
   private async getValuationClass(materialId: number): Promise<string> {
     const [material] = await db
       .select()
-      .from(products)
-      .where(eq(products.id, materialId));
+      .from(materials)
+      .where(eq(materials.id, materialId));
     
     if (!material?.categoryId) {
       // Get default valuation class from database
@@ -716,8 +715,8 @@ export class EnhancedMMFIService {
       // Get purchase order details
       const [purchaseOrder] = await db
         .select()
-        .from(purchaseOrders)
-        .where(eq(purchaseOrders.id, purchaseOrderId));
+        .from(orders)
+        .where(eq(orders.id, purchaseOrderId));
 
       if (!purchaseOrder) {
         throw new Error(`Purchase order not found: ${purchaseOrderId}`);
@@ -840,8 +839,8 @@ export class EnhancedMMFIService {
     try {
       const [purchaseOrder] = await db
         .select()
-        .from(purchaseOrders)
-        .where(eq(purchaseOrders.id, purchaseOrderId));
+        .from(orders)
+        .where(eq(orders.id, purchaseOrderId));
 
       if (!purchaseOrder) {
         throw new Error(`Purchase order not found: ${purchaseOrderId}`);

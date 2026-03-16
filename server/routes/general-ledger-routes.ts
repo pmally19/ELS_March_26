@@ -3,6 +3,7 @@ import { db } from '../db';
 import { pool } from '../db';
 import { eq, sql, desc } from 'drizzle-orm';
 import { transactionalApplicationsService } from '../services/transactional-applications-service';
+import { postGLDocument } from '../services/gl-posting-helper.js';
 
 const router = Router();
 
@@ -68,138 +69,63 @@ router.get('/gl-entries', async (req, res) => {
       offset = 0
     } = req.query;
 
-    console.log('Fetching GL entries from database with filters:', req.query);
-
-    // Check if gl_entries table exists
-    try {
-      await db.execute(sql`SELECT 1 FROM gl_entries LIMIT 1`);
-    } catch (tableError: any) {
-      console.log('gl_entries table does not exist, returning empty array');
-      return res.json({ entries: [], total: 0, limit: 100, offset: 0 });
-    }
-
-    // Check if gl_accounts table exists for the JOIN
-    let hasGlAccounts = false;
-    try {
-      await db.execute(sql`SELECT 1 FROM gl_accounts LIMIT 1`);
-      hasGlAccounts = true;
-    } catch (e) {
-      hasGlAccounts = false;
-    }
-
     const limitValue = parseInt(limit as string) || 100;
     const offsetValue = parseInt(offset as string) || 0;
 
-    let result;
-    if (hasGlAccounts) {
-      // Enhanced query with all new fields using drizzle sql template for proper parameterization
-      result = await db.execute(sql`
-        SELECT 
-          ge.id, 
-          ge.document_number, 
-          ge.amount, 
-          ge.debit_credit_indicator, 
-          ge.posting_date,
-          ge.posting_status,
-          ge.fiscal_period,
-          ge.fiscal_year,
-          ge.description,
-          ge.source_module,
-          ge.source_document_type,
-          ge.source_document_id,
-          ge.reference,
-          ge.bank_transaction_id,
-          ge.gl_account_id,
-          ga.account_number, 
-          ga.account_name,
-          ga.account_type
-        FROM gl_entries ge
-        LEFT JOIN gl_accounts ga ON ge.gl_account_id = ga.id
-        WHERE 1=1
-          ${document_number ? sql`AND ge.document_number = ${document_number}` : sql``}
-          ${fiscal_year ? sql`AND ge.fiscal_year = ${parseInt(fiscal_year as string)}` : sql``}
-          ${fiscal_period ? sql`AND ge.fiscal_period = ${parseInt(fiscal_period as string)}` : sql``}
-          ${source_document_type ? sql`AND ge.source_document_type = ${source_document_type}` : sql``}
-          ${source_module ? sql`AND ge.source_module = ${source_module}` : sql``}
-          ${gl_account_id ? sql`AND ge.gl_account_id = ${parseInt(gl_account_id as string)}` : sql``}
-          ${start_date ? sql`AND ge.posting_date >= ${start_date}` : sql``}
-          ${end_date ? sql`AND ge.posting_date <= ${end_date}` : sql``}
-        ORDER BY ge.posting_date DESC, ge.id DESC
-        LIMIT ${limitValue}
-        OFFSET ${offsetValue}
-      `);
-    } else {
-      // Fallback without JOIN
-      result = await db.execute(sql`
-        SELECT 
-          id, 
-          document_number, 
-          amount, 
-          debit_credit_indicator, 
-          posting_date,
-          posting_status,
-          fiscal_period,
-          fiscal_year,
-          description,
-          source_module,
-          source_document_type,
-          source_document_id,
-          reference,
-          bank_transaction_id,
-          gl_account_id,
-          NULL as account_number, 
-          NULL as account_name,
-          NULL as account_type
-        FROM gl_entries
-        WHERE 1=1
-          ${document_number ? sql`AND document_number = ${document_number}` : sql``}
-          ${fiscal_year ? sql`AND fiscal_year = ${parseInt(fiscal_year as string)}` : sql``}
-          ${fiscal_period ? sql`AND fiscal_period = ${parseInt(fiscal_period as string)}` : sql``}
-          ${source_document_type ? sql`AND source_document_type = ${source_document_type}` : sql``}
-          ${source_module ? sql`AND source_module = ${source_module}` : sql``}
-          ${gl_account_id ? sql`AND gl_account_id = ${parseInt(gl_account_id as string)}` : sql``}
-          ${start_date ? sql`AND posting_date >= ${start_date}` : sql``}
-          ${end_date ? sql`AND posting_date <= ${end_date}` : sql``}
-        ORDER BY posting_date DESC, id DESC
-        LIMIT ${limitValue}
-        OFFSET ${offsetValue}
-      `);
-    }
+    // Enhanced query using SAP-pattern tables (BKPF/BSEG)
+    const result = await db.execute(sql`
+      SELECT 
+        jeli.id, 
+        je.document_number, 
+        CASE WHEN jeli.debit_amount > 0 THEN jeli.debit_amount ELSE jeli.credit_amount END as amount, 
+        CASE WHEN jeli.debit_amount > 0 THEN 'D' ELSE 'C' END as debit_credit_indicator, 
+        je.posting_date,
+        je.status as posting_status,
+        je.fiscal_period,
+        je.fiscal_year,
+        COALESCE(jeli.description, jeli.item_text, je.header_text) as description,
+        je.source_module,
+        je.source_document_type,
+        je.source_document_id,
+        jeli.reference,
+        jeli.bank_transaction_id,
+        jeli.gl_account_id,
+        ga.account_number, 
+        ga.account_name,
+        ga.account_type
+      FROM journal_entry_line_items jeli
+      JOIN journal_entries je ON jeli.journal_entry_id = je.id
+      LEFT JOIN gl_accounts ga ON jeli.gl_account_id = ga.id
+      WHERE 1=1
+        ${document_number ? sql`AND je.document_number = ${document_number}` : sql``}
+        ${fiscal_year ? sql`AND je.fiscal_year = ${parseInt(fiscal_year as string)}` : sql``}
+        ${fiscal_period ? sql`AND je.fiscal_period = ${parseInt(fiscal_period as string)}` : sql``}
+        ${source_document_type ? sql`AND je.source_document_type = ${source_document_type}` : sql``}
+        ${source_module ? sql`AND je.source_module = ${source_module}` : sql``}
+        ${gl_account_id ? sql`AND jeli.gl_account_id = ${parseInt(gl_account_id as string)}` : sql``}
+        ${start_date ? sql`AND je.posting_date >= ${start_date}` : sql``}
+        ${end_date ? sql`AND je.posting_date <= ${end_date}` : sql``}
+      ORDER BY je.posting_date DESC, jeli.id DESC
+      LIMIT ${limitValue}
+      OFFSET ${offsetValue}
+    `);
 
     console.log(`Found ${result.rows.length} GL entries`);
 
-    // Get total count for pagination
-    let countResult;
-    if (hasGlAccounts) {
-      countResult = await db.execute(sql`
-        SELECT COUNT(*) as total
-        FROM gl_entries ge
-        LEFT JOIN gl_accounts ga ON ge.gl_account_id = ga.id
-        WHERE 1=1
-          ${document_number ? sql`AND ge.document_number = ${document_number}` : sql``}
-          ${fiscal_year ? sql`AND ge.fiscal_year = ${parseInt(fiscal_year as string)}` : sql``}
-          ${fiscal_period ? sql`AND ge.fiscal_period = ${parseInt(fiscal_period as string)}` : sql``}
-          ${source_document_type ? sql`AND ge.source_document_type = ${source_document_type}` : sql``}
-          ${source_module ? sql`AND ge.source_module = ${source_module}` : sql``}
-          ${gl_account_id ? sql`AND ge.gl_account_id = ${parseInt(gl_account_id as string)}` : sql``}
-          ${start_date ? sql`AND ge.posting_date >= ${start_date}` : sql``}
-          ${end_date ? sql`AND ge.posting_date <= ${end_date}` : sql``}
-      `);
-    } else {
-      countResult = await db.execute(sql`
-        SELECT COUNT(*) as total
-        FROM gl_entries
-        WHERE 1=1
-          ${document_number ? sql`AND document_number = ${document_number}` : sql``}
-          ${fiscal_year ? sql`AND fiscal_year = ${parseInt(fiscal_year as string)}` : sql``}
-          ${fiscal_period ? sql`AND fiscal_period = ${parseInt(fiscal_period as string)}` : sql``}
-          ${source_document_type ? sql`AND source_document_type = ${source_document_type}` : sql``}
-          ${source_module ? sql`AND source_module = ${source_module}` : sql``}
-          ${gl_account_id ? sql`AND gl_account_id = ${parseInt(gl_account_id as string)}` : sql``}
-          ${start_date ? sql`AND posting_date >= ${start_date}` : sql``}
-          ${end_date ? sql`AND posting_date <= ${end_date}` : sql``}
-      `);
-    }
+    const countResult = await db.execute(sql`
+      SELECT COUNT(*) as total
+      FROM journal_entry_line_items jeli
+      JOIN journal_entries je ON jeli.journal_entry_id = je.id
+      WHERE 1=1
+        ${document_number ? sql`AND je.document_number = ${document_number}` : sql``}
+        ${fiscal_year ? sql`AND je.fiscal_year = ${parseInt(fiscal_year as string)}` : sql``}
+        ${fiscal_period ? sql`AND je.fiscal_period = ${parseInt(fiscal_period as string)}` : sql``}
+        ${source_document_type ? sql`AND je.source_document_type = ${source_document_type}` : sql``}
+        ${source_module ? sql`AND je.source_module = ${source_module}` : sql``}
+        ${gl_account_id ? sql`AND jeli.gl_account_id = ${parseInt(gl_account_id as string)}` : sql``}
+        ${start_date ? sql`AND je.posting_date >= ${start_date}` : sql``}
+        ${end_date ? sql`AND je.posting_date <= ${end_date}` : sql``}
+    `);
 
     const total = parseInt(countResult.rows[0]?.total || '0');
 
@@ -272,64 +198,35 @@ router.get('/trial-balance', async (req, res) => {
     }
 
     let result;
-    if (hasGlEntries) {
-      // Full trial balance with entries — emit semantic account_type labels
-      result = await db.execute(sql`
-        SELECT 
-          ga.account_number,
-          ga.account_name,
-          -- Map  account type codes to semantic labels used by the frontend
-          CASE
-            WHEN ga.pl_account = true THEN
-              CASE
-                WHEN CAST(ga.account_number AS bigint) >= 10000 AND CAST(ga.account_number AS bigint) < 12000 THEN 'REVENUE'
-                ELSE 'EXPENSE'
-              END
-            WHEN ga.balance_sheet_account = true THEN
-              CASE
-                WHEN CAST(ga.account_number AS bigint) < 3000 THEN 'ASSET'
-                WHEN CAST(ga.account_number AS bigint) < 4000 THEN 'LIABILITY'
-                ELSE 'EQUITY'
-              END
-            ELSE ga.account_type
-          END as account_type,
-          COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'D' THEN ge.amount ELSE 0 END), 0) as debit_total,
-          COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'C' THEN ge.amount ELSE 0 END), 0) as credit_total,
-          COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'D' THEN ge.amount ELSE -ge.amount END), 0) as balance
-        FROM gl_accounts ga
-        LEFT JOIN gl_entries ge ON ga.id = ge.gl_account_id
-        WHERE ga.is_active = true
-        GROUP BY ga.id, ga.account_number, ga.account_name, ga.account_type, ga.balance_sheet_account, ga.pl_account
-        ORDER BY ga.account_number
-      `);
-    } else {
-      // Trial balance with accounts only (no entries)
-      result = await db.execute(sql`
-        SELECT 
-          ga.account_number,
-          ga.account_name,
-          CASE
-            WHEN ga.pl_account = true THEN
-              CASE
-                WHEN CAST(ga.account_number AS bigint) >= 10000 AND CAST(ga.account_number AS bigint) < 12000 THEN 'REVENUE'
-                ELSE 'EXPENSE'
-              END
-            WHEN ga.balance_sheet_account = true THEN
-              CASE
-                WHEN CAST(ga.account_number AS bigint) < 3000 THEN 'ASSET'
-                WHEN CAST(ga.account_number AS bigint) < 4000 THEN 'LIABILITY'
-                ELSE 'EQUITY'
-              END
-            ELSE ga.account_type
-          END as account_type,
-          0 as debit_total,
-          0 as credit_total,
-          0 as balance
-        FROM gl_accounts ga
-        WHERE ga.is_active = true
-        ORDER BY ga.account_number
-      `);
-    }
+    // Full trial balance with entries aggregated from journal_entry_line_items
+    result = await db.execute(sql`
+      SELECT 
+        ga.account_number,
+        ga.account_name,
+        -- Map account type codes to semantic labels used by the frontend
+        CASE
+          WHEN ga.pl_account = true THEN
+            CASE
+              WHEN CAST(ga.account_number AS bigint) >= 10000 AND CAST(ga.account_number AS bigint) < 12000 THEN 'REVENUE'
+              ELSE 'EXPENSE'
+            END
+          WHEN ga.balance_sheet_account = true THEN
+            CASE
+              WHEN CAST(ga.account_number AS bigint) < 3000 THEN 'ASSET'
+              WHEN CAST(ga.account_number AS bigint) < 4000 THEN 'LIABILITY'
+              ELSE 'EQUITY'
+            END
+          ELSE ga.account_type
+        END as account_type,
+        COALESCE(SUM(jeli.debit_amount), 0) as debit_total,
+        COALESCE(SUM(jeli.credit_amount), 0) as credit_total,
+        COALESCE(SUM(jeli.debit_amount - jeli.credit_amount), 0) as balance
+      FROM gl_accounts ga
+      LEFT JOIN journal_entry_line_items jeli ON ga.id = jeli.gl_account_id
+      WHERE ga.is_active = true
+      GROUP BY ga.id, ga.account_number, ga.account_name, ga.account_type, ga.balance_sheet_account, ga.pl_account
+      ORDER BY ga.account_number
+    `);
 
     res.json(result.rows);
   } catch (error: any) {
@@ -501,25 +398,57 @@ router.post('/postings', async (req, res) => {
       items: glItems
     });
 
-    // Also insert into gl_entries table for backward compatibility
-    // Note: gl_entries table does not have a description column
-    // CRITICAL: Explicitly set posting_status to 'posted' for reconciliation
-    const insertPromises = entries.map((entry, index) => {
-      const accountNumber = glAccountNumbers[index] || entry.gl_account_number;
-      return db.execute(sql`
-        INSERT INTO gl_entries (document_number, gl_account_id, amount, debit_credit_indicator, posting_status, posting_date)
-        VALUES (
-          ${result.documentNumber}, 
-          ${entry.gl_account_id || sql`(SELECT id FROM gl_accounts WHERE account_number = ${accountNumber} LIMIT 1)`}, 
-          ${entry.amount}, 
-          ${entry.debit_credit_indicator}, 
-          'posted',
-          ${postingDateStr}
-        )
-      `);
-    });
+    // Post to journal_entries + journal_entry_line_items via shared helper
+    const pgClient = await pool.connect();
+    try {
+      await pgClient.query('BEGIN');
 
-    await Promise.all(insertPromises);
+      const companyCodeIdRes = await pgClient.query(
+        `SELECT id FROM company_codes WHERE code = $1 LIMIT 1`, [companyCode]
+      );
+      const companyCodeId = companyCodeIdRes.rows[0]?.id || null;
+
+      const currencyIdRes = await pgClient.query(
+        `SELECT id FROM currencies WHERE code = $1 LIMIT 1`, [documentCurrency]
+      );
+      const currencyId = currencyIdRes.rows[0]?.id || null;
+
+      const glHeader = {
+        documentNumber: result.documentNumber,
+        documentType: docType,
+        companyCodeId,
+        postingDate: postingDateObj,
+        documentDate: documentDateObj,
+        fiscalYear: postingDateObj.getFullYear(),
+        fiscalPeriod: postingDateObj.getMonth() + 1,
+        currencyId,
+        reference: reference || 'GL Posting',
+        headerText: reference || 'GL Posting',
+        sourceModule: 'FI',
+        sourceDocumentType: 'MANUAL_POSTING'
+      };
+
+      const glLines = entries.map((entry: any, index: number) => ({
+        glAccountId: entry.gl_account_id,
+        glAccount: glAccountNumbers[index],
+        postingKey: entry.debit_credit_indicator === 'D' ? '40' : '50',
+        debitCredit: entry.debit_credit_indicator as 'D' | 'C',
+        amount: parseFloat(entry.amount || 0),
+        description: entry.description || `Line item ${index + 1}`,
+        sourceModule: 'FI',
+        sourceDocumentType: 'MANUAL_POSTING'
+      }));
+
+      const glResult = await postGLDocument(pgClient, glHeader, glLines);
+      if (!glResult.success) throw new Error(glResult.error);
+
+      await pgClient.query('COMMIT');
+    } catch (glErr: any) {
+      await pgClient.query('ROLLBACK');
+      throw glErr;
+    } finally {
+      pgClient.release();
+    }
 
     res.status(201).json({
       success: true,
@@ -528,6 +457,7 @@ router.post('/postings', async (req, res) => {
       total_amount: result.totalAmount,
       entries_count: entries.length
     });
+
   } catch (error) {
     console.error('Error creating GL posting:', error);
     res.status(500).json({
@@ -553,9 +483,15 @@ router.get('/accounts/:id', async (req, res) => {
     }
 
     const entriesResult = await db.execute(sql`
-      SELECT * FROM gl_entries 
-      WHERE gl_account_id = ${id}
-      ORDER BY posting_date DESC, id DESC
+      SELECT 
+        jeli.*,
+        je.document_number,
+        je.posting_date,
+        je.status as posting_status
+      FROM journal_entry_line_items jeli
+      JOIN journal_entries je ON jeli.journal_entry_id = je.id
+      WHERE jeli.gl_account_id = ${id}
+      ORDER BY je.posting_date DESC, jeli.id DESC
       LIMIT 100
     `);
 
@@ -634,16 +570,16 @@ router.get('/profit-loss', async (req, res) => {
           ga.account_name,
           ga.account_type,
           ga.account_group,
-          COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'C' THEN ge.amount ELSE 0 END), 0) - 
-          COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'D' THEN ge.amount ELSE 0 END), 0) as net_amount
+          COALESCE(SUM(jeli.credit_amount), 0) - COALESCE(SUM(jeli.debit_amount), 0) as net_amount
         FROM gl_accounts ga
-        LEFT JOIN gl_entries ge ON ga.id = ge.gl_account_id ${dateCondition}
+        LEFT JOIN journal_entry_line_items jeli ON ga.id = jeli.gl_account_id
+        LEFT JOIN journal_entries je ON jeli.journal_entry_id = je.id
         WHERE ga.is_active = true 
           AND ga.account_type = 'REVENUE'
           AND ga.pl_account = true
+          ${dateCondition ? `AND ${dateCondition.replace(/ge\./g, 'je.')}` : ''}
         GROUP BY ga.id, ga.account_number, ga.account_name, ga.account_type, ga.account_group
-        HAVING COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'C' THEN ge.amount ELSE 0 END), 0) - 
-               COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'D' THEN ge.amount ELSE 0 END), 0) != 0
+        HAVING COALESCE(SUM(jeli.credit_amount), 0) - COALESCE(SUM(jeli.debit_amount), 0) != 0
         ORDER BY ga.account_number
       `;
 
@@ -654,16 +590,16 @@ router.get('/profit-loss', async (req, res) => {
           ga.account_name,
           ga.account_type,
           ga.account_group,
-          COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'D' THEN ge.amount ELSE 0 END), 0) - 
-          COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'C' THEN ge.amount ELSE 0 END), 0) as net_amount
+          COALESCE(SUM(jeli.debit_amount), 0) - COALESCE(SUM(jeli.credit_amount), 0) as net_amount
         FROM gl_accounts ga
-        LEFT JOIN gl_entries ge ON ga.id = ge.gl_account_id ${dateCondition}
+        LEFT JOIN journal_entry_line_items jeli ON ga.id = jeli.gl_account_id
+        LEFT JOIN journal_entries je ON jeli.journal_entry_id = je.id
         WHERE ga.is_active = true 
           AND ga.account_type = 'EXPENSE'
           AND ga.pl_account = true
+          ${dateCondition ? `AND ${dateCondition.replace(/ge\./g, 'je.')}` : ''}
         GROUP BY ga.id, ga.account_number, ga.account_name, ga.account_type, ga.account_group
-        HAVING COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'D' THEN ge.amount ELSE 0 END), 0) - 
-               COALESCE(SUM(CASE WHEN ge.debit_credit_indicator = 'C' THEN ge.amount ELSE 0 END), 0) != 0
+        HAVING COALESCE(SUM(jeli.debit_amount), 0) - COALESCE(SUM(jeli.credit_amount), 0) != 0
         ORDER BY ga.account_number
       `;
 

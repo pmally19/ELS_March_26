@@ -248,22 +248,28 @@ export default function ProductionOrder() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {isLoading ? (
-                      <TableRow>
-                        <TableCell colSpan={10} className="text-center py-8">
-                          Loading production orders...
-                        </TableCell>
-                      </TableRow>
-                    ) : filteredOrders.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={10} className="text-center py-8">
-                          {searchTerm || statusFilter !== 'all'
-                            ? 'No production orders match your filters.'
-                            : 'No production orders found. Create your first order!'}
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      filteredOrders.map((order, index) => (
+                    {(() => {
+                      if (isLoading) {
+                        return (
+                          <TableRow>
+                            <TableCell colSpan={10} className="text-center py-8">
+                              Loading production orders...
+                            </TableCell>
+                          </TableRow>
+                        );
+                      }
+                      if (filteredOrders.length === 0) {
+                        return (
+                          <TableRow>
+                            <TableCell colSpan={10} className="text-center py-8">
+                              {searchTerm || statusFilter !== 'all'
+                                ? 'No production orders match your filters.'
+                                : 'No production orders found. Create your first order!'}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      }
+                      return filteredOrders.map((order, index) => (
                         <TableRow key={order.id} className="hover:bg-indigo-50/30 transition-colors border-b border-gray-100 last:border-0">
                           <TableCell className="font-mono font-bold">{order.orderNumber}</TableCell>
                           <TableCell>
@@ -301,8 +307,8 @@ export default function ProductionOrder() {
                             </div>
                           </TableCell>
                         </TableRow>
-                      ))}
-                    )}
+                      ));
+                    })()}
                   </TableBody>
                 </Table>
               </div>

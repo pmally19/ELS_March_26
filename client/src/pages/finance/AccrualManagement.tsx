@@ -10,8 +10,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
-import { Calculator, Send, RefreshCw, ArrowLeft, CheckCircle, AlertCircle, Plus, Pencil, Trash2, Settings } from 'lucide-react';
+import { Calculator, Send, RefreshCw, ArrowLeft, CheckCircle, AlertCircle, Plus, Pencil, Trash2, Settings, RotateCcw, PackageOpen } from 'lucide-react';
 import { Link } from 'wouter';
 import Header from '@/components/layout/Header';
 
@@ -20,8 +21,8 @@ interface FiscalPeriod {
     year: number;
     period: number;
     name: string;
-    startDate: string;
-    endDate: string;
+    start_date: string;
+    end_date: string;
 }
 
 interface AccrualPosting {
@@ -34,7 +35,10 @@ interface AccrualPosting {
     expense_account: string;
     accrual_account: string;
     journal_entry_number?: string;
+    reversal_entry_number?: string;
     posted_at?: string;
+    requires_reversal?: boolean;
+    provision_type?: string;
 }
 
 interface AccrualRule {
@@ -47,6 +51,8 @@ interface AccrualRule {
     gl_accrual_account_id?: number;
     company_code_id?: number;
     is_active: boolean;
+    requires_reversal?: boolean;
+    provision_type?: string;
     expense_account_number?: string;
     expense_account_name?: string;
     accrual_account_number?: string;
@@ -63,30 +69,8 @@ interface GLAccount {
 
 interface CompanyCode {
     id: number;
-    company_code: string;
-    company_name: string;
-}
-
-interface FiscalPeriod {
-    id: number;
-    year: number;
-    period: number;
+    code: string;
     name: string;
-    startDate: string;
-    endDate: string;
-}
-
-interface AccrualPosting {
-    id: number;
-    rule_name: string;
-    accrual_type: string;
-    calculation_method: string;
-    accrual_amount: number;
-    status: string;
-    expense_account: string;
-    accrual_account: string;
-    journal_entry_number?: string;
-    posted_at?: string;
 }
 
 export default function AccrualManagement() {
@@ -98,6 +82,7 @@ export default function AccrualManagement() {
     const [selectedYear, setSelectedYear] = useState(currentDate.getFullYear());
     const [selectedPeriod, setSelectedPeriod] = useState(currentDate.getMonth() + 1);
     const [selectedAccruals, setSelectedAccruals] = useState<number[]>([]);
+    const [manualAmounts, setManualAmounts] = useState<Record<number, number>>({});
 
     // Fetch fiscal periods to populate dropdowns
     const { data: fiscalPeriods = [] } = useQuery<FiscalPeriod[]>({
@@ -172,7 +157,8 @@ export default function AccrualManagement() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     accrual_ids: accrualIds,
-                    posted_by: 'current_user' // TODO: Get from auth context
+                    posted_by: 'current_user', // TODO: Get from auth context
+                    manual_amounts: manualAmounts
                 })
             });
 
@@ -383,10 +369,22 @@ export default function AccrualManagement() {
                                                     <TableCell className="font-mono text-sm">{accrual.expense_account}</TableCell>
                                                     <TableCell className="font-mono text-sm">{accrual.accrual_account}</TableCell>
                                                     <TableCell className="text-right font-mono">
-                                                        {accrual.accrual_amount?.toLocaleString('en-US', {
-                                                            minimumFractionDigits: 2,
-                                                            maximumFractionDigits: 2
-                                                        })}
+                                                        {accrual.calculation_method === 'manual' ? (
+                                                            <Input
+                                                                type="number"
+                                                                className="w-24 ml-auto text-right font-mono"
+                                                                value={manualAmounts[accrual.id] ?? accrual.accrual_amount}
+                                                                onChange={(e) => setManualAmounts(prev => ({
+                                                                    ...prev,
+                                                                    [accrual.id]: parseFloat(e.target.value) || 0
+                                                                }))}
+                                                            />
+                                                        ) : (
+                                                            accrual.accrual_amount?.toLocaleString('en-US', {
+                                                                minimumFractionDigits: 2,
+                                                                maximumFractionDigits: 2
+                                                            })
+                                                        )}
                                                     </TableCell>
                                                     <TableCell>
                                                         <Badge variant="secondary">
@@ -501,7 +499,9 @@ function ManageRulesTab() {
         gl_expense_account_id: '',
         gl_accrual_account_id: '',
         company_code_id: '',
-        is_active: true
+        is_active: true,
+        requires_reversal: false,
+        provision_type: 'accrual'
     });
 
     // Fetch accrual rules
@@ -614,7 +614,9 @@ function ManageRulesTab() {
                 gl_expense_account_id: rule.gl_expense_account_id?.toString() || '',
                 gl_accrual_account_id: rule.gl_accrual_account_id?.toString() || '',
                 company_code_id: rule.company_code_id?.toString() || 'ALL',
-                is_active: rule.is_active
+                is_active: rule.is_active,
+                requires_reversal: rule.requires_reversal || false,
+                provision_type: rule.provision_type || 'accrual'
             });
         } else {
             setEditingRule(null);
@@ -626,7 +628,9 @@ function ManageRulesTab() {
                 gl_expense_account_id: '',
                 gl_accrual_account_id: '',
                 company_code_id: 'ALL',
-                is_active: true
+                is_active: true,
+                requires_reversal: false,
+                provision_type: 'accrual'
             });
         }
         setIsDialogOpen(true);
@@ -682,10 +686,10 @@ function ManageRulesTab() {
                                 <TableRow>
                                     <TableHead>Rule Name</TableHead>
                                     <TableHead>Type</TableHead>
-                                    <TableHead>Calculation Method</TableHead>
+                                    <TableHead>Method</TableHead>
                                     <TableHead>Expense Account</TableHead>
                                     <TableHead>Accrual Account</TableHead>
-                                    <TableHead>Company</TableHead>
+                                    <TableHead>Auto-Rev</TableHead>
                                     <TableHead>Status</TableHead>
                                     <TableHead className="text-right">Actions</TableHead>
                                 </TableRow>
@@ -698,7 +702,12 @@ function ManageRulesTab() {
                                             <Badge variant="outline">{rule.accrual_type}</Badge>
                                         </TableCell>
                                         <TableCell className="text-sm text-muted-foreground">
-                                            {rule.calculation_method}
+                                            {rule.calculation_method === 'manual' ? 'Manual' :
+                                                rule.calculation_method === 'linear_distribution' ? 'Linear Dist.' :
+                                                    rule.calculation_method === 'unbilled_deliveries' ? 'Unbilled Del.' :
+                                                        rule.calculation_method === 'unpaid_invoices' ? 'Unpaid Inv.' :
+                                                            rule.calculation_method === 'received_not_invoiced' ? 'GR/IR' :
+                                                                rule.calculation_method}
                                         </TableCell>
                                         <TableCell className="font-mono text-sm">
                                             {rule.expense_account_number || '-'}
@@ -706,8 +715,15 @@ function ManageRulesTab() {
                                         <TableCell className="font-mono text-sm">
                                             {rule.accrual_account_number || '-'}
                                         </TableCell>
-                                        <TableCell className="text-sm">
-                                            {rule.company_code || 'All'}
+                                        <TableCell>
+                                            {rule.requires_reversal ? (
+                                                <Badge className="bg-blue-600 text-xs">
+                                                    <RotateCcw className="mr-1 h-3 w-3" />
+                                                    Provision
+                                                </Badge>
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground">Accrual</span>
+                                            )}
                                         </TableCell>
                                         <TableCell>
                                             <Badge variant={rule.is_active ? 'default' : 'secondary'}>
@@ -802,10 +818,11 @@ function ManageRulesTab() {
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="manual">Manual</SelectItem>
+                                        <SelectItem value="manual">Manual Entry</SelectItem>
+                                        <SelectItem value="linear_distribution">Linear Distribution (Accrual Objects)</SelectItem>
                                         <SelectItem value="unbilled_deliveries">Unbilled Deliveries</SelectItem>
                                         <SelectItem value="unpaid_invoices">Unpaid Invoices</SelectItem>
-                                        <SelectItem value="received_not_invoiced">Received Not Invoiced</SelectItem>
+                                        <SelectItem value="received_not_invoiced">Received Not Invoiced (GR/IR)</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
@@ -864,11 +881,50 @@ function ManageRulesTab() {
                                     <SelectItem value="ALL">All Companies</SelectItem>
                                     {companyCodes.map((company) => (
                                         <SelectItem key={company.id} value={company.id.toString()}>
-                                            {company.company_code} - {company.company_name}
+                                            {company.code} - {company.name}
                                         </SelectItem>
                                     ))}
                                 </SelectContent>
                             </Select>
+                        </div>
+
+                        {/*  : Auto-Reversal + Provision Type */}
+                        <div className="grid grid-cols-2 gap-4 rounded-md border p-4 bg-muted/30">
+                            <div className="grid gap-2">
+                                <Label htmlFor="provision_type">Provision Type</Label>
+                                <Select
+                                    value={formData.provision_type}
+                                    onValueChange={(value) => setFormData({ ...formData, provision_type: value })}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="accrual">Accrual (no auto-reversal)</SelectItem>
+                                        <SelectItem value="provision">Provision (auto-reversal next period)</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="flex flex-col gap-2">
+                                <Label>Auto-Reversal (  Standard)</Label>
+                                <div className="flex items-center gap-3 pt-2">
+                                    <Switch
+                                        id="requires_reversal"
+                                        checked={formData.requires_reversal}
+                                        onCheckedChange={(checked) => setFormData({
+                                            ...formData,
+                                            requires_reversal: checked,
+                                            provision_type: checked ? 'provision' : 'accrual'
+                                        })}
+                                    />
+                                    <Label htmlFor="requires_reversal" className="font-normal text-sm text-muted-foreground">
+                                        {formData.requires_reversal
+                                            ? '✓ Reversal entry created in next period'
+                                            : 'No auto-reversal'}
+                                    </Label>
+                                </div>
+                            </div>
                         </div>
 
                         <div className="flex items-center space-x-2">

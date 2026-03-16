@@ -350,9 +350,9 @@ function CreateDebitMemoDialog({ open, onOpenChange, onSuccess }: {
 
     // Fetch customers
     const { data: customers = [] } = useQuery({
-        queryKey: ['/api/master-data/customers'],
+        queryKey: ['/api/master-data/customer'],
         queryFn: async () => {
-            const response = await fetch('/api/master-data/customers');
+            const response = await fetch('/api/master-data/customer');
             if (!response.ok) return [];
             const result = await response.json();
             return result.data || result || [];

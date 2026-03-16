@@ -100,7 +100,7 @@ export default function SalesReturns() {
     const [showApprovalDialog, setShowApprovalDialog] = useState(false);
     const [showCreditMemoDialog, setShowCreditMemoDialog] = useState(false);
     const [selectedReturn, setSelectedReturn] = useState<SalesReturn | null>(null);
-    const [selectedCreditMemo, setSelectedCreditMemo | null > (null);
+    const [selectedCreditMemo, setSelectedCreditMemo] = useState<CreditMemo | null>(null);
 
     // Create return form
     const [returnForm, setReturnForm] = useState({
@@ -392,7 +392,7 @@ export default function SalesReturns() {
                     <Card>
                         <CardHeader>
                             <CardTitle>Sales Returns</CardTitle>
-                            <Card Description>
+                            <CardDescription>
                                 Customer return requests and approval workflow
                             </CardDescription>
                         </CardHeader>

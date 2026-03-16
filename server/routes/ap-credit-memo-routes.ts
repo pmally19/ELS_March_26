@@ -6,6 +6,8 @@
 import express from 'express';
 import { db } from '../db';
 import { sql } from 'drizzle-orm';
+import { pool } from '../db';
+import { postGLDocument, GLLineItem, GLDocumentHeader } from '../services/gl-posting-helper.js';
 
 const router = express.Router();
 
@@ -421,25 +423,76 @@ router.post('/ap-credit-memos/:id/post', async (req, res) => {
                 }
             }
 
-            // Insert all GL entries
-            await tx.execute(sql`
-            INSERT INTO gl_entries (
-                document_number,
-                gl_account_id,
-                amount,
-                debit_credit_indicator,
-                posting_status,
-                posting_date,
-                created_at,
-                fiscal_period,
-                fiscal_year,
-                description,
-                reference,
-                source_module,
-                source_document_id,
-                source_document_type
-            ) VALUES ${sql.join(journalEntries, sql`, `)}
-            `);
+            // Post to GL using shared helper — journal_entries + journal_entry_line_items
+            const pgClient = await pool.connect();
+            try {
+                await pgClient.query('BEGIN');
+
+                const glHeader: GLDocumentHeader = {
+                    documentNumber: glDocNumber,
+                    documentType: 'KG',
+                    companyCodeId: cm.company_code_id || req.body.company_code_id,
+                    postingDate: new Date(cm.credit_memo_date),
+                    fiscalYear: new Date().getFullYear(),
+                    fiscalPeriod: new Date().getMonth() + 1,
+                    headerText: `AP Credit Memo ${cm.credit_memo_number}`,
+                    sourceModule: 'AP',
+                    sourceDocumentId: creditMemoId,
+                    sourceDocumentType: 'AP_CREDIT_MEMO'
+                };
+
+                const glLines: GLLineItem[] = [];
+
+                // 1. DEBIT Vendor AP Account (reduce liability)
+                glLines.push({
+                    glAccountId: apAccountId, postingKey: '31', debitCredit: 'D',
+                    amount: cm.amount,
+                    description: `AP Credit Memo ${cm.credit_memo_number}`,
+                    partnerId: cm.vendor_id,
+                    sourceModule: 'AP', sourceDocumentId: creditMemoId, sourceDocumentType: 'AP_CREDIT_MEMO'
+                });
+
+                // 2. CREDIT Item GL Accounts
+                for (const item of items.rows) {
+                    if (!item.gl_account_id) throw new Error(`Missing GL Account ID for item line ${item.line_number}`);
+                    glLines.push({
+                        glAccountId: item.gl_account_id, postingKey: '50', debitCredit: 'C',
+                        amount: item.total_amount,
+                        description: `AP Credit Memo Item: ${item.description}`,
+                        sourceModule: 'AP', sourceDocumentId: creditMemoId, sourceDocumentType: 'AP_CREDIT_MEMO'
+                    });
+                    // 3. CREDIT Tax Account
+                    if (item.tax_amount && parseFloat(item.tax_amount) > 0) {
+                        const taxCodeRes = await pgClient.query(`SELECT tax_account FROM tax_codes WHERE code = $1`, [item.tax_code]);
+                        let taxAccountId = null;
+                        if (taxCodeRes.rows[0]?.tax_account) {
+                            const taxIdRes = await pgClient.query(`SELECT id FROM gl_accounts WHERE account_number = $1`, [taxCodeRes.rows[0].tax_account]);
+                            taxAccountId = taxIdRes.rows[0]?.id;
+                        }
+                        if (!taxAccountId) {
+                            const fallback = await pgClient.query(`SELECT id FROM gl_accounts WHERE account_number = (SELECT config_value FROM system_configuration WHERE config_key = 'input_tax_account' LIMIT 1)`);
+                            taxAccountId = fallback.rows[0]?.id;
+                        }
+                        if (!taxAccountId) throw new Error(`Could not determine GL Account for Tax Code ${item.tax_code}`);
+                        glLines.push({
+                            glAccountId: taxAccountId, postingKey: '50', debitCredit: 'C',
+                            amount: item.tax_amount,
+                            description: `AP Credit Memo Tax: ${item.tax_code}`,
+                            sourceModule: 'AP', sourceDocumentId: creditMemoId, sourceDocumentType: 'AP_CREDIT_MEMO'
+                        });
+                    }
+                }
+
+                const glResult = await postGLDocument(pgClient, glHeader, glLines);
+                if (!glResult.success) throw new Error(glResult.error);
+
+                await pgClient.query('COMMIT');
+            } catch (glErr) {
+                await pgClient.query('ROLLBACK');
+                throw glErr;
+            } finally {
+                pgClient.release();
+            }
 
             await tx.execute(sql`
                 UPDATE ap_credit_memos

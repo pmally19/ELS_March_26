@@ -16,6 +16,7 @@
  */
 
 import { pool } from '../db';
+import { postGLDocument, generateDocumentNumber, GLLineItem, GLDocumentHeader } from './gl-posting-helper.js';
 
 export interface GRPostingResult {
     success: boolean;
@@ -162,38 +163,11 @@ export class GRGLPostingService {
             const today = new Date();
             const fiscal_year = today.getFullYear();
             const fiscal_period = today.getMonth() + 1;
-            const docNumber = `FIGR${goodsReceiptId}-${Date.now().toString().slice(-8)}`;
-
-            // ── 5. Create accounting_documents header ──────────────────────────────
+            const docNumber = await generateDocumentNumber(client, 'FIGR');
             const grRef = gr.receipt_number || gr.grn_number || `GR-${goodsReceiptId}`;
 
-            const adResult = await client.query(`
-                INSERT INTO accounting_documents (
-                    document_number, document_type, posting_date, document_date,
-                    company_code, fiscal_year, period, reference,
-                    header_text, total_amount, currency,
-                    source_module, source_document_id, source_document_type,
-                    status, created_at
-                ) VALUES (
-                    $1, 'WE', CURRENT_DATE, CURRENT_DATE,
-                    $2, $3, $4, $5,
-                    $6, $7, $8,
-                    'MM', $9, 'GOODS_RECEIPT',
-                    'POSTED', NOW()
-                ) RETURNING id
-            `, [
-                docNumber,
-                gr.company_code_id?.toString() || '1000',
-                fiscal_year,
-                fiscal_period,
-                grRef,
-                `GR ${grRef} — ${movementTypeCode} — ${valueString}`,
-                totalPoValue,
-                gr.currency || 'INR',
-                goodsReceiptId
-            ]);
-
-            const accountingDocId = adResult.rows[0].id;
+            // GL lines will be collected and posted via the shared helper
+            const glLines: GLLineItem[] = [];
 
             // ── 6. Insert GL entry lines — one per value string line ──────────────
             let debitAccountNum: string | null = null;
@@ -202,41 +176,50 @@ export class GRGLPostingService {
 
             for (const line of vsLines) {
                 const txKey = line.transaction_key;
-                const dcIndicator = line.debit_credit; // 'D' or 'C'
+                const dcIndicator = line.debit_credit as 'D' | 'C';
                 const isPrd = txKey === 'PRD';
 
-                // Skip PRD line if no variance
                 if (isPrd && !hasVariance) continue;
 
-                // Resolve GL account via material_account_determination
                 const glAccountId = await this.resolveGLAccount(
-                    client,
-                    txKey,
+                    client, txKey,
                     gr.valuation_class_id,
                     gr.valuation_grouping_code_id,
                     gr.chart_of_accounts_id
                 );
 
                 if (!glAccountId) {
-                    console.warn(`[GR GL] ⚠️ No GL account found for transaction key ${txKey} (${valueString}). Skipping line.`);
+                    console.warn(`[GR GL] ⚠️ No GL account for tx key ${txKey}. Skipping.`);
                     continue;
                 }
 
-                // Determine posting amount
                 let postingAmount: number;
+                let actualDC: 'D' | 'C' = dcIndicator;
                 if (isPrd) {
                     postingAmount = Math.abs(varianceAmount);
-                    // If variance is negative, flip debit/credit
-                    const actualDC = varianceAmount > 0 ? dcIndicator : (dcIndicator === 'D' ? 'C' : 'D');
-                    const actualPK = actualDC === 'D' ? '40' : '50'; // posting key from direction
-                    await this.insertGLEntry(client, docNumber, glAccountId, postingAmount, actualDC as 'D' | 'C', actualPK, fiscal_period, fiscal_year, `${txKey}: Price Variance — ${grRef}`, goodsReceiptId, grRef);
-                } else if (dcIndicator === 'D') {
-                    postingAmount = inventoryValue;
-                    await this.insertGLEntry(client, docNumber, glAccountId, postingAmount, 'D', '40', fiscal_period, fiscal_year, `${txKey}: ${gr.material_code || 'Inventory'} — ${grRef}`, goodsReceiptId, grRef);
+                    actualDC = varianceAmount > 0 ? dcIndicator : (dcIndicator === 'D' ? 'C' : 'D');
                 } else {
-                    postingAmount = totalPoValue;
-                    await this.insertGLEntry(client, docNumber, glAccountId, postingAmount, 'C', '50', fiscal_period, fiscal_year, `${txKey}: GR/IR Clearing — ${grRef}`, goodsReceiptId, grRef);
+                    postingAmount = dcIndicator === 'D' ? inventoryValue : totalPoValue;
                 }
+
+                const postingKey = actualDC === 'D' ? '40' : '50';
+                const lineDesc = isPrd
+                    ? `${txKey}: Price Variance — ${grRef}`
+                    : dcIndicator === 'D'
+                        ? `${txKey}: ${gr.material_code || 'Inventory'} — ${grRef}`
+                        : `${txKey}: GR/IR Clearing — ${grRef}`;
+
+                glLines.push({
+                    glAccountId,
+                    postingKey,
+                    debitCredit: actualDC,
+                    amount: postingAmount,
+                    description: lineDesc,
+                    reference: grRef,
+                    sourceModule: 'MM',
+                    sourceDocumentId: goodsReceiptId,
+                    sourceDocumentType: 'GOODS_RECEIPT'
+                });
 
                 // Track account numbers for logging
                 const acctResult = await client.query('SELECT account_number FROM gl_accounts WHERE id = $1', [glAccountId]);
@@ -244,6 +227,28 @@ export class GRGLPostingService {
                 if (dcIndicator === 'D' && !isPrd) debitAccountNum = acctNum;
                 else if (dcIndicator === 'C') creditAccountNum = acctNum;
                 else if (isPrd) prdAccountNum = acctNum;
+            }
+
+            // ── 6. Post all GL lines via the shared helper ─────────────────────────
+            if (glLines.length > 0) {
+                const header: GLDocumentHeader = {
+                    documentNumber: docNumber,
+                    documentType: 'WE',
+                    companyCodeId: gr.company_code_id,
+                    postingDate: today,
+                    fiscalYear: fiscal_year,
+                    fiscalPeriod: fiscal_period,
+                    reference: grRef,
+                    headerText: `GR ${grRef} — ${movementTypeCode} — ${valueString}`,
+                    sourceModule: 'MM',
+                    sourceDocumentId: goodsReceiptId,
+                    sourceDocumentType: 'GOODS_RECEIPT'
+                };
+                const postResult = await postGLDocument(client, header, glLines);
+                if (!postResult.success) throw new Error(postResult.error);
+                console.log(`[GR GL] Posted to journal_entries id=${postResult.journalEntryId}`);
+            } else {
+                console.warn(`[GR GL] No GL lines generated for GR ${goodsReceiptId} — check account determination.`);
             }
 
             // ── 7. Mark GR as financially posted ──────────────────────────────────
@@ -265,12 +270,12 @@ export class GRGLPostingService {
 
             await client.query('COMMIT');
 
-            console.log(`✅ GR ${goodsReceiptId} posted to GL: ${docNumber} | ValueString=${valueString} | Dr: ${debitAccountNum} Cr: ${creditAccountNum}${hasVariance ? ` PRD: ${prdAccountNum}` : ''} | Amount: ${totalPoValue}`);
+            console.log(`✅ GR ${goodsReceiptId} posted to journal_entries: ${docNumber} | ValueString=${valueString} | Dr: ${debitAccountNum} Cr: ${creditAccountNum}${hasVariance ? ` PRD: ${prdAccountNum}` : ''} | Amount: ${totalPoValue}`);
 
             return {
                 success: true,
                 glDocumentNumber: docNumber,
-                accountingDocumentId: accountingDocId,
+                accountingDocumentId: undefined,
                 debitAccount: debitAccountNum || 'BSX',
                 creditAccount: creditAccountNum || 'WRX',
                 prdAccount: hasVariance ? (prdAccountNum || 'PRD') : null,
@@ -286,36 +291,7 @@ export class GRGLPostingService {
         }
     }
 
-    /**
-     * Insert a single GL entry line.
-     */
-    private async insertGLEntry(
-        client: any,
-        docNumber: string,
-        glAccountId: number,
-        amount: number,
-        dcIndicator: 'D' | 'C',
-        postingKey: string,          // OB41 posting key e.g. '40' (GL Dr), '50' (GL Cr)
-        period: number,
-        year: number,
-        description: string,
-        sourceDocId: number,
-        reference: string
-    ): Promise<void> {
-        await client.query(`
-            INSERT INTO gl_entries (
-                document_number, gl_account_id, amount, debit_credit_indicator,
-                posting_key,
-                posting_date, posting_status, fiscal_period, fiscal_year,
-                description, source_module, source_document_type, source_document_id,
-                reference
-            ) VALUES (
-                $1, $2, $3, $4, $5,
-                CURRENT_DATE, 'posted', $6, $7,
-                $8, 'MM', 'GOODS_RECEIPT', $9, $10
-            )
-        `, [docNumber, glAccountId, amount, dcIndicator, postingKey, period, year, description, sourceDocId, reference]);
-    }
+    // insertGLEntry removed — now using shared postGLDocument helper (gl-posting-helper.ts)
 
     /**
      * Resolve GL account via material_account_determination.

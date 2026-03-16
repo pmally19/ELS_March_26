@@ -1,121 +1,146 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ArrowLeft, RefreshCw, Plus, Edit2, Eye, FileText, CheckCircle, Clock, DollarSign, AlertCircle } from 'lucide-react';
-
-import { useAgentPermissions } from "@/hooks/useAgentPermissions";
-// Type definitions
-interface TransactionRecord {
-  id: string;
-  name: string;
-  status: 'active' | 'pending' | 'completed' | 'cancelled';
-  date: Date;
-  amount: number;
-  description: string;
-  reference: string;
-}
+import { ArrowLeft, RefreshCw, FileText, Calendar, AlertCircle, ChevronRight, ChevronDown } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { apiRequest } from '@/lib/queryClient';
+import { format } from 'date-fns';
 
 export default function BalanceSheetReporting() {
-  const permissions = useAgentPermissions();
+  const [fsvs, setFsvs] = useState<any[]>([]);
+  const [selectedFsvId, setSelectedFsvId] = useState<string>('');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
 
-  const [data, setData] = useState<TransactionRecord[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [selectedItem, setSelectedItem] = useState<TransactionRecord | null>(null);
-  const [showDialog, setShowDialog] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleRefresh = (): void => {
-    setLoading(true);
-    setError(null);
-    
-    // Simulate data loading with realistic ERP data
-    setTimeout(() => {
-      const sampleData: TransactionRecord[] = [
-        {
-          id: 'BALANCESHEETREPORTING-001',
-          name: 'Transaction Record 001',
-          status: 'active',
-          date: new Date(),
-          amount: 15000,
-          description: 'Sample balancesheetreporting transaction',
-          reference: 'REF-' + Date.now()
-        },
-        {
-          id: 'BALANCESHEETREPORTING-002',
-          name: 'Transaction Record 002',
-          status: 'pending',
-          date: new Date(Date.now() - 24 * 60 * 60 * 1000),
-          amount: 8500,
-          description: 'Pending balancesheetreporting process',
-          reference: 'REF-' + (Date.now() - 1000)
-        },
-        {
-          id: 'BALANCESHEETREPORTING-003',
-          name: 'Transaction Record 003',
-          status: 'completed',
-          date: new Date(Date.now() - 48 * 60 * 60 * 1000),
-          amount: 12750,
-          description: 'Completed balancesheetreporting entry',
-          reference: 'REF-' + (Date.now() - 2000)
-        }
-      ];
-      
-      setData(sampleData);
-      setLoading(false);
-    }, 800);
-  };
-
+  // Set default date range (current month)
   useEffect(() => {
-    handleRefresh();
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    
+    setStartDate(format(firstDay, 'yyyy-MM-dd'));
+    setEndDate(format(lastDay, 'yyyy-MM-dd'));
+
+    // Fetch available FSVs
+    fetch('/api/fsv')
+      .then(res => res.json())
+      .then(data => {
+        setFsvs(data);
+        if (data.length > 0) {
+          setSelectedFsvId(data[0].id);
+        }
+      })
+      .catch(err => console.error("Failed to load FSVs", err));
   }, []);
 
-  const getStatusColor = (status: string): string => {
-    switch (status) {
-      case 'active': return 'bg-green-100 text-green-800';
-      case 'pending': return 'bg-yellow-100 text-yellow-800';
-      case 'completed': return 'bg-blue-100 text-blue-800';
-      case 'cancelled': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
+  // Fetch FSV Report
+  const { data: reportData, isLoading, refetch, error } = useQuery<any>({
+    queryKey: ['/api/fsv-reporting/report', selectedFsvId, startDate, endDate],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
+      
+      const response = await apiRequest(`/api/fsv-reporting/report/${selectedFsvId}?${params.toString()}`);
+      return await response.json();
+    },
+    enabled: !!selectedFsvId, // Only fetch when FSV is selected
+  });
+
+  const handleRefresh = () => {
+    refetch();
   };
 
-  const handleSave = (): void => {
-    setLoading(true);
-    setTimeout(() => {
-      setShowDialog(false);
-      setSelectedItem(null);
-      setLoading(false);
-      handleRefresh();
-    }, 500);
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount || 0);
   };
 
-  const handleBack = (): void => {
-    window.history.back();
+  const toggleNode = (id: string) => {
+    const newExpanded = new Set(expandedNodes);
+    if (newExpanded.has(id)) newExpanded.delete(id);
+    else newExpanded.add(id);
+    setExpandedNodes(newExpanded);
   };
 
-  const handleEdit = (item: TransactionRecord): void => {
-    setSelectedItem(item);
-    setShowDialog(true);
+  const expandAll = () => {
+     if (!reportData?.report) return;
+     const allIds = new Set<string>();
+     const traverse = (nodes: any[]) => {
+        nodes.forEach(n => {
+           allIds.add(n.id);
+           if (n.children) traverse(n.children);
+        });
+     };
+     traverse(reportData.report);
+     setExpandedNodes(allIds);
   };
 
-  const handleView = (item: TransactionRecord): void => {
-    setSelectedItem(item);
-  };
+  const collapseAll = () => setExpandedNodes(new Set());
 
-  const handleAddNew = (): void => {
-    setSelectedItem(null);
-    setShowDialog(true);
-  };
+  // Recursive render function for the hierarchy
+  const renderNode = (node: any, level = 0) => {
+    const isExpanded = expandedNodes.has(node.id);
+    const hasChildren = (node.children && node.children.length > 0) || (node.accounts && node.accounts.length > 0);
 
-  const handleCloseDialog = (): void => {
-    setShowDialog(false);
-    setSelectedItem(null);
+    return (
+      <div key={node.id} className="w-full">
+        {/* Node Header */}
+        <div 
+          className={`flex items-center justify-between py-2 px-4 border-b hover:bg-gray-50 cursor-pointer ${level === 0 ? 'bg-gray-100 font-bold' : ''}`}
+          style={{ paddingLeft: `${level * 20 + 16}px` }}
+          onClick={() => hasChildren && toggleNode(node.id)}
+        >
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 flex items-center justify-center text-gray-400">
+               {hasChildren && (isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
+            </div>
+            <span>{node.name}</span>
+          </div>
+          <div className={`font-mono ${level === 0 ? 'text-lg' : ''}`}>
+             {formatCurrency(node.balance)}
+          </div>
+        </div>
+
+        {/* Children & Accounts (if expanded) */}
+        {isExpanded && hasChildren && (
+          <div className="w-full">
+            {/* Render Accounts attached directly to this node */}
+            {node.accounts && node.accounts.map((acc: any, idx: number) => (
+               <div key={`acc-${acc.accountNumber}-${idx}`} className="flex items-center justify-between py-1.5 px-4 border-b border-gray-100 text-sm text-gray-600 bg-white" style={{ paddingLeft: `${(level + 1) * 20 + 36}px` }}>
+                  <span>Account {acc.accountNumber}</span>
+                  <span className="font-mono">{formatCurrency(acc.balance)}</span>
+               </div>
+            ))}
+            
+            {/* Render Child Nodes */}
+            {node.children && node.children.map((child: any) => renderNode(child, level + 1))}
+
+            {/* Render Subtotals if configured */}
+            {node.showGraduated && (
+               <div className="flex items-center justify-between py-2 px-4 border-b border-gray-200 bg-blue-50/50 font-semibold" style={{ paddingLeft: `${level * 20 + 16}px` }}>
+                  <span className="text-blue-800">{node.graduatedText || `Running Total: ${node.name}`}</span>
+                  <span className="font-mono text-blue-800">{formatCurrency(node.balance)}</span>
+               </div>
+            )}
+            {node.showTotal && level > 0 && (
+               <div className="flex items-center justify-between py-2 px-4 border-b border-gray-300 bg-gray-50 font-bold" style={{ paddingLeft: `${level * 20 + 16}px` }}>
+                  <span>{node.endText || `Total ${node.name}`}</span>
+                  <span className="font-mono">{formatCurrency(node.balance)}</span>
+               </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -124,238 +149,104 @@ export default function BalanceSheetReporting() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Button 
-              variant="outline" 
-              size="sm"
-              onClick={handleBack}
-              type="button"
-            >
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back
+            <Button variant="outline" size="sm" onClick={() => window.history.back()}>
+              <ArrowLeft className="h-4 w-4 mr-2" /> Back
             </Button>
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">BalanceSheetReporting</h1>
-              <p className="text-gray-600 mt-1">Manage balancesheetreporting transactions and processes</p>
+              <h1 className="text-3xl font-bold text-gray-900">Financial Statement Reporting</h1>
+              <p className="text-gray-600 mt-1">Generate dynamic Balance Sheets & P&Ls using configured FSV structures</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              onClick={handleRefresh}
-              disabled={loading}
-              type="button"
-            >
-              <RefreshCw className={loading ? "h-4 w-4 mr-2 animate-spin" : "h-4 w-4 mr-2"} />
-              Refresh
-            </Button>
-            <Button onClick={handleAddNew} disabled={loading} type="button">
-              <Plus className="h-4 w-4 mr-2" />
-              Add New
-            </Button>
+          <div className="flex gap-2">
+             <Button variant="outline" onClick={expandAll}>Expand All</Button>
+             <Button variant="outline" onClick={collapseAll}>Collapse All</Button>
           </div>
         </div>
 
-        {/* Error Alert */}
+        {/* Configuration Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" /> Report Parameters
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="col-span-2">
+                 <Label>Financial Statement Version (FSV)</Label>
+                 <Select value={selectedFsvId} onValueChange={setSelectedFsvId}>
+                   <SelectTrigger className="mt-1">
+                     <SelectValue placeholder="Select an FSV..." />
+                   </SelectTrigger>
+                   <SelectContent>
+                     {fsvs.map(fsv => (
+                       <SelectItem key={fsv.id} value={fsv.id}>{fsv.code} - {fsv.name}</SelectItem>
+                     ))}
+                   </SelectContent>
+                 </Select>
+              </div>
+              <div>
+                <Label>Start Date</Label>
+                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-1"/>
+              </div>
+              <div>
+                <Label>End Date</Label>
+                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="mt-1"/>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Error State */}
         {error && (
           <Card className="border-red-200 bg-red-50">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 text-red-800">
-                <AlertCircle className="h-4 w-4" />
-                <span>{error}</span>
-              </div>
+            <CardContent className="p-4 flex items-center gap-2 text-red-800">
+              <AlertCircle className="h-4 w-4" />
+              <span>Failed to load report: {(error as any).message}</span>
             </CardContent>
           </Card>
         )}
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center gap-4">
-                <FileText className="h-8 w-8 text-blue-600" />
-                <div>
-                  <p className="text-sm text-gray-600">Total Records</p>
-                  <p className="text-2xl font-bold">{data.length}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center gap-4">
-                <CheckCircle className="h-8 w-8 text-green-600" />
-                <div>
-                  <p className="text-sm text-gray-600">Active</p>
-                  <p className="text-2xl font-bold">{data.filter(item => item.status === 'active').length}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center gap-4">
-                <Clock className="h-8 w-8 text-yellow-600" />
-                <div>
-                  <p className="text-sm text-gray-600">Pending</p>
-                  <p className="text-2xl font-bold">{data.filter(item => item.status === 'pending').length}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center gap-4">
-                <DollarSign className="h-8 w-8 text-purple-600" />
-                <div>
-                  <p className="text-sm text-gray-600">Total Value</p>
-                  <p className="text-2xl font-bold">${data.reduce((sum, item) => sum + (item.amount || 0), 0).toLocaleString()}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Main Content */}
-        <Card>
-          <CardHeader>
-            <CardTitle>BalanceSheetReporting Records</CardTitle>
-            <CardDescription>
-              Manage and view all balancesheetreporting transactions
-            </CardDescription>
+        {/* Report Display Card */}
+        <Card className="shadow-lg">
+          <CardHeader className="border-b bg-gray-50 flex flex-row items-center justify-between">
+            <div>
+               <CardTitle>{reportData?.fsvName || "Select an FSV to generate report"}</CardTitle>
+               <CardDescription>
+                 {startDate && endDate ? `Period: ${format(new Date(startDate), 'MMM dd, yyyy')} - ${format(new Date(endDate), 'MMM dd, yyyy')}` : ''}
+               </CardDescription>
+            </div>
+            <Button onClick={handleRefresh} disabled={isLoading || !selectedFsvId}>
+               <RefreshCw className={isLoading ? "h-4 w-4 mr-2 animate-spin" : "h-4 w-4 mr-2"} />
+               {isLoading ? "Calculating..." : "Run Report"}
+            </Button>
           </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div className="flex items-center justify-center p-8">
-                <RefreshCw className="h-8 w-8 animate-spin text-blue-600" />
-                <span className="ml-2">Loading...</span>
-              </div>
+          <CardContent className="p-0">
+            {isLoading ? (
+               <div className="p-12 text-center text-gray-500">
+                  <RefreshCw className="h-8 w-8 mx-auto mb-4 animate-spin text-blue-500" />
+                  Aggregating balances up the hierarchy...
+               </div>
+            ) : reportData?.report ? (
+               <div className="w-full flex flex-col">
+                  {/* Header Row */}
+                  <div className="flex items-center justify-between py-2 px-4 bg-gray-800 text-white font-semibold">
+                     <span>FSV Item / G/L Account</span>
+                     <span>Balance</span>
+                  </div>
+                  {/* Tree Render */}
+                  <div className="flex flex-col w-full divide-y">
+                     {reportData.report.map((rootNode: any) => renderNode(rootNode))}
+                  </div>
+               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>ID</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Reference</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {data.map((item) => (
-                      <TableRow key={item.id}>
-                        <TableCell className="font-mono">{item.id}</TableCell>
-                        <TableCell className="font-medium">{item.name}</TableCell>
-                        <TableCell>
-                          <Badge className={getStatusColor(item.status)}>
-                            {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{item.date.toLocaleDateString()}</TableCell>
-                        <TableCell className="font-mono">${item.amount?.toLocaleString() || 'N/A'}</TableCell>
-                        <TableCell className="font-mono text-sm">{item.reference}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleEdit(item)}
-                              type="button"
-                            >
-                              <Edit2 className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleView(item)}
-                              type="button"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+               <div className="p-12 text-center text-gray-500">
+                  Select parameters above to generate the financial statement.
+               </div>
             )}
           </CardContent>
         </Card>
       </div>
-
-      {/* Dialog */}
-      <Dialog open={showDialog} onOpenChange={setShowDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{selectedItem ? 'Edit' : 'Add'} Record</DialogTitle>
-            <DialogDescription>
-              {selectedItem ? 'Update the record details' : 'Create a new record'}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="name">Name</Label>
-              <Input 
-                id="name"
-                defaultValue={selectedItem?.name || ''} 
-                placeholder="Enter record name" 
-              />
-            </div>
-            <div>
-              <Label htmlFor="status">Status</Label>
-              <Select defaultValue={selectedItem?.status || 'active'}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                  <SelectItem value="cancelled">Cancelled</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="amount">Amount</Label>
-              <Input 
-                id="amount"
-                type="number" 
-                defaultValue={selectedItem?.amount || ''} 
-                placeholder="0.00"
-              />
-            </div>
-            <div>
-              <Label htmlFor="description">Description</Label>
-              <Input 
-                id="description"
-                defaultValue={selectedItem?.description || ''} 
-                placeholder="Enter description"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={handleCloseDialog} type="button">
-              Cancel
-            </Button>
-            <Button onClick={handleSave} disabled={loading} type="button">
-              {loading ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                'Save'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

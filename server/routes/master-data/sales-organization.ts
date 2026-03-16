@@ -61,12 +61,32 @@ export async function createSalesOrganization(req: Request, res: Response) {
       return res.status(400).json({ message: "Code, name, and company code are required" });
     }
 
-    // Check duplicate code
+    // Check duplicate code and UPSERT to support automated agents cleanly
     const existing = await pool.query(
       `SELECT id FROM sd_sales_organizations WHERE code = $1`, [code]
     );
+
     if (existing.rows.length > 0) {
-      return res.status(409).json({ message: "Sales organization code already exists" });
+      // It exists. Treat this POST as an UPSERT and update the existing record.
+      const updateResult = await pool.query(`
+        UPDATE sd_sales_organizations SET
+          name = $2, description = $3, company_code_id = $4, region = $5, distribution_channel = $6,
+          industry = $7, currency = $8, address = $9, city = $10, state = $11, country = $12, postal_code = $13,
+          phone = $14, email = $15, manager = $16, status = $17, is_active = $18, notes = $19,
+          updated_at = NOW(), updated_by = $20, "_deletedAt" = NULL
+        WHERE code = $1
+        RETURNING *
+      `, [
+        code, name, description || null, companyCodeId,
+        region || null, distributionChannel || null,
+        industry || null, currency || 'USD',
+        address || null, city || null, state || null, country || null, postalCode || null,
+        phone || null, email || null, manager || null,
+        status || 'active', isActive !== false, notes || null,
+        (req as any).user?.id ?? 1
+      ]);
+      
+      return res.status(200).json(updateResult.rows[0]);
     }
 
     const result = await pool.query(`

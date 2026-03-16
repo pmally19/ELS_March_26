@@ -3,6 +3,7 @@ import { assetDepreciationService } from '../services/assetDepreciationService.j
 import { assetTransactionService } from '../services/assetTransactionService.js';
 import { pool } from '../db.js';
 import { validatePeriodLock } from '../middleware/period-lock-check.js';
+import { postGLDocument, GLLineItem, GLDocumentHeader } from '../services/gl-posting-helper.js';
 
 const router = express.Router();
 
@@ -429,50 +430,36 @@ router.post('/depreciation/unplanned', validatePeriodLock({ module: 'ASSETS' }),
                     `Accumulated depreciation - ${asset.asset_number}`
                 ]);
 
-                // Also insert into gl_entries for UI visibility
-                // Debit Entry
-                await client.query(`
-                    INSERT INTO gl_entries (
-                        document_number, gl_account_id, amount, debit_credit_indicator,
-                        posting_status, posting_date, fiscal_year, fiscal_period,
-                        source_document_type, description, source_module,
-                        source_document_id, created_at
-                    ) VALUES (
-                        $1, $2, $3, 'D', 'posted', $4, $5, $6,
-                        'UNPLANNED_DEPRECIATION', $7, 'ASSET_MANAGEMENT', $8, NOW()
-                    )
-                `, [
-                    docNumber,
-                    depExpenseAccount.gl_account_id,
-                    depAmount,
-                    posting_date || new Date().toISOString().split('T')[0],
-                    effectiveFiscalYear,
+                // Post to GL via shared helper (journal_entries + journal_entry_line_items)
+                const glHeader: GLDocumentHeader = {
+                    documentNumber: docNumber,
+                    documentType: 'AA',
+                    companyCodeId: asset.company_code_id,
+                    postingDate: new Date(posting_date || new Date()),
+                    fiscalYear: effectiveFiscalYear,
                     fiscalPeriod,
-                    `Unplanned depreciation - ${asset.asset_number}`,
-                    postingId
-                ]);
-
-                // Credit Entry
-                await client.query(`
-                    INSERT INTO gl_entries (
-                        document_number, gl_account_id, amount, debit_credit_indicator,
-                        posting_status, posting_date, fiscal_year, fiscal_period,
-                        source_document_type, description, source_module,
-                        source_document_id, created_at
-                    ) VALUES (
-                        $1, $2, $3, 'C', 'posted', $4, $5, $6,
-                        'UNPLANNED_DEPRECIATION', $7, 'ASSET_MANAGEMENT', $8, NOW()
-                    )
-                `, [
-                    docNumber,
-                    accumDepAccount.gl_account_id,
-                    depAmount,
-                    posting_date || new Date().toISOString().split('T')[0],
-                    effectiveFiscalYear,
-                    fiscalPeriod,
-                    `Accumulated depreciation - ${asset.asset_number}`,
-                    postingId
-                ]);
+                    headerText: `Unplanned depreciation: ${asset.asset_number}`,
+                    sourceModule: 'ASSET_MANAGEMENT',
+                    sourceDocumentId: postingId,
+                    sourceDocumentType: 'UNPLANNED_DEPRECIATION'
+                };
+                const glLines: GLLineItem[] = [
+                    {
+                        glAccountId: depExpenseAccount.gl_account_id, postingKey: '40', debitCredit: 'D',
+                        amount: depAmount,
+                        description: `Unplanned depreciation - ${asset.asset_number}`,
+                        sourceModule: 'ASSET_MANAGEMENT', sourceDocumentId: postingId, sourceDocumentType: 'UNPLANNED_DEPRECIATION'
+                    },
+                    {
+                        glAccountId: accumDepAccount.gl_account_id, postingKey: '50', debitCredit: 'C',
+                        amount: depAmount,
+                        description: `Accumulated depreciation - ${asset.asset_number}`,
+                        sourceModule: 'ASSET_MANAGEMENT', sourceDocumentId: postingId, sourceDocumentType: 'UNPLANNED_DEPRECIATION'
+                    }
+                ];
+                const glResult = await postGLDocument(client, glHeader, glLines);
+                if (!glResult.success) throw new Error(glResult.error);
+                glDocumentId = glResult.journalEntryId;
             }
 
         }

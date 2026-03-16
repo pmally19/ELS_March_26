@@ -1,8 +1,9 @@
 import { db, pool } from "../db";
 import { 
-  products,
+  materials,
   glAccounts,
-  stockMovements
+  stockMovements,
+  orders
 } from "@shared/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { accountDeterminationRules } from "@shared/mm-fi-schema";
@@ -55,8 +56,8 @@ export class MMFIIntegrationService {
       // Get material details
       const [material] = await db
         .select()
-        .from(products)
-        .where(eq(products.id, materialId));
+        .from(materials)
+        .where(eq(materials.id, materialId));
       
       if (!material) {
         throw new Error(`Material not found: ${materialId}`);
@@ -233,8 +234,8 @@ export class MMFIIntegrationService {
       // Get purchase order details
       const [purchaseOrder] = await db
         .select()
-        .from(purchaseOrders)
-        .where(eq(purchaseOrders.id, purchaseOrderId));
+        .from(orders)
+        .where(eq(orders.id, purchaseOrderId));
 
       if (!purchaseOrder) {
         throw new Error(`Purchase order not found: ${purchaseOrderId}`);
@@ -382,8 +383,8 @@ export class MMFIIntegrationService {
       // Get PO details
       const [purchaseOrder] = await db
         .select()
-        .from(purchaseOrders)
-        .where(eq(purchaseOrders.id, purchaseOrderId));
+        .from(orders)
+        .where(eq(orders.id, purchaseOrderId));
 
       if (!purchaseOrder) {
         throw new Error(`Purchase order not found: ${purchaseOrderId}`);
@@ -620,8 +621,8 @@ export class MMFIIntegrationService {
   }> {
     try {
       const [accountRules] = await db
-        .select({ count: eq(accountDetermination.id, accountDetermination.id) })
-        .from(accountDetermination);
+        .select({ count: sql`count(*)` })
+        .from(accountDeterminationRules);
 
       return {
         accountDeterminationRules: 25, // Would query actual rules

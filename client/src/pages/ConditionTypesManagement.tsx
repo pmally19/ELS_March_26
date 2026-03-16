@@ -35,7 +35,15 @@ const conditionTypeSchema = z.object({
   is_mandatory: z.boolean().default(false),
   is_active: z.boolean().default(true),
   account_key: z.string().optional(),
-  condition_class_id: z.number().nullable().optional()
+  condition_class_id: z.number().nullable().optional(),
+  access_sequence_id: z.number().nullable().optional(),
+  plus_minus: z.string().nullable().optional(),
+  manual_entries: z.string().nullable().optional(),
+  is_group_condition: z.boolean().default(false),
+  is_header_condition: z.boolean().default(false),
+  is_item_condition: z.boolean().default(true),
+  rounding_rule: z.string().nullable().optional(),
+  rounding_precision: z.number().nullable().optional()
 });
 
 type ConditionType = z.infer<typeof conditionTypeSchema> & {
@@ -69,7 +77,16 @@ export default function ConditionTypesManagement() {
       default_value: 0,
       sequence_number: 1,
       is_mandatory: false,
-      is_active: true
+      is_active: true,
+      condition_class_id: null,
+      access_sequence_id: null,
+      plus_minus: "both",
+      manual_entries: "free",
+      is_group_condition: false,
+      is_header_condition: false,
+      is_item_condition: true,
+      rounding_rule: "commercial",
+      rounding_precision: 2
     }
   });
 
@@ -121,6 +138,17 @@ export default function ConditionTypesManagement() {
     queryFn: async () => {
       const res = await apiRequest('/api/condition-types/condition-classes');
       if (!res.ok) throw new Error('Failed to fetch condition classes');
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    }
+  });
+
+  // Fetch access sequences from API
+  const { data: accessSequences = [] } = useQuery({
+    queryKey: ['/api/condition-types/access-sequences'],
+    queryFn: async () => {
+      const res = await apiRequest('/api/condition-types/access-sequences');
+      if (!res.ok) throw new Error('Failed to fetch access sequences');
       const data = await res.json();
       return Array.isArray(data) ? data : [];
     }
@@ -451,6 +479,13 @@ export default function ConditionTypesManagement() {
       "Name",
       "Category",
       "Calculation Type",
+      "Access Sequence",
+      "Plus/Minus",
+      "Manual Entries",
+      "Rounding Rule",
+      "Header Condition",
+      "Item Condition",
+      "Group Condition",
       "Account Key",
       "Default Value",
       "Min Value",
@@ -461,11 +496,18 @@ export default function ConditionTypesManagement() {
       "Description"
     ];
 
-    const csvData = conditionTypes.map((ct: ConditionType) => [
+    const csvData = conditionTypes.map((ct: any) => [
       ct.condition_code,
       ct.condition_name,
       ct.condition_category,
       ct.calculation_type,
+      ct.access_sequence_code || "",
+      ct.plus_minus || "",
+      ct.manual_entries || "",
+      ct.rounding_rule || "",
+      ct.is_header_condition ? "Yes" : "No",
+      ct.is_item_condition ? "Yes" : "No",
+      ct.is_group_condition ? "Yes" : "No",
       ct.account_key || "",
       ct.default_value || "",
       ct.min_value || "",
@@ -847,6 +889,155 @@ export default function ConditionTypesManagement() {
                         </FormItem>
                       )}
                     />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="access_sequence_id"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Access Sequence</FormLabel>
+                          <Select
+                            onValueChange={(val) => field.onChange(val === "none" ? null : parseInt(val))}
+                            value={field.value ? String(field.value) : "none"}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select access sequence" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="none">None (Header/Manual)</SelectItem>
+                              {accessSequences.map((seq: any) => (
+                                <SelectItem key={seq.id} value={String(seq.id)}>
+                                  {seq.sequence_code} - {seq.sequence_name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>Determines search strategy for condition records</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="plus_minus"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Plus/Minus</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value || "both"}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select indicator" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="both">Positive and negative</SelectItem>
+                              <SelectItem value="positive">Positive (+)</SelectItem>
+                              <SelectItem value="negative">Negative (-)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>Surcharge vs Discount behavior</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="manual_entries"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Manual Entries</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value || "free"}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select manual rule" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="free">No limitations</SelectItem>
+                              <SelectItem value="automatic">Automatic entry only (No manual)</SelectItem>
+                              <SelectItem value="priority">Manual entry has priority</SelectItem>
+                              <SelectItem value="not_possible">Not possible to process manually</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="rounding_rule"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Rounding Rule</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value || "commercial"}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select rounding rule" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="commercial">Commercial</SelectItem>
+                              <SelectItem value="round_up">Round up</SelectItem>
+                              <SelectItem value="round_down">Round down</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  <div className="flex flex-col space-y-4 rounded-md border p-4 bg-muted/20">
+                    <div className="font-medium">Application Flags</div>
+                    <div className="flex flex-wrap gap-6">
+                      <FormField
+                        control={form.control}
+                        name="is_header_condition"
+                        render={({ field }) => (
+                          <FormItem className="flex items-center space-x-2 space-y-0">
+                            <FormControl>
+                              <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                            </FormControl>
+                            <FormLabel className="font-normal cursor-pointer">Header Condition</FormLabel>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="is_item_condition"
+                        render={({ field }) => (
+                          <FormItem className="flex items-center space-x-2 space-y-0">
+                            <FormControl>
+                              <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                            </FormControl>
+                            <FormLabel className="font-normal cursor-pointer">Item Condition</FormLabel>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="is_group_condition"
+                        render={({ field }) => (
+                          <FormItem className="flex items-center space-x-2 space-y-0">
+                            <FormControl>
+                              <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                            </FormControl>
+                            <FormLabel className="font-normal cursor-pointer text-blue-600">Group Condition</FormLabel>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
                   </div>
 
                   <div className="flex justify-end space-x-2">
@@ -1431,12 +1622,65 @@ export default function ConditionTypesManagement() {
                   </div>
                 </TabsContent>
 
-                <TabsContent value="configuration" className="space-y-4">
+                <TabsContent value="configuration" className="space-y-6">
+                  {/* Pricing Rules */}
+                  <div className="space-y-4 rounded-md border p-4 bg-muted/10">
+                    <h4 className="text-sm font-semibold text-foreground">Pricing Rules</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Access Sequence</Label>
+                        <p className="text-sm font-medium">
+                          {(viewingCondition as any).access_sequence_code
+                            ? `${(viewingCondition as any).access_sequence_code} - ${(viewingCondition as any).access_sequence_name}`
+                            : 'None (Manual/Header)'}
+                        </p>
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Plus/Minus</Label>
+                        <p className="text-sm font-medium capitalize">
+                          {viewingCondition.plus_minus || 'Positive & Negative'}
+                        </p>
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Manual Entries</Label>
+                        <p className="text-sm font-medium capitalize">
+                          {viewingCondition.manual_entries?.replace('_', ' ') || 'Free'}
+                        </p>
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Rounding Rule</Label>
+                        <p className="text-sm font-medium capitalize">
+                          {viewingCondition.rounding_rule?.replace('_', ' ') || 'Commercial'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Application Limits */}
+                  <div className="space-y-4 rounded-md border p-4 bg-muted/10">
+                    <h4 className="text-sm font-semibold text-foreground">Application Flags</h4>
+                    <div className="flex flex-wrap gap-x-8 gap-y-4">
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle className={`h-4 w-4 ${viewingCondition.is_header_condition ? 'text-green-500' : 'text-gray-300'}`} />
+                        <span className="text-sm">Header Condition</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle className={`h-4 w-4 ${viewingCondition.is_item_condition ? 'text-green-500' : 'text-gray-300'}`} />
+                        <span className="text-sm">Item Condition</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle className={`h-4 w-4 ${viewingCondition.is_group_condition ? 'text-blue-500' : 'text-gray-300'}`} />
+                        <span className="text-sm text-blue-700">Group Condition</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Values */}
                   <div className="grid grid-cols-3 gap-4">
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Default Value</Label>
                       <p className="text-lg font-semibold">
-                        {viewingCondition.default_value !== undefined
+                        {viewingCondition.default_value !== undefined && viewingCondition.default_value !== null
                           ? (viewingCondition.calculation_type === 'percentage'
                             ? `${viewingCondition.default_value}%`
                             : `$${viewingCondition.default_value}`)
@@ -1446,13 +1690,13 @@ export default function ConditionTypesManagement() {
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Min Value</Label>
                       <p className="text-lg font-semibold">
-                        {viewingCondition.min_value !== undefined ? viewingCondition.min_value : 'Not set'}
+                        {viewingCondition.min_value !== undefined && viewingCondition.min_value !== null ? viewingCondition.min_value : 'Not set'}
                       </p>
                     </div>
                     <div>
                       <Label className="text-sm font-medium text-muted-foreground">Max Value</Label>
                       <p className="text-lg font-semibold">
-                        {viewingCondition.max_value !== undefined ? viewingCondition.max_value : 'Not set'}
+                        {viewingCondition.max_value !== undefined && viewingCondition.max_value !== null ? viewingCondition.max_value : 'Not set'}
                       </p>
                     </div>
                   </div>

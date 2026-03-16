@@ -386,48 +386,49 @@ router.post('/gl/documents', async (req, res) => {
 
     const documentId = headerResult.rows[0].id;
 
-    // Insert document items into gl_entries (existing table)
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
+    // Post items to journal_entries + journal_entry_line_items via shared helper
+    const { postGLDocument } = await import('../services/gl-posting-helper.js');
+    const glPostingDateObj = new Date(posting_date);
+    const glFiscalYear = glPostingDateObj.getFullYear();
+    const glFiscalPeriod = glPostingDateObj.getMonth() + 1;
+
+    const glHeader = {
+      documentNumber: document_number,
+      documentType: document_type,
+      companyCodeId: company_code_id,
+      postingDate: glPostingDateObj,
+      documentDate: document_date ? new Date(document_date) : glPostingDateObj,
+      fiscalYear: glFiscalYear,
+      fiscalPeriod: glFiscalPeriod,
+      currencyId: currency_id,
+      reference: reference || null,
+      headerText: reference || document_type,
+      sourceModule: 'GL',
+      sourceDocumentType: document_type
+    };
+    const glLines = items.map(item => {
       const debitAmount = parseFloat(item.debit_amount || 0);
       const creditAmount = parseFloat(item.credit_amount || 0);
-
-      // Determine amount and indicator
-      let amount = 0;
-      let indicator = 'D';
-      if (debitAmount > 0) {
-        amount = debitAmount;
-        indicator = 'D';
-      } else if (creditAmount > 0) {
-        amount = creditAmount;
-        indicator = 'C';
-      }
-
-      // Calculate fiscal year and period from posting date
-      const postingDateObj = new Date(posting_date);
-      const fiscalYear = postingDateObj.getFullYear();
-      const fiscalPeriod = postingDateObj.getMonth() + 1; // 1-12
-
-      await client.query(`
-        INSERT INTO gl_entries 
-        (document_number, gl_account_id, amount, debit_credit_indicator, posting_date, description, cost_center_id, profit_center_id, posting_status, source_module, source_document_type, fiscal_year, fiscal_period)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-      `, [
-        document_number,
-        item.gl_account_id,
+      const amount = debitAmount > 0 ? debitAmount : creditAmount;
+      const dc = debitAmount > 0 ? 'D' : 'C';
+      return {
+        glAccountId: item.gl_account_id,
+        postingKey: dc === 'D' ? '40' : '50',
+        debitCredit: dc,
         amount,
-        indicator,
-        posting_date,
-        item.description || null,
-        item.cost_center_id || null,
-        item.profit_center_id || null,
-        'Draft', // Will be 'Posted' when document is posted
-        'GL',
-        document_type,
-        fiscalYear,
-        fiscalPeriod
-      ]);
+        description: item.description || null,
+        costCenterId: item.cost_center_id || null,
+        profitCenterId: item.profit_center_id || null,
+        sourceModule: 'GL',
+        sourceDocumentType: document_type
+      };
+    });
+    const glResult = await postGLDocument(client, glHeader, glLines);
+    if (!glResult.success) {
+      await client.query('ROLLBACK');
+      throw new Error(`GL posting failed: ${glResult.error}`);
     }
+
 
     await client.query('COMMIT');
     res.json({

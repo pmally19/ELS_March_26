@@ -157,6 +157,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api/finance/accruals', accrualRoutes.default);
   console.log('Accrual Management routes mounted successfully');
 
+  // Mount new Accruals and Provisions manual workflow routes
+  const accrualProvisionWorkflowRoutes = await import('./routes/accruals-provisions-routes.js');
+  app.use('/api/finance/accruals-provisions', accrualProvisionWorkflowRoutes.default);
+  console.log('Accruals & Provisions Workflow routes mounted successfully');
+
   // Mount Tax Provision routes for tax calculations
   const taxProvisionRoutes = await import('./routes/finance/tax-provision-routes.js');
   app.use('/api/finance/tax', taxProvisionRoutes.default);
@@ -261,6 +266,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Register finance routes
   app.use("/api/finance", financeRoutes);
+
+  // Register Financial Report Templates routes
+  const reportTemplatesRoutes = await import("./routes/finance/report-templates");
+  app.use("/api/finance/report-templates", reportTemplatesRoutes.default);
+
+  // Register Financial Statement Generator
+  const financialStatementsRoutes = await import("./routes/finance/financial-statements");
+  app.use("/api/finance/financial-statements", financialStatementsRoutes.default);
+
   // Note: finance-enhanced routes are registered below (line 241) to avoid duplicate mount
 
   // Register payment proposal routes
@@ -337,6 +351,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Register financial configuration routes
   app.use("/api/financial-config", (await import('./routes/financial-configuration-routes')).default);
+
+
 
   // Register Sales Distribution configuration routes
   app.use("/api/sales-distribution", salesDistributionRoutes);

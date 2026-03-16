@@ -1,0 +1,57 @@
+import pg from 'pg';
+const { Client } = pg;
+
+const connectionString = 'postgresql://postgres:Mokshith%4021@localhost:5432/mallyerp';
+
+async function main() {
+  const client = new Client({
+    connectionString,
+  });
+
+  try {
+    await client.connect();
+    console.log('Connected to database');
+
+    const tablesRes = await client.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public'
+      ORDER BY table_name;
+    `);
+
+    console.log('\n--- PUBLIC TABLES ---');
+    const tables = tablesRes.rows.map(r => r.table_name);
+    console.log(tables.join(', '));
+
+    const searchTerms = ['lot', 'procurement', 'mrp', 'material', 'size', 'type', 'procedure'];
+    const filteredTables = tables.filter(t => searchTerms.some(s => t.toLowerCase().includes(s)));
+
+    console.log('\n--- INTERESTING TABLES ---');
+    for (const table of filteredTables) {
+      const colsRes = await client.query(`
+        SELECT column_name, data_type 
+        FROM information_schema.columns 
+        WHERE table_name = $1
+        ORDER BY ordinal_position;
+      `, [table]);
+      console.log(\`\\nTable: \${table}\`);
+      colsRes.rows.forEach(c => {
+        console.log(\`  - \${c.column_name} (\${c.data_type})\`);
+      });
+
+      try {
+        const countRes = await client.query(\`SELECT COUNT(*) FROM "\${table}"\`);
+        console.log(\`  Count: \${countRes.rows[0].count}\`);
+      } catch (e) {
+        console.log(\`  Count: Error fetching count\`);
+      }
+    }
+
+  } catch (err) {
+    console.error('Error connecting to database:', err);
+  } finally {
+    await client.end();
+  }
+}
+
+main();

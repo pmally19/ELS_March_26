@@ -547,11 +547,9 @@ export default function SalesOrganization() {
                         <Select
                           onValueChange={(value) => {
                             field.onChange(value);
-                            // Find the selected company code object
                             const selectedCC = companyCodes.find(cc => cc.id.toString() === value);
                             setSelectedCompanyCode(selectedCC?.code || "");
                             setSelectedCompanyCodeObj(selectedCC);
-                            // Reset region when company code changes
                             addForm.setValue("region", "");
                           }}
                           defaultValue={field.value?.toString()}
@@ -757,7 +755,7 @@ export default function SalesOrganization() {
                           </FormItem>
                         )}
                       />
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-3 gap-3">
                         <FormField
                           control={addForm.control}
                           name="city"
@@ -779,6 +777,19 @@ export default function SalesOrganization() {
                               <FormLabel>State/Province</FormLabel>
                               <FormControl>
                                 <Input placeholder="IL" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={addForm.control}
+                          name="postalCode"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Postal Code</FormLabel>
+                              <FormControl>
+                                <Input placeholder="10001" {...field} />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
@@ -891,7 +902,7 @@ export default function SalesOrganization() {
                     </FormItem>
                   )}
                 />
-              </form>
+</form>
             </Form>
           </div>
 
@@ -927,7 +938,6 @@ export default function SalesOrganization() {
           <div className="overflow-y-auto max-h-[calc(90vh-180px)] pr-2 my-2">
             <Form {...editForm}>
               <form onSubmit={editForm.handleSubmit(handleEditSubmit)} className="space-y-6">
-                {/* Form fields identical to add dialog, just with editForm instead of addForm */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <FormField
                     control={editForm.control}
@@ -965,7 +975,13 @@ export default function SalesOrganization() {
                       <FormItem>
                         <FormLabel>Company Code*</FormLabel>
                         <Select
-                          onValueChange={field.onChange}
+                          onValueChange={(value) => {
+                            field.onChange(value);
+                            const selectedCC = companyCodes.find(cc => cc.id.toString() === value);
+                            setSelectedCompanyCode(selectedCC?.code || "");
+                            setSelectedCompanyCodeObj(selectedCC);
+                            editForm.setValue("region", "");
+                          }}
                           defaultValue={field.value?.toString()}
                         >
                           <FormControl>
@@ -987,7 +1003,315 @@ export default function SalesOrganization() {
                   />
                 </div>
 
-                {/* Active toggle to switch Active/Inactive */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <FormField
+                    control={editForm.control}
+                    name="region"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Region</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value || ""}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select Region" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {regionsLoading ? (
+                              <SelectItem value="" disabled>Loading regions...</SelectItem>
+                            ) : regions.length === 0 ? (
+                              <SelectItem value="" disabled>No regions available</SelectItem>
+                            ) : (
+                              regions.map((region: any) => (
+                                <SelectItem key={region.id || region.code} value={region.code}>
+                                  {region.name}
+                                </SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={editForm.control}
+                    name="distributionChannel"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Distribution Channel</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          defaultValue={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select Channel" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="retail">Retail</SelectItem>
+                            <SelectItem value="wholesale">Wholesale</SelectItem>
+                            <SelectItem value="ecommerce">E-commerce</SelectItem>
+                            <SelectItem value="direct">Direct Sales</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={editForm.control}
+                    name="industry"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Industry</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          defaultValue={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select Industry" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="manufacturing">Manufacturing</SelectItem>
+                            <SelectItem value="retail">Retail</SelectItem>
+                            <SelectItem value="technology">Technology</SelectItem>
+                            <SelectItem value="healthcare">Healthcare</SelectItem>
+                            <SelectItem value="automotive">Automotive</SelectItem>
+                            <SelectItem value="consumer_goods">Consumer Goods</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <FormField
+                    control={editForm.control}
+                    name="currency"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Currency</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          defaultValue={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select Currency" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {currenciesLoading ? (
+                              <SelectItem value="" disabled>Loading currencies...</SelectItem>
+                            ) : currencies.length === 0 ? (
+                              <SelectItem value="" disabled>No currencies available</SelectItem>
+                            ) : (
+                              currencies.map((currency: any) => (
+                                <SelectItem key={currency.code} value={currency.code}>
+                                  {currency.code} - {currency.name} {currency.symbol ? `(${currency.symbol})` : ''}
+                                </SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={editForm.control}
+                    name="country"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Country</FormLabel>
+                        <FormControl>
+                          <Input placeholder="United States" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={editForm.control}
+                    name="status"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Status</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          defaultValue={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select Status" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="active">Active</SelectItem>
+                            <SelectItem value="planning">Planning</SelectItem>
+                            <SelectItem value="restructuring">Restructuring</SelectItem>
+                            <SelectItem value="inactive">Inactive</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <h3 className="text-sm font-medium mb-3">Contact Information</h3>
+                    <div className="space-y-3">
+                      <FormField
+                        control={editForm.control}
+                        name="address"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Address</FormLabel>
+                            <FormControl>
+                              <Input placeholder="123 Business Ave." {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <div className="grid grid-cols-3 gap-3">
+                        <FormField
+                          control={editForm.control}
+                          name="city"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>City</FormLabel>
+                              <FormControl>
+                                <Input placeholder="Chicago" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={editForm.control}
+                          name="state"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>State/Province</FormLabel>
+                              <FormControl>
+                                <Input placeholder="IL" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={editForm.control}
+                          name="postalCode"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Postal Code</FormLabel>
+                              <FormControl>
+                                <Input placeholder="10001" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-medium mb-3">Management Information</h3>
+                    <div className="space-y-3">
+                      <FormField
+                        control={editForm.control}
+                        name="manager"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Manager</FormLabel>
+                            <FormControl>
+                              <Input placeholder="John Smith" {...field} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <div className="grid grid-cols-2 gap-3">
+                        <FormField
+                          control={editForm.control}
+                          name="phone"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Phone</FormLabel>
+                              <FormControl>
+                                <Input placeholder="+1 (555) 123-4567" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={editForm.control}
+                          name="email"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Email</FormLabel>
+                              <FormControl>
+                                <Input placeholder="sales@example.com" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <FormField
+                  control={editForm.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Detailed description of the sales organization"
+                          className="resize-none"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={editForm.control}
+                  name="notes"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Notes</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Additional information about this sales organization"
+                          className="resize-none"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
                 <FormField
                   control={editForm.control}
                   name="isActive"
@@ -1008,7 +1332,7 @@ export default function SalesOrganization() {
                     </FormItem>
                   )}
                 />
-              </form>
+</form>
             </Form>
           </div>
 

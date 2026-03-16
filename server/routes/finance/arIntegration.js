@@ -9,6 +9,7 @@ const { Pool } = pkg;
 import multer from 'multer';
 import path from 'path';
 import { promises as fs } from 'fs';
+import { postGLDocument } from '../../services/gl-posting-helper.js';
 const router = express.Router();
 
 const pool = new Pool({
@@ -32,7 +33,7 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage: storage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
   fileFilter: (req, file, cb) => {
@@ -77,7 +78,7 @@ router.post('/auto-create-invoices', async (req, res) => {
     `);
 
     const createdInvoices = [];
-    
+
     for (const order of salesOrders.rows) {
       // Credit check before invoice creation
       if (order.is_on_credit_hold) {
@@ -94,14 +95,14 @@ router.post('/auto-create-invoices', async (req, res) => {
               updated_at = CURRENT_TIMESTAMP
           WHERE customer_id = $1
         `, [order.customer_id]);
-        
+
         console.log(`Customer ${order.customer_name} placed on credit hold - limit exceeded`);
         continue;
       }
 
       // Generate invoice number
       const invoiceNumber = `INV-${Date.now()}-${order.sales_order_id}`;
-      
+
       // Create invoice
       const invoiceResult = await client.query(`
         INSERT INTO invoices (
@@ -110,9 +111,9 @@ router.post('/auto-create-invoices', async (req, res) => {
         ) VALUES ($1, $2, $3, $4, CURRENT_DATE, CURRENT_DATE + INTERVAL '30 days', 'open', $5)
         RETURNING id, invoice_number
       `, [
-        invoiceNumber, 
-        order.customer_id, 
-        order.sales_order_id, 
+        invoiceNumber,
+        order.customer_id,
+        order.sales_order_id,
         order.total_amount,
         `Invoice for Sales Order ${order.order_number}`
       ]);
@@ -155,7 +156,7 @@ router.post('/auto-create-invoices', async (req, res) => {
     }
 
     await client.query('COMMIT');
-    
+
     res.json({
       success: true,
       invoices_created: createdInvoices.length,
@@ -171,25 +172,49 @@ router.post('/auto-create-invoices', async (req, res) => {
   }
 });
 
-// GL Posting automation
+// GL Posting automation — uses shared helper (BKPF/BSEG pattern)
 async function createGLEntries(client, invoiceId, amount, customerId) {
-  const timestamp = new Date();
-  
-  // Debit: Accounts Receivable
-  await client.query(`
-    INSERT INTO gl_entries (
-      account_number, debit_amount, credit_amount, description,
-      transaction_date, reference_type, reference_id
-    ) VALUES ('1200', $1, 0, 'Invoice created - AR debit', $2, 'invoice', $3)
-  `, [amount, timestamp, invoiceId]);
+  const today = new Date();
 
-  // Credit: Revenue
-  await client.query(`
-    INSERT INTO gl_entries (
-      account_number, debit_amount, credit_amount, description,
-      transaction_date, reference_type, reference_id
-    ) VALUES ('4000', 0, $1, 'Invoice created - Revenue credit', $2, 'invoice', $3)
-  `, [amount, timestamp, invoiceId]);
+  // Resolve AR and Revenue account IDs
+  const arRes = await client.query(`SELECT id FROM gl_accounts WHERE account_number = '1200' OR account_name ILIKE '%Accounts Receivable%' LIMIT 1`);
+  const rvRes = await client.query(`SELECT id FROM gl_accounts WHERE account_number = '4000' OR account_name ILIKE '%Revenue%' LIMIT 1`);
+
+  const arId = arRes.rows[0]?.id;
+  const rvId = rvRes.rows[0]?.id;
+
+  if (!arId || !rvId) {
+    console.warn('[AR GL] Cannot post — AR or Revenue account not found. Check GL account setup.');
+    return;
+  }
+
+  const docNumber = `ARGLENT${invoiceId}-${Date.now().toString().slice(-8)}`;
+  const header = {
+    documentNumber: docNumber,
+    documentType: 'RV',
+    postingDate: today,
+    fiscalYear: today.getFullYear(),
+    fiscalPeriod: today.getMonth() + 1,
+    headerText: `Invoice created - AR debit`,
+    sourceModule: 'SD',
+    sourceDocumentId: invoiceId,
+    sourceDocumentType: 'INVOICE'
+  };
+  const lines = [
+    {
+      glAccountId: arId, glAccount: '1200', postingKey: '01', debitCredit: 'D', amount,
+      description: 'Invoice created - AR debit',
+      sourceModule: 'SD', sourceDocumentId: invoiceId, sourceDocumentType: 'INVOICE'
+    },
+    {
+      glAccountId: rvId, glAccount: '4000', postingKey: '50', debitCredit: 'C', amount,
+      description: 'Invoice created - Revenue credit',
+      sourceModule: 'SD', sourceDocumentId: invoiceId, sourceDocumentType: 'INVOICE'
+    }
+  ];
+
+  const result = await postGLDocument(client, header, lines);
+  if (!result.success) console.error('[AR GL] createGLEntries failed:', result.error);
 }
 
 // Bank reconciliation automation
@@ -197,7 +222,7 @@ router.post('/bank-reconciliation', async (req, res) => {
   const client = await pool.connect();
   try {
     const { bank_transactions } = req.body; // Array of bank transactions
-    
+
     const matchedTransactions = [];
     const unmatchedTransactions = [];
 
@@ -216,7 +241,7 @@ router.post('/bank-reconciliation', async (req, res) => {
 
       if (paymentMatch.rows.length > 0) {
         const payment = paymentMatch.rows[0];
-        
+
         // Update payment with bank reference
         await client.query(`
           UPDATE customer_payments 
@@ -226,15 +251,41 @@ router.post('/bank-reconciliation', async (req, res) => {
           WHERE id = $2
         `, [bankTxn.reference, payment.id]);
 
-        // Create GL entries for bank reconciliation
-        await client.query(`
-          INSERT INTO gl_entries (
-            account_number, debit_amount, credit_amount, description,
-            transaction_date, reference_type, reference_id
-          ) VALUES 
-          ('1000', $1, 0, 'Bank deposit - Cash debit', $2, 'bank_reconciliation', $3),
-          ('1200', 0, $1, 'Payment received - AR credit', $2, 'bank_reconciliation', $3)
-        `, [bankTxn.amount, bankTxn.transaction_date, payment.id]);
+        // Post bank reconciliation via shared helper
+        const bankDocNum = `BANKRECGL${payment.id}-${Date.now().toString().slice(-8)}`;
+        const bankToday = new Date();
+
+        const cashRes = await client.query(`SELECT id FROM gl_accounts WHERE account_number = '1000' OR account_name ILIKE '%Cash%' OR account_name ILIKE '%Bank%' LIMIT 1`);
+        const arRes = await client.query(`SELECT id FROM gl_accounts WHERE account_number = '1200' OR account_name ILIKE '%Accounts Receivable%' LIMIT 1`);
+        const cashId = cashRes.rows[0]?.id;
+        const arId = arRes.rows[0]?.id;
+
+        if (cashId && arId) {
+          const bankHeader = {
+            documentNumber: bankDocNum,
+            documentType: 'DZ',
+            postingDate: bankToday,
+            fiscalYear: bankToday.getFullYear(),
+            fiscalPeriod: bankToday.getMonth() + 1,
+            reference: bankTxn.reference,
+            headerText: 'Bank deposit - reconciliation',
+            sourceModule: 'FI',
+            sourceDocumentId: payment.id,
+            sourceDocumentType: 'BANK_RECONCILIATION'
+          };
+          const bankLines = [
+            {
+              glAccountId: cashId, glAccount: '1000', postingKey: '10', debitCredit: 'D', amount: bankTxn.amount,
+              description: 'Bank deposit - Cash debit', sourceModule: 'FI', sourceDocumentId: payment.id, sourceDocumentType: 'BANK_RECONCILIATION'
+            },
+            {
+              glAccountId: arId, glAccount: '1200', postingKey: '15', debitCredit: 'C', amount: bankTxn.amount,
+              description: 'Payment received - AR credit', sourceModule: 'FI', sourceDocumentId: payment.id, sourceDocumentType: 'BANK_RECONCILIATION'
+            }
+          ];
+          const bankResult = await postGLDocument(client, bankHeader, bankLines);
+          if (!bankResult.success) console.error('[AR Bank Recon GL]', bankResult.error);
+        }
 
         matchedTransactions.push({
           bank_transaction: bankTxn,
@@ -268,7 +319,7 @@ router.post('/bank-reconciliation', async (req, res) => {
 router.post('/documents/upload', upload.single('document'), async (req, res) => {
   try {
     const { customer_id, invoice_id, document_type, description } = req.body;
-    
+
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -304,7 +355,7 @@ router.post('/documents/upload', upload.single('document'), async (req, res) => 
 router.get('/documents', async (req, res) => {
   try {
     const { customer_id, invoice_id, document_type } = req.query;
-    
+
     let query = `
       SELECT 
         ad.*,
@@ -499,7 +550,7 @@ router.get('/tax-reporting', async (req, res) => {
       summary: {
         total_gross_revenue: totalRevenue,
         total_estimated_tax: totalTax,
-        average_collection_rate: result.rows.length > 0 ? 
+        average_collection_rate: result.rows.length > 0 ?
           result.rows.reduce((sum, row) => sum + parseFloat(row.collection_rate || 0), 0) / result.rows.length : 0
       },
       period_details: result.rows

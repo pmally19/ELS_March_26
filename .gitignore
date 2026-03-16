@@ -91,6 +91,7 @@ jspm_packages/
 # Database backups
 *.sql.backup
 backup-*.sql
+6-03-2026.sql
 
 # Temporary files
 tmp/

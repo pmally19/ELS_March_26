@@ -894,8 +894,7 @@ router.get('/payment-terms', async (req, res) => {
         created_by,
         updated_by,
         "_tenantId",
-        "_deletedAt",
-        is_active
+        "_deletedAt"
       FROM payment_terms
       WHERE "_deletedAt" IS NULL
       ORDER BY id
@@ -911,7 +910,7 @@ router.get('/payment-terms', async (req, res) => {
       discountPercent2: 0,
       baselineDate: 'document_date',
       companyCodeId: 1,
-      isActive: r.is_active !== undefined ? r.is_active : true,
+      isActive: true,
       createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
       updatedAt: r.created_at ? new Date(r.created_at).toISOString() : null, // Using created_at since updated_at missing in DB
       createdBy: r.created_by,
@@ -953,12 +952,12 @@ router.post('/payment-terms', async (req: any, res) => {
 
     const query = `
       INSERT INTO payment_terms (
-        payment_term_key, description, payment_due_days, cash_discount_days, cash_discount_percent, is_active, "_tenantId", created_by, updated_by
+        payment_term_key, description, payment_due_days, cash_discount_days, cash_discount_percent, "_tenantId", created_by, updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
     `;
-    const result = await pool.query(query, [paymentTermCode, description, dueDaysNum, discountDays1Num, discountPercent1Num, isActive !== undefined ? isActive : true, tenantId, userId, userId]);
+    const result = await pool.query(query, [paymentTermCode, description, dueDaysNum, discountDays1Num, discountPercent1Num, tenantId, userId, userId]);
     console.log('[POST /payment-terms] insert result rowCount:', result.rowCount);
     const r = result.rows?.[0];
     if (!r) {
@@ -972,7 +971,7 @@ router.post('/payment-terms', async (req: any, res) => {
       dueDays: Number(r.payment_due_days) || 0,
       discountDays1: Number(r.cash_discount_days) || 0,
       discountPercent1: Number(r.cash_discount_percent) || 0,
-      isActive: r.is_active !== undefined ? r.is_active : true,
+      isActive: true,
       createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
       updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
       createdBy: r.created_by,
@@ -1031,7 +1030,7 @@ router.put('/payment-terms/:id', async (req: any, res) => {
       dueDays: Number(r.payment_due_days) || 0,
       discountDays1: Number(r.cash_discount_days) || 0,
       discountPercent1: Number(r.cash_discount_percent) || 0,
-      isActive: r.is_active !== undefined ? r.is_active : true,
+      isActive: true,
       createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
       updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
       createdBy: r.created_by,
@@ -1056,7 +1055,7 @@ router.delete('/payment-terms/:id', async (req: any, res) => {
     const pool = ensureActivePool();
     const { id } = req.params;
     const userId = req.user?.id || 1;
-    const result = await pool.query('UPDATE payment_terms SET "_deletedAt" = NOW(), updated_by = $1, updated_at = NOW() WHERE id = $2 AND "_deletedAt" IS NULL RETURNING id', [userId, id]);
+    const result = await pool.query('UPDATE payment_terms SET "_deletedAt" = NOW(), updated_by = $1 WHERE id = $2 AND "_deletedAt" IS NULL RETURNING id', [userId, id]);
     if (result.rows.length === 0) return res.status(404).json({ message: 'Payment term not found' });
     res.json({ message: 'Payment term deleted successfully' });
   } catch (error) {
