@@ -1,0 +1,1413 @@
+﻿import pkg from 'pg';
+const { Pool } = pkg;
+import type { Pool as PoolType } from 'pg';
+import { InventoryTrackingService } from './inventoryTrackingService.js';
+import { documentSplittingService } from './document-splitting-service.js';
+import { InventoryFinanceCostService } from './inventory-finance-cost-service.js';
+import { apGLPostingService } from './ap-gl-posting-service.js';
+import { DocumentNumberingService } from './documentNumberingService.js';
+
+interface ThreeWayMatchResult {
+  isValid: boolean;
+  discrepancies: Array<{
+    type: 'quantity' | 'price' | 'missing';
+    field: string;
+    expected: any;
+    actual: any;
+    tolerance?: number;
+  }>;
+  warnings: string[];
+}
+
+interface InvoiceLineItem {
+  materialId?: number;
+  materialCode: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  description?: string;
+}
+
+export class APInvoiceService {
+  private pool: PoolType;
+  private inventoryTrackingService: InventoryTrackingService;
+  private inventoryFinanceCostService: InventoryFinanceCostService; // Added property
+
+  constructor(pool: PoolType) {
+    this.pool = pool;
+    this.inventoryTrackingService = new InventoryTrackingService(pool);
+    this.inventoryFinanceCostService = new InventoryFinanceCostService(pool); // Initialized
+  }
+
+  /**
+   * Perform three-way match validation
+   * Purchase Order ↔ Goods Receipt ↔ Accounts Payable Invoice
+   * Validates quantities and prices match across all three documents
+   */
+  async performThreeWayMatch(
+    purchaseOrderId: number,
+    goodsReceiptId: number | null,
+    invoiceItems: InvoiceLineItem[],
+    tolerancePercentage: number = 5.0
+  ): Promise<ThreeWayMatchResult> {
+    const discrepancies: ThreeWayMatchResult['discrepancies'] = [];
+    const warnings: string[] = [];
+
+    try {
+      // Get PO details
+      const poResult = await this.pool.query(`
+SELECT
+po.id,
+  po.order_number,
+  po.vendor_id,
+  poi.material_id,
+  m.code as material_code,
+  poi.quantity as ordered_quantity,
+  poi.unit_price as po_unit_price,
+  poi.received_quantity,
+  poi.invoiced_quantity
+        FROM purchase_orders po
+        JOIN purchase_order_items poi ON po.id = poi.purchase_order_id
+        LEFT JOIN materials m ON poi.material_id = m.id
+        WHERE po.id = $1 AND(poi.active = true OR poi.active IS NULL)
+  `, [purchaseOrderId]);
+
+      if (poResult.rows.length === 0) {
+        return {
+          isValid: false,
+          discrepancies: [{
+            type: 'missing',
+            field: 'purchase_order',
+            expected: purchaseOrderId,
+            actual: null
+          }],
+          warnings: []
+        };
+      }
+
+      // Get Goods Receipt details if exists
+      let goodsReceiptItems: any[] = [];
+      if (goodsReceiptId || purchaseOrderId) {
+        // Check which status columns exist in goods_receipts table
+        const grColumnsCheck = await this.pool.query(`
+          SELECT column_name 
+          FROM information_schema.columns 
+          WHERE table_name = 'goods_receipts'
+          AND column_name IN('posted', 'status', 'gr_status')
+  `);
+
+        const grColumns = grColumnsCheck.rows.map((r: any) => r.column_name);
+        const hasPosted = grColumns.includes('posted');
+        const hasStatus = grColumns.includes('status');
+        const hasGrStatus = grColumns.includes('gr_status');
+
+        // Build status condition based on available columns
+        let statusCondition = '1=1'; // Default: no status filter
+        if (hasPosted) {
+          statusCondition = 'gr.posted = true';
+        } else if (hasGrStatus) {
+          statusCondition = "gr.gr_status IN ('Posted', 'COMPLETED')";
+        } else if (hasStatus) {
+          statusCondition = "gr.status IN ('Posted', 'COMPLETED', 'Received')";
+        }
+
+        // Check which columns exist for material and quantity
+        const grDataColumnsCheck = await this.pool.query(`
+          SELECT column_name 
+          FROM information_schema.columns 
+          WHERE table_name = 'goods_receipts'
+          AND column_name IN('material_code', 'quantity', 'total_quantity', 'unit_price', 'purchase_order_id', 'purchase_order')
+        `);
+
+        const grDataColumns = grDataColumnsCheck.rows.map((r: any) => r.column_name);
+        const hasMaterialCode = grDataColumns.includes('material_code');
+        const hasQuantity = grDataColumns.includes('quantity');
+        const hasTotalQuantity = grDataColumns.includes('total_quantity');
+        const hasUnitPrice = grDataColumns.includes('unit_price');
+        const hasPurchaseOrderId = grDataColumns.includes('purchase_order_id');
+        const hasPurchaseOrder = grDataColumns.includes('purchase_order');
+
+        const materialCodeCol = hasMaterialCode ? 'gr.material_code' : 'NULL as material_code';
+        const quantityCol = hasQuantity ? 'gr.quantity' : (hasTotalQuantity ? 'gr.total_quantity' : 'NULL as quantity');
+        const unitPriceCol = hasUnitPrice ? 'gr.unit_price' : 'NULL as unit_price';
+        const poIdCol = hasPurchaseOrderId ? 'gr.purchase_order_id' : 'NULL as purchase_order_id';
+
+        // Build WHERE condition
+        let whereCondition = '';
+        let queryParams: any[] = [];
+
+        if (goodsReceiptId) {
+          whereCondition = 'gr.id = $1';
+          queryParams = [goodsReceiptId];
+        } else if (purchaseOrderId) {
+          // Get goods receipts linked to this PO
+          if (hasPurchaseOrderId) {
+            whereCondition = 'gr.purchase_order_id = $1';
+            queryParams = [purchaseOrderId];
+          } else if (hasPurchaseOrder) {
+            // Need to get PO order_number first
+            const poNumberResult = await this.pool.query(
+              'SELECT order_number FROM purchase_orders WHERE id = $1',
+              [purchaseOrderId]
+            );
+            if (poNumberResult.rows.length > 0) {
+              whereCondition = `gr.purchase_order = $1`;
+              queryParams = [poNumberResult.rows[0].order_number];
+            } else {
+              whereCondition = '1=0'; // PO not found
+            }
+          } else {
+            whereCondition = '1=0'; // No PO column found
+          }
+        }
+
+        if (whereCondition) {
+          const goodsReceiptResult = await this.pool.query(`
+SELECT 
+              ${materialCodeCol},
+              ${quantityCol} as received_quantity,
+  ${unitPriceCol} as goods_receipt_unit_price,
+    ${poIdCol} as purchase_order_id
+          FROM goods_receipts gr
+            WHERE ${whereCondition} AND ${statusCondition}
+`, queryParams);
+
+          goodsReceiptItems = goodsReceiptResult.rows;
+        }
+      }
+
+      // Match invoice items against PO and Goods Receipt
+      for (const invoiceItem of invoiceItems) {
+        const poItem = poResult.rows.find(
+          row => row.material_code === invoiceItem.materialCode ||
+            row.material_id === invoiceItem.materialId
+        );
+
+        if (!poItem) {
+          discrepancies.push({
+            type: 'missing',
+            field: 'material',
+            expected: invoiceItem.materialCode,
+            actual: null
+          });
+          continue;
+        }
+
+        // Validate quantity against Goods Receipt (if exists) or PO
+        const expectedQuantity = goodsReceiptItems.length > 0
+          ? goodsReceiptItems.find(gr => gr.material_code === invoiceItem.materialCode)?.received_quantity
+          : poItem.ordered_quantity;
+
+        if (expectedQuantity) {
+          const quantityDiff = Math.abs(invoiceItem.quantity - expectedQuantity);
+          const quantityTolerance = (expectedQuantity * tolerancePercentage) / 100;
+
+          if (quantityDiff > quantityTolerance) {
+            discrepancies.push({
+              type: 'quantity',
+              field: 'quantity',
+              expected: expectedQuantity,
+              actual: invoiceItem.quantity,
+              tolerance: tolerancePercentage
+            });
+          }
+        }
+
+        // Validate price against PO
+        const priceDiff = Math.abs(invoiceItem.unitPrice - parseFloat(poItem.po_unit_price || 0));
+        const priceTolerance = (parseFloat(poItem.po_unit_price || 0) * tolerancePercentage) / 100;
+
+        if (priceDiff > priceTolerance) {
+          discrepancies.push({
+            type: 'price',
+            field: 'unit_price',
+            expected: poItem.po_unit_price,
+            actual: invoiceItem.unitPrice,
+            tolerance: tolerancePercentage
+          });
+          warnings.push(`Price variance for ${invoiceItem.materialCode}: ${priceDiff.toFixed(2)} `);
+        }
+
+        // Check if already invoiced
+        const alreadyInvoiced = parseFloat(poItem.invoiced_quantity || 0);
+        if (alreadyInvoiced > 0) {
+          warnings.push(`Material ${invoiceItem.materialCode} has already been invoiced: ${alreadyInvoiced} `);
+        }
+      }
+
+      // Check if Goods Receipt exists but invoice is being created without it
+      if (goodsReceiptItems.length > 0 && !goodsReceiptId && purchaseOrderId) {
+        warnings.push('Goods Receipt exists for this PO, but invoice is not linked to Goods Receipt');
+        // Use goods receipt quantities for validation if available
+        // This allows validation even when goodsReceiptId is not explicitly provided
+      }
+
+      return {
+        isValid: discrepancies.length === 0,
+        discrepancies,
+        warnings
+      };
+    } catch (error) {
+      console.error('Error performing three-way match:', error);
+      return {
+        isValid: false,
+        discrepancies: [{
+          type: 'missing',
+          field: 'validation_error',
+          expected: 'success',
+          actual: error.message
+        }],
+        warnings: []
+      };
+    }
+  }
+
+  /**
+   * Create A/P Invoice with three-way match validation
+   */
+  async createAPInvoice(
+    invoiceData: {
+      vendorId: number;
+      invoiceNumber: string;
+      invoiceDate: Date;
+      dueDate: Date;
+      purchaseOrderId?: number;
+      goodsReceiptId?: number;
+      items: InvoiceLineItem[];
+      currency?: string;
+      notes?: string;
+      documentTypeId?: number;
+    },
+    performValidation: boolean = true
+  ): Promise<{
+    success: boolean;
+    invoiceId?: number;
+    validationResult?: ThreeWayMatchResult;
+    errors?: string[];
+  }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Perform three-way match if PO/Goods Receipt exists
+      let validationResult: ThreeWayMatchResult | undefined;
+      if (performValidation && invoiceData.purchaseOrderId) {
+        validationResult = await this.performThreeWayMatch(
+          invoiceData.purchaseOrderId,
+          invoiceData.goodsReceiptId || null,
+          invoiceData.items
+        );
+
+        // If validation fails, return error (but allow override in future)
+        if (!validationResult.isValid && performValidation) {
+          await client.query('ROLLBACK');
+          return {
+            success: false,
+            validationResult,
+            errors: validationResult.discrepancies.map(d =>
+              `${d.type} mismatch: ${d.field} expected ${d.expected}, got ${d.actual} `
+            )
+          };
+        }
+      }
+
+      // Calculate totals — use actual tax from items, never assume a default rate
+      const totalAmount = invoiceData.items.reduce((sum, item) => sum + item.totalPrice, 0);
+      const totalNetAmount = invoiceData.items.reduce((sum, item) => {
+        // Use explicit taxRate if provided, otherwise taxAmount, otherwise zero tax
+        if (typeof (item as any).taxRate === 'number' && (item as any).taxRate > 0) {
+          const taxRate = (item as any).taxRate / 100;
+          return sum + (item.totalPrice / (1 + taxRate));
+        } else if (typeof (item as any).taxAmount === 'number' && (item as any).taxAmount > 0) {
+          return sum + (item.totalPrice - (item as any).taxAmount);
+        } else {
+          // No tax provided — net = gross (0% tax)
+          return sum + item.totalPrice;
+        }
+      }, 0);
+      const totalTaxAmount = totalAmount - totalNetAmount;
+
+      // Get vendor information
+      const vendorCheck = await client.query(
+        'SELECT id, name, company_code_id, payment_terms FROM vendors WHERE id = $1',
+        [invoiceData.vendorId]
+      );
+
+      if (vendorCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return {
+          success: false,
+          errors: ['Vendor not found']
+        };
+      }
+
+      const vendor = vendorCheck.rows[0];
+
+      // Get company code
+      let companyCodeId = vendor.company_code_id;
+      if (!companyCodeId) {
+        const companyCodeResult = await client.query(
+          'SELECT id FROM company_codes WHERE active = true ORDER BY id LIMIT 1'
+        );
+        if (companyCodeResult.rows.length > 0) {
+          companyCodeId = companyCodeResult.rows[0].id;
+        } else {
+          await client.query('ROLLBACK');
+          return {
+            success: false,
+            errors: ['No active company code found']
+          };
+        }
+      }
+
+      // Get company code details
+      const companyCodeResult = await client.query(
+        'SELECT id, code, fiscal_year_variant_id FROM company_codes WHERE id = $1',
+        [companyCodeId]
+      );
+      const companyCode = companyCodeResult.rows[0];
+      const companyCodeString = companyCode.code;
+
+      // Get currency ID
+      const currencyCode = invoiceData.currency || 'USD';
+      const currencyResult = await client.query(
+        'SELECT id FROM currencies WHERE code = $1',
+        [currencyCode]
+      );
+      const currencyId = currencyResult.rows.length > 0 ? currencyResult.rows[0].id : 1;
+
+      // Calculate fiscal year and period
+      // For now, use calendar year - can be enhanced later with fiscal year variant logic
+      const invoiceDate = new Date(invoiceData.invoiceDate);
+      const fiscalYear = invoiceDate.getFullYear();
+      const period = invoiceDate.getMonth() + 1;
+
+      // Get created_by user
+      let createdBy = null;
+      try {
+        const systemUserResult = await client.query(
+          "SELECT id FROM users WHERE (role = 'system' OR role = 'admin') AND active = true ORDER BY id LIMIT 1"
+        );
+        if (systemUserResult.rows.length > 0) {
+          createdBy = systemUserResult.rows[0].id;
+        } else {
+          const activeUserResult = await client.query(
+            'SELECT id FROM users WHERE active = true ORDER BY id LIMIT 1'
+          );
+          if (activeUserResult.rows.length > 0) {
+            createdBy = activeUserResult.rows[0].id;
+          }
+        }
+      } catch (e) {
+        console.log('Could not fetch user, using null for created_by');
+      }
+
+      // Check if Goods Receipt exists for this Purchase Order
+      let goodsReceiptExists = false;
+      if (invoiceData.purchaseOrderId) {
+        // Check which columns exist in goods_receipts table
+        const grColumnsCheck = await client.query(`
+          SELECT column_name 
+          FROM information_schema.columns 
+          WHERE table_name = 'goods_receipts'
+          AND column_name IN('posted', 'status', 'gr_status', 'purchase_order_id', 'purchase_order')
+        `);
+
+        const grColumns = grColumnsCheck.rows.map((r: any) => r.column_name);
+        const hasPosted = grColumns.includes('posted');
+        const hasStatus = grColumns.includes('status');
+        const hasGrStatus = grColumns.includes('gr_status');
+        const hasPurchaseOrderId = grColumns.includes('purchase_order_id');
+        const hasPurchaseOrder = grColumns.includes('purchase_order');
+
+        // Build status condition
+        let statusCondition = '1=1';
+        if (hasPosted) {
+          statusCondition = 'gr.posted = true';
+        } else if (hasGrStatus) {
+          statusCondition = "gr.gr_status IN ('Posted', 'COMPLETED')";
+        } else if (hasStatus) {
+          statusCondition = "gr.status IN ('Posted', 'COMPLETED', 'Received')";
+        }
+
+        // Build purchase order condition
+        let poCondition = '1=0';
+        if (hasPurchaseOrderId) {
+          poCondition = 'gr.purchase_order_id = $1';
+        } else if (hasPurchaseOrder) {
+          // Need to get PO order_number first
+          const poNumberResult = await client.query(
+            'SELECT order_number FROM purchase_orders WHERE id = $1',
+            [invoiceData.purchaseOrderId]
+          );
+          if (poNumberResult.rows.length > 0) {
+            poCondition = `gr.purchase_order = '${poNumberResult.rows[0].order_number}'`;
+          }
+        }
+
+        const goodsReceiptCheck = await client.query(`
+          SELECT id FROM goods_receipts gr
+          WHERE ${poCondition} AND ${statusCondition}
+          LIMIT 1
+  `, hasPurchaseOrderId ? [invoiceData.purchaseOrderId] : []);
+        goodsReceiptExists = goodsReceiptCheck.rows.length > 0;
+      }
+
+      // Also check if goodsReceiptId is provided directly
+      if (invoiceData.goodsReceiptId) {
+        goodsReceiptExists = true;
+      }
+
+      // Generate Invoice Document Number using DocumentNumberingService
+      let finalInvoiceNumber = invoiceData.invoiceNumber;
+      try {
+        const docResult = await DocumentNumberingService.getNextDocumentNumberForDirectType(
+          'KR', // default AP invoice type
+          companyCodeId,
+          invoiceData.documentTypeId
+        );
+        if (docResult && docResult.documentNumber) {
+          finalInvoiceNumber = docResult.documentNumber;
+        }
+      } catch (docErr: any) {
+        console.warn('⚠️ Could not generate AP invoice number from service, using fallback:', docErr.message);
+      }
+
+      // Append vendor's original invoice number to notes if we generated an internal one
+      let finalNotes = invoiceData.notes || '';
+      if (finalInvoiceNumber !== invoiceData.invoiceNumber) {
+        const vendorInvoiceRef = `Vendor Invoice: ${invoiceData.invoiceNumber}`;
+        finalNotes = finalNotes ? `${finalNotes}\n${vendorInvoiceRef}` : vendorInvoiceRef;
+      }
+
+      // Create invoice in accounts_payable table
+      const invoiceResult = await client.query(`
+        INSERT INTO accounts_payable(
+    vendor_id, invoice_number, invoice_date, due_date, amount,
+    net_amount, tax_amount, discount_amount, currency_id,
+    company_code_id, payment_terms, purchase_order_id, status,
+    notes, created_by, created_at, updated_at, active
+  ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'Open', $13, $14, NOW(), NOW(), true)
+        RETURNING id, invoice_number, invoice_date, due_date, amount, net_amount, tax_amount
+  `, [
+        invoiceData.vendorId,
+        finalInvoiceNumber,
+        invoiceData.invoiceDate,
+        invoiceData.dueDate,
+        totalAmount.toFixed(2),
+        totalNetAmount.toFixed(2),
+        totalTaxAmount.toFixed(2),
+        0, // discount_amount
+        currencyId,
+        companyCodeId,
+        vendor.payment_terms || null,
+        invoiceData.purchaseOrderId || null,
+        finalNotes || null,
+        createdBy
+      ]);
+
+      const invoiceId = invoiceResult.rows[0].id;
+      console.log('Invoice created successfully with ID:', invoiceId);
+
+      // Create invoice line items using ap_invoice_items table with dynamic column handling
+      try {
+        const tableCheck = await client.query(`
+          SELECT column_name 
+          FROM information_schema.columns 
+          WHERE table_name = 'ap_invoice_items'
+          ORDER BY ordinal_position
+        `);
+
+        if (tableCheck.rows.length > 0) {
+          const columns = tableCheck.rows.map((r: any) => r.column_name);
+          const hasLineItem = columns.includes('line_item');
+          const hasUnit = columns.includes('unit');
+          const hasNetAmount = columns.includes('net_amount');
+          const hasTaxRate = columns.includes('tax_rate');
+          const hasTaxAmount = columns.includes('tax_amount');
+          const hasMaterialCode = columns.includes('material_code');
+
+          let lineItemNumber = 1;
+          for (const item of invoiceData.items) {
+            const totalPrice = item.totalPrice;
+            // Use actual tax rate from item — default to 0 (no tax) if not provided
+            const actualTaxRate = typeof (item as any).taxRate === 'number' ? (item as any).taxRate : 0;
+            const itemTaxAmount = typeof (item as any).taxAmount === 'number'
+              ? (item as any).taxAmount
+              : (actualTaxRate > 0 ? (totalPrice - (totalPrice / (1 + actualTaxRate / 100))) : 0);
+            const itemNetAmount = totalPrice - itemTaxAmount;
+
+            // Build columns and values dynamically
+            const itemColumns: string[] = ['invoice_id'];
+            const itemValues: any[] = [invoiceId];
+            let paramIndex = 2;
+
+            if (hasLineItem) {
+              itemColumns.push('line_item');
+              itemValues.push(lineItemNumber);
+              paramIndex++;
+            }
+
+            itemColumns.push('material_id');
+            itemValues.push(item.materialId || null);
+            paramIndex++;
+
+            if (hasMaterialCode) {
+              itemColumns.push('material_code');
+              itemValues.push(item.materialCode || null);
+              paramIndex++;
+            }
+
+            itemColumns.push('quantity');
+            itemValues.push(item.quantity);
+            paramIndex++;
+
+            if (hasUnit) {
+              itemColumns.push('unit');
+              itemValues.push('EA'); // Default unit
+              paramIndex++;
+            }
+
+            itemColumns.push('unit_price');
+            itemValues.push(item.unitPrice.toFixed(2));
+            paramIndex++;
+
+            if (hasNetAmount) {
+              itemColumns.push('net_amount');
+              itemValues.push(itemNetAmount.toFixed(2));
+              paramIndex++;
+            }
+
+            if (hasTaxRate) {
+              itemColumns.push('tax_rate');
+              itemValues.push(actualTaxRate); // Use actual tax rate from item
+              paramIndex++;
+            }
+
+            if (hasTaxAmount) {
+              itemColumns.push('tax_amount');
+              itemValues.push(itemTaxAmount.toFixed(2));
+              paramIndex++;
+            }
+
+            itemColumns.push('total_price');
+            itemValues.push(totalPrice.toFixed(2));
+            paramIndex++;
+
+            itemColumns.push('description');
+            itemValues.push(item.description || null);
+            paramIndex++;
+
+            itemColumns.push('created_at');
+
+            // Build placeholders
+            const placeholders = itemValues.map((_, i) => `$${i + 1} `).join(', ');
+
+            // Insert
+            await client.query(`
+            INSERT INTO ap_invoice_items(
+    ${itemColumns.join(', ')}
+  ) VALUES(${placeholders}, NOW())
+            `, itemValues);
+
+            lineItemNumber++;
+          }
+          console.log(`Created ${invoiceData.items.length} invoice line items in ap_invoice_items table`);
+        }
+      } catch (error: any) {
+        console.log('Could not create invoice line items:', error.message);
+      }
+
+      // ========== GL POSTING — fires after COMMIT via setImmediate below ==========
+      // Chain: movement_type (RE) → posting_rules → value_strings → WRX → OBYC → gl_account
+      // Fire-and-forget GL posting via apGLPostingService (erp Movement Types chain)
+      // This runs AFTER the invoice commit — invoice creation is never blocked by GL posting.
+
+      // Create AP open item — wrapped in SAVEPOINT so any failure here
+      // does NOT abort the main invoice transaction
+      try {
+        await client.query('SAVEPOINT ap_open_item_sp');
+        const apOpenItemsCheck = await client.query(`
+          SELECT EXISTS(
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'ap_open_items'
+          )
+        `);
+
+        if (apOpenItemsCheck.rows[0]?.exists) {
+          const columnCheck = await client.query(`
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'ap_open_items'
+            AND column_name IN('invoice_id', 'document_number', 'invoice_number', 'vendor_id', 'gl_account_id')
+          `);
+
+          const hasDocumentNumber = columnCheck.rows.some((r: any) => r.column_name === 'document_number');
+          const hasVendorId = columnCheck.rows.some((r: any) => r.column_name === 'vendor_id');
+          const hasGlAccountId = columnCheck.rows.some((r: any) => r.column_name === 'gl_account_id');
+
+          if (hasDocumentNumber && hasVendorId) {
+            // Resolve an AP/Liability GL account for the open item record
+            let openItemGlAccountId: number | null = null;
+            if (hasGlAccountId) {
+              const glLookup = await client.query(`
+                SELECT id FROM gl_accounts
+                WHERE (
+                  account_name ILIKE '%payable%'
+                  OR account_name ILIKE '%vendor%'
+                  OR account_type ILIKE '%liab%'
+                )
+                AND is_active = true
+                ORDER BY account_number
+                LIMIT 1
+              `);
+              openItemGlAccountId = glLookup.rows[0]?.id || null;
+            }
+
+            // Only insert if gl_account_id constraint can be satisfied
+            if (!hasGlAccountId || openItemGlAccountId !== null) {
+              const cols = hasGlAccountId
+                ? 'vendor_id, document_number, invoice_number, document_type, posting_date, due_date, original_amount, outstanding_amount, currency_id, gl_account_id, status, active, created_at'
+                : 'vendor_id, document_number, invoice_number, document_type, posting_date, due_date, original_amount, outstanding_amount, currency_id, status, active, created_at';
+              const vals = hasGlAccountId
+                ? '$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, NOW()'
+                : '$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true, NOW()';
+              const params: any[] = hasGlAccountId
+                ? [invoiceData.vendorId, invoiceData.invoiceNumber, invoiceData.invoiceNumber, 'Invoice', invoiceData.invoiceDate, invoiceData.dueDate, totalAmount.toFixed(2), totalAmount.toFixed(2), currencyId, openItemGlAccountId, 'Open']
+                : [invoiceData.vendorId, invoiceData.invoiceNumber, invoiceData.invoiceNumber, 'Invoice', invoiceData.invoiceDate, invoiceData.dueDate, totalAmount.toFixed(2), totalAmount.toFixed(2), currencyId, 'Open'];
+
+              await client.query(`INSERT INTO ap_open_items(${cols}) VALUES(${vals})`, params);
+              console.log('AP open item created successfully');
+            } else {
+              console.log('AP open item skipped: no AP GL account found for gl_account_id');
+            }
+          }
+        }
+        await client.query('RELEASE SAVEPOINT ap_open_item_sp');
+      } catch (apError: any) {
+        await client.query('ROLLBACK TO SAVEPOINT ap_open_item_sp');
+        console.log('Could not create AP open item (rolled back savepoint):', apError.message);
+      }
+
+
+      // Update PO invoiced quantities (if PO exists)
+      if (invoiceData.purchaseOrderId) {
+        // Check if purchase_order_items table exists and has invoiced_quantity column
+        const poiColumnsCheck = await client.query(`
+          SELECT column_name 
+          FROM information_schema.columns 
+          WHERE table_name = 'purchase_order_items'
+          AND column_name IN('invoiced_quantity', 'updated_at', 'material_id', 'material_code')
+        `);
+
+        const poiColumns = poiColumnsCheck.rows.map((r: any) => r.column_name);
+        const hasInvoicedQuantity = poiColumns.includes('invoiced_quantity');
+        const hasUpdatedAt = poiColumns.includes('updated_at');
+        const hasMaterialId = poiColumns.includes('material_id');
+        const hasMaterialCode = poiColumns.includes('material_code');
+
+        if (hasInvoicedQuantity) {
+          for (const item of invoiceData.items) {
+            // Build WHERE condition based on available columns
+            let whereCondition = 'purchase_order_id = $2';
+            const params: any[] = [item.quantity, invoiceData.purchaseOrderId];
+            let paramIndex = 3;
+
+            if (hasMaterialId && item.materialId) {
+              whereCondition += ` AND material_id = $${paramIndex} `;
+              params.push(item.materialId);
+              paramIndex++;
+            }
+            if (hasMaterialCode && item.materialCode) {
+              whereCondition += ` AND material_code = $${paramIndex} `;
+              params.push(item.materialCode);
+              paramIndex++;
+            }
+
+            // Build SET clause
+            const setClause = hasUpdatedAt
+              ? 'invoiced_quantity = COALESCE(invoiced_quantity, 0) + $1, updated_at = NOW()'
+              : 'invoiced_quantity = COALESCE(invoiced_quantity, 0) + $1';
+
+            await client.query(`
+            UPDATE purchase_order_items
+              SET ${setClause}
+              WHERE ${whereCondition}
+`, params);
+          }
+          console.log('PO invoiced quantities updated');
+        } else {
+          console.log('purchase_order_items table does not have invoiced_quantity column, skipping update');
+        }
+
+        // Check if PO is fully invoiced and close it
+        if (hasInvoicedQuantity) {
+          const poCompletion = await client.query(`
+SELECT
+COUNT(*) as total_items,
+  COUNT(CASE WHEN COALESCE(invoiced_quantity, 0) >= quantity THEN 1 END) as invoiced_items
+          FROM purchase_order_items
+            WHERE purchase_order_id = $1 AND(active = true OR active IS NULL)
+  `, [invoiceData.purchaseOrderId]);
+
+          if (poCompletion.rows.length > 0 &&
+            parseInt(poCompletion.rows[0].total_items) > 0 &&
+            parseInt(poCompletion.rows[0].invoiced_items) === parseInt(poCompletion.rows[0].total_items)) {
+            // Check if purchase_orders table has updated_at column
+            const poColumnsCheck = await client.query(`
+              SELECT column_name 
+              FROM information_schema.columns 
+              WHERE table_name = 'purchase_orders'
+              AND column_name = 'updated_at'
+  `);
+            const hasPoUpdatedAt = poColumnsCheck.rows.length > 0;
+
+            const updateClause = hasPoUpdatedAt
+              ? "status = 'CLOSED', updated_at = NOW()"
+              : "status = 'CLOSED'";
+
+            await client.query(`
+            UPDATE purchase_orders 
+              SET ${updateClause}
+            WHERE id = $1
+  `, [invoiceData.purchaseOrderId]);
+            console.log('Purchase Order closed - all items fully invoiced');
+          }
+        }
+      }
+
+      // Update Goods Receipt invoiced status (if Goods Receipt exists)
+      if (invoiceData.goodsReceiptId) {
+        // Check which status columns exist
+        const grStatusColumnsCheck = await client.query(`
+          SELECT column_name 
+          FROM information_schema.columns 
+          WHERE table_name = 'goods_receipts'
+          AND column_name IN('status', 'gr_status', 'updated_at')
+  `);
+
+        const grStatusColumns = grStatusColumnsCheck.rows.map((r: any) => r.column_name);
+        const hasStatus = grStatusColumns.includes('status');
+        const hasGrStatus = grStatusColumns.includes('gr_status');
+        const hasUpdatedAt = grStatusColumns.includes('updated_at');
+
+        // Build update statement based on available columns
+        const updateFields: string[] = [];
+        if (hasStatus) {
+          updateFields.push("status = 'INVOICED'");
+        } else if (hasGrStatus) {
+          updateFields.push("gr_status = 'INVOICED'");
+        }
+        if (hasUpdatedAt) {
+          updateFields.push('updated_at = NOW()');
+        }
+
+        if (updateFields.length > 0) {
+          await client.query(`
+          UPDATE goods_receipts
+            SET ${updateFields.join(', ')}
+          WHERE id = $1
+  `, [invoiceData.goodsReceiptId]);
+          console.log('Goods Receipt status updated to INVOICED');
+        } else {
+          console.log('Goods Receipt table does not have status column, skipping status update');
+        }
+      }
+
+      // Update stock only if NO Goods Receipt exists
+      // If Goods Receipt exists, stock was already updated during Goods Receipt posting
+      if (!goodsReceiptExists && invoiceData.purchaseOrderId) {
+        // This is a direct invoice (no Goods Receipt), update stock
+        for (const item of invoiceData.items) {
+          // Get material and plant info from PO
+          const materialInfo = await client.query(`
+SELECT
+poi.material_id,
+  poi.plant_id,
+  m.code as material_code,
+  p.code as plant_code,
+  m.base_uom as unit
+            FROM purchase_order_items poi
+            LEFT JOIN materials m ON poi.material_id = m.id
+            LEFT JOIN plants p ON poi.plant_id = p.id
+            WHERE poi.purchase_order_id = $1
+AND(poi.material_id = $2 OR m.code = $3)
+            LIMIT 1
+  `, [invoiceData.purchaseOrderId, item.materialId, item.materialCode]);
+
+          if (materialInfo.rows.length > 0) {
+            const info = materialInfo.rows[0];
+            if (info.material_code && info.plant_code) {
+              // Increase stock and decrease ordered quantity
+              await this.inventoryTrackingService.decreaseOrderedAndIncreaseStock(
+                info.material_id,
+                info.material_code,
+                info.plant_id,
+                info.plant_code,
+                '0001', // default storage location
+                item.quantity,
+                item.unitPrice
+              );
+            }
+          }
+        }
+      }
+
+      await client.query('COMMIT');
+
+      // ── Fire GL posting AFTER commit — invoice row is now fully visible in DB ──
+      const capturedId = invoiceId;
+      setImmediate(async () => {
+        try {
+          const glResult = await apGLPostingService.postAPInvoiceToGL(capturedId);
+          if (glResult.success) {
+            console.log(`✅ AP GL posting completed for Invoice ${capturedId}: ${glResult.glDocumentNumber} Dr(${glResult.debitAccount}) Cr(${glResult.creditAccount}) Amount=${glResult.totalAmount}`);
+          } else {
+            console.warn(`⚠️ AP GL posting failed for Invoice ${capturedId}: ${glResult.error}`);
+          }
+        } catch (glErr: any) {
+          console.warn(`⚠️ AP GL posting exception for Invoice ${capturedId}: ${glErr.message}`);
+        }
+      });
+
+      return {
+        success: true,
+        invoiceId,
+        validationResult
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Error creating A/P invoice:', error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Post A/P Invoice (lock it and create journal entries)
+   */
+  async postAPInvoice(invoiceId: number): Promise<{
+    success: boolean;
+    errors?: string[];
+  }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Check if invoice exists and is not already posted
+      const invoiceCheck = await client.query(`
+        SELECT id, posted, status, amount, vendor_id, grpo_id as goods_receipt_id
+        FROM ap_invoices
+        WHERE id = $1
+  `, [invoiceId]);
+
+      if (invoiceCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return { success: false, errors: ['Invoice not found'] };
+      }
+
+      const invoice = invoiceCheck.rows[0];
+
+      if (invoice.posted) {
+        await client.query('ROLLBACK');
+        return { success: false, errors: ['Invoice already posted'] };
+      }
+
+      // Create journal entry
+      // If Goods Receipt exists: Dr. Receiving/Invoicing Clearing Account, Cr. Accounts Payable
+      // If no Goods Receipt: Dr. Inventory, Cr. Accounts Payable (if stock was updated) or Dr. Expense, Cr. Accounts Payable
+
+      const settingsResult = await client.query(`
+        SELECT setting_value 
+        FROM document_settings 
+        WHERE setting_key = 'perpetual_inventory_enabled'
+  `);
+      const perpetualInventoryEnabled = settingsResult.rows[0]?.setting_value !== 'false';
+
+      let accountingDocNumber: string | null = null;
+
+      if (perpetualInventoryEnabled) {
+        // CreateInvoiceJournalEntry now returns accounting document number
+        accountingDocNumber = await this.createInvoiceJournalEntry(client, invoice);
+      }
+
+      // Mark invoice as posted
+      await client.query(`
+        UPDATE ap_invoices
+        SET posted = true, posted_date = NOW(), status = 'posted'
+        WHERE id = $1
+  `, [invoiceId]);
+
+      // Update vendor balance
+      await client.query(`
+        UPDATE erp_vendors
+        SET balance = COALESCE(balance, 0) + $1,
+  updated_at = NOW()
+        WHERE id = $2
+  `, [invoice.amount, invoice.vendor_id]);
+
+      // Create AP open item after successful GL posting
+      try {
+        const { apOpenItemsService } = await import('./apOpenItemsService');
+
+        // Get full invoice details
+        const invoiceDetails = await client.query(`
+SELECT
+ai.id,
+  ai.invoice_number,
+  ai.invoice_date,
+  ai.due_date,
+  ai.amount,
+  ai.vendor_id,
+  ai.purchase_order_id,
+  v.currency,
+  v.payment_terms
+          FROM ap_invoices ai
+          LEFT JOIN erp_vendors v ON ai.vendor_id = v.id
+          WHERE ai.id = $1
+  `, [invoiceId]);
+
+        if (invoiceDetails.rows.length > 0) {
+          const invoiceData = invoiceDetails.rows[0];
+
+          // Get currency ID
+          const currency = invoiceData.currency || 'USD';
+          const currencyResult = await client.query(`
+            SELECT id FROM currencies
+WHERE(code = $1 OR currency_code = $1) 
+              AND is_active = true 
+            LIMIT 1
+          `, [currency]);
+
+          if (currencyResult.rows.length === 0) {
+            console.warn(`Currency ${currency} not found, skipping AP open item creation`);
+          } else {
+            const currencyId = parseInt(currencyResult.rows[0].id);
+
+            // Get AP GL account ID
+            const apAccountResult = await client.query(`
+              SELECT id FROM gl_accounts
+              WHERE account_type = 'LIABILITIES'
+AND(account_name ILIKE '%payable%' OR account_name ILIKE '%AP%')
+                AND reconciliation_account = true
+                AND is_active = true
+              ORDER BY account_number
+              LIMIT 1
+  `);
+
+            if (apAccountResult.rows.length === 0) {
+              throw new Error('AP GL account not found. Please configure GL accounts.');
+            }
+
+            const glAccountId = parseInt(apAccountResult.rows[0].id);
+
+            // Calculate due date if not set
+            let dueDate: Date;
+            if (invoiceData.due_date) {
+              dueDate = new Date(invoiceData.due_date);
+            } else {
+              dueDate = new Date(invoiceData.invoice_date || new Date());
+
+              // Add payment terms days
+              if (invoiceData.payment_terms) {
+                const paymentTermsResult = await client.query(`
+                  SELECT number_of_days, payment_days 
+                  FROM payment_terms 
+                  WHERE code = $1 AND is_active = true LIMIT 1
+  `, [invoiceData.payment_terms]);
+
+                if (paymentTermsResult.rows.length > 0) {
+                  const days = parseInt(paymentTermsResult.rows[0].number_of_days || paymentTermsResult.rows[0].payment_days || '30');
+                  dueDate.setDate(dueDate.getDate() + days);
+                } else {
+                  // Try to extract days from payment terms code (e.g., "NET30" = 30 days)
+                  const daysMatch = String(invoiceData.payment_terms).match(/\d+/);
+                  if (daysMatch) {
+                    dueDate.setDate(dueDate.getDate() + parseInt(daysMatch[0]));
+                  } else {
+                    // Get default from system configuration
+                    const defaultDaysResult = await client.query(`
+                      SELECT config_value FROM system_configuration 
+                      WHERE config_key = 'default_payment_terms_days' AND active = true LIMIT 1
+  `);
+                    const defaultDays = defaultDaysResult.rows.length > 0
+                      ? parseInt(defaultDaysResult.rows[0].config_value || '30')
+                      : 30;
+                    dueDate.setDate(dueDate.getDate() + defaultDays);
+                  }
+                }
+              } else {
+                // Get default payment terms from system configuration
+                const defaultDaysResult = await client.query(`
+                  SELECT config_value FROM system_configuration 
+                  WHERE config_key = 'default_payment_terms_days' AND active = true LIMIT 1
+  `);
+                const defaultDays = defaultDaysResult.rows.length > 0
+                  ? parseInt(defaultDaysResult.rows[0].config_value || '30')
+                  : 30;
+                dueDate.setDate(dueDate.getDate() + defaultDays);
+              }
+            }
+
+            // Get initial status from system configuration
+            const initialStatusResult = await client.query(`
+              SELECT config_value FROM system_configuration 
+              WHERE config_key = 'ap_open_item_initial_status' AND active = true LIMIT 1
+            `);
+            const initialStatus = initialStatusResult.rows.length > 0
+              ? String(initialStatusResult.rows[0].config_value)
+              : 'Open';
+
+            // Generate document number if not available
+            const documentNumber = accountingDocNumber || `AP${invoiceId} -${Date.now()} `;
+
+            // Create AP open item
+            await apOpenItemsService.createAPOpenItem({
+              vendorId: parseInt(invoiceData.vendor_id),
+              documentNumber: documentNumber,
+              invoiceNumber: String(invoiceData.invoice_number),
+              documentType: 'Invoice',
+              postingDate: new Date(invoiceData.invoice_date || new Date()),
+              dueDate: dueDate,
+              originalAmount: parseFloat(invoiceData.amount),
+              outstandingAmount: parseFloat(invoiceData.amount),
+              currencyId: currencyId,
+              paymentTerms: invoiceData.payment_terms || null,
+              status: initialStatus,
+              glAccountId: glAccountId,
+              purchaseOrderId: invoiceData.purchase_order_id ? parseInt(invoiceData.purchase_order_id) : undefined,
+              active: true,
+            });
+
+            console.log(`✅ Created AP open item for invoice ${invoiceData.invoice_number}`);
+          }
+        }
+      } catch (apOpenItemError: any) {
+        // Log error but don't fail the posting
+        console.error('Error creating AP open item:', apOpenItemError);
+        console.warn('GL posting succeeded but AP open item creation failed');
+      }
+
+      await client.query('COMMIT');
+
+      return { success: true };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Error posting A/P invoice:', error);
+      return { success: false, errors: [error.message] };
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Create GL entries for A/P Invoice (no hardcoded values)
+   * Posts to gl_entries table with proper balance validation
+   * Returns accounting document number for AP open items creation
+   */
+  private async createInvoiceJournalEntry(client: any, invoice: any): Promise<string> {
+    try {
+      // Get vendor details to determine company code and currency
+      const vendorResult = await client.query(`
+        SELECT v.id, v.company_code_id, v.currency, cc.code as company_code, cc.currency as company_currency
+        FROM ap_invoices ai
+        LEFT JOIN erp_vendors v ON ai.vendor_id = v.id
+        LEFT JOIN company_codes cc ON v.company_code_id = cc.id
+        WHERE ai.id = $1
+        LIMIT 1
+      `, [invoice.id]);
+
+      if (vendorResult.rows.length === 0) {
+        throw new Error(`Vendor not found for invoice ${invoice.id}`);
+      }
+
+      const vendor = vendorResult.rows[0];
+      const companyCode = vendor.company_code || vendor.companyCodeId || null;
+      const currency = vendor.currency || vendor.company_currency || 'USD';
+
+      if (!companyCode) {
+        throw new Error(`Company code not configured for vendor ${vendor.id}`);
+      }
+
+      // Get invoice items to determine GL accounts (if table exists)
+      let itemsResult;
+      try {
+        itemsResult = await client.query(`
+          SELECT
+aii.material_id,
+  aii.material_code,
+  aii.quantity,
+  aii.unit_price,
+  aii.total_price,
+  m.gl_account,
+  m.material_group
+          FROM ap_invoice_items aii
+          LEFT JOIN materials m ON aii.material_id = m.id
+          WHERE aii.invoice_id = $1
+  `, [invoice.id]);
+      } catch (error) {
+        // If ap_invoice_items doesn't exist, use invoice total
+        itemsResult = {
+          rows: [{
+            material_id: null,
+            material_code: null,
+            quantity: 0,
+            unit_price: 0,
+            total_price: invoice.amount,
+            gl_account: null,
+            material_group: null
+          }]
+        };
+      }
+
+      // Get AP Account from database (no hardcoded values)
+      const apAccountResult = await client.query(`
+        SELECT id, account_number
+        FROM gl_accounts
+        WHERE account_type = 'LIABILITIES'
+AND(account_name ILIKE '%payable%' OR account_name ILIKE '%AP%')
+          AND reconciliation_account = true
+          AND is_active = true
+        ORDER BY account_number
+        LIMIT 1
+  `);
+
+      if (apAccountResult.rows.length === 0) {
+        throw new Error('No accounts payable GL account found in database. Please configure GL accounts.');
+      }
+
+      const apAccount = apAccountResult.rows[0];
+      const postingDate = new Date().toISOString().split('T')[0];
+
+      // Generate accounting document number (no hardcoded values)
+      const fiscalYear = new Date().getFullYear().toString();
+      const docCountResult = await client.query(`
+        SELECT COUNT(*):: integer as count 
+        FROM accounting_documents
+        WHERE company_code = $1
+          AND document_type = 'AP_INVOICE'
+          AND fiscal_year = $2
+  `, [companyCode, parseInt(fiscalYear)]);
+
+      const docCount = parseInt(docCountResult.rows[0]?.count || '0') + 1;
+      const accountingDocNumber = `${String(companyCode).replace(/[^0-9]/g, '').slice(-4).padStart(4, '0')}${fiscalYear.slice(-2)}${docCount.toString().padStart(8, '0')} `;
+
+      // Create accounting document
+      const accountingDocResult = await client.query(`
+        INSERT INTO accounting_documents(
+    document_number,
+    document_type,
+    company_code,
+    fiscal_year,
+    document_date,
+    posting_date,
+    period,
+    reference,
+    header_text,
+    currency,
+    total_amount,
+    source_module,
+    source_document_id,
+    source_document_type,
+    created_at
+  ) VALUES($1, 'AP_INVOICE', $2, $3, $4, $4, $5, $6, $7, $8, $9, 'PURCHASE', $10, 'AP_INVOICE', NOW())
+        RETURNING id, document_number
+  `, [
+        accountingDocNumber,
+        companyCode,
+        parseInt(fiscalYear),
+        postingDate,
+        String(new Date().getMonth() + 1).padStart(2, '0'),
+        invoice.invoice_number,
+        `AP Invoice posting for ${invoice.invoice_number}`,
+        currency,
+        invoice.amount,
+        invoice.id
+      ]);
+
+      const accountingDocId = accountingDocResult.rows[0].id;
+      const finalAccountingDocNumber = accountingDocResult.rows[0].document_number;
+
+      // Prepare GL entries array
+      const glEntries: Array<{
+        gl_account_id: number;
+        amount: number;
+        debit_credit_indicator: string;
+      }> = [];
+
+      let totalDebitAmount = 0;
+      let totalCreditAmount = 0;
+
+      // Determine debit accounts based on goods receipt and materials
+      if (invoice.goods_receipt_id) {
+        // If Goods Receipt exists: Debit Receiving/Invoicing Clearing Account
+        const clearingAccountResult = await client.query(`
+          SELECT id, account_number
+          FROM gl_accounts
+          WHERE account_type = 'ASSETS'
+AND(account_name ILIKE '%clearing%' OR account_name ILIKE '%receiving%')
+            AND is_active = true
+          ORDER BY account_number
+          LIMIT 1
+  `);
+
+        if (clearingAccountResult.rows.length > 0) {
+          glEntries.push({
+            gl_account_id: clearingAccountResult.rows[0].id,
+            amount: invoice.amount,
+            debit_credit_indicator: 'D'
+          });
+          totalDebitAmount += parseFloat(invoice.amount);
+        } else {
+          // Fallback to inventory account if clearing account not found
+          const inventoryAccountResult = await client.query(`
+            SELECT id, account_number
+            FROM gl_accounts
+            WHERE account_type = 'ASSETS'
+AND(account_name ILIKE '%inventory%' OR account_name ILIKE '%stock%')
+              AND is_active = true
+            ORDER BY account_number
+            LIMIT 1
+  `);
+
+          if (inventoryAccountResult.rows.length > 0) {
+            glEntries.push({
+              gl_account_id: inventoryAccountResult.rows[0].id,
+              amount: invoice.amount,
+              debit_credit_indicator: 'D'
+            });
+            totalDebitAmount += parseFloat(invoice.amount);
+          } else {
+            throw new Error('No inventory or clearing GL account found. Please configure GL accounts.');
+          }
+        }
+      } else {
+        // No Goods Receipt - determine debit accounts from invoice items
+        for (const item of itemsResult.rows) {
+          let debitAccountId: number | null = null;
+          const itemAmount = parseFloat(item.total_price || invoice.amount);
+
+          // Try to get GL account from material
+          if (item.gl_account) {
+            const materialAccountResult = await client.query(`
+              SELECT id FROM gl_accounts 
+              WHERE account_number = $1 AND is_active = true
+              LIMIT 1
+  `, [item.gl_account]);
+
+            if (materialAccountResult.rows.length > 0) {
+              debitAccountId = materialAccountResult.rows[0].id;
+            }
+          }
+
+          // If no material account, determine based on material type
+          if (!debitAccountId) {
+            const accountTypeResult = await client.query(`
+              SELECT id, account_number
+              FROM gl_accounts
+              WHERE account_type = 'ASSETS'
+AND(account_name ILIKE '%inventory%' OR account_name ILIKE '%stock%')
+                AND is_active = true
+              ORDER BY account_number
+              LIMIT 1
+  `);
+
+            if (accountTypeResult.rows.length > 0) {
+              debitAccountId = accountTypeResult.rows[0].id;
+            } else {
+              // Final fallback: expense account
+              const expenseAccountResult = await client.query(`
+                SELECT id, account_number
+                FROM gl_accounts
+                WHERE account_type = 'EXPENSES'
+                  AND is_active = true
+                ORDER BY account_number
+                LIMIT 1
+              `);
+
+              if (expenseAccountResult.rows.length > 0) {
+                debitAccountId = expenseAccountResult.rows[0].id;
+              }
+            }
+          }
+
+          if (!debitAccountId) {
+            throw new Error('No suitable debit GL account found. Please configure GL accounts.');
+          }
+
+          glEntries.push({
+            gl_account_id: debitAccountId,
+            amount: itemAmount,
+            debit_credit_indicator: 'D'
+          });
+          totalDebitAmount += itemAmount;
+        }
+      }
+
+      // Credit Accounts Payable
+      glEntries.push({
+        gl_account_id: apAccount.id,
+        amount: invoice.amount,
+        debit_credit_indicator: 'C'
+      });
+      totalCreditAmount += parseFloat(invoice.amount);
+
+      // Validate balance before posting
+      const balanceDifference = Math.abs(totalDebitAmount - totalCreditAmount);
+      if (balanceDifference > 0.01) {
+        throw new Error(`GL entries are not balanced.Debits: ${totalDebitAmount.toFixed(2)}, Credits: ${totalCreditAmount.toFixed(2)}, Difference: ${balanceDifference.toFixed(2)} `);
+      }
+
+      // Post GL entries via shared helper (journal_entries + journal_entry_line_items)
+      const { postGLDocument } = await import('./gl-posting-helper.js');
+
+      const companyCodeIdRes = await client.query(
+        `SELECT id FROM company_codes WHERE code = $1 LIMIT 1`, [companyCode]
+      );
+      const companyCodeId = companyCodeIdRes.rows[0]?.id || null;
+
+      const glHeader = {
+        documentNumber: finalAccountingDocNumber,
+        documentType: 'RE',
+        companyCodeId,
+        postingDate: new Date(postingDate),
+        fiscalYear: new Date().getFullYear(),
+        fiscalPeriod: new Date().getMonth() + 1,
+        reference: String(invoice.invoice_number),
+        headerText: `AP Invoice posting for ${invoice.invoice_number}`,
+        sourceModule: 'PURCHASE',
+        sourceDocumentId: invoice.id,
+        sourceDocumentType: 'AP_INVOICE'
+      };
+
+      const glLines = glEntries.map(entry => ({
+        glAccountId: entry.gl_account_id,
+        postingKey: entry.debit_credit_indicator === 'D' ? '31' : '50',
+        debitCredit: entry.debit_credit_indicator as 'D' | 'C',
+        amount: entry.amount,
+        description: `AP Invoice ${invoice.invoice_number}`,
+        sourceModule: 'PURCHASE',
+        sourceDocumentId: invoice.id,
+        sourceDocumentType: 'AP_INVOICE'
+      }));
+
+      const glResult = await postGLDocument(client, glHeader, glLines);
+      if (!glResult.success) {
+        throw new Error(`GL posting failed: ${glResult.error}`);
+      }
+
+      console.log(`✅ Posted AP Invoice ${invoice.invoice_number} to GL with document ${finalAccountingDocNumber}`);
+      console.log(`   Debits: ${totalDebitAmount.toFixed(2)}, Credits: ${totalCreditAmount.toFixed(2)}`);
+
+      // Return accounting document number for AP open item creation
+      return finalAccountingDocNumber;
+
+
+    } catch (error: any) {
+      console.error('Error creating AP invoice GL entries:', error);
+      throw new Error(`Failed to create AP invoice GL entries: ${error.message} `);
+    }
+  }
+}
+

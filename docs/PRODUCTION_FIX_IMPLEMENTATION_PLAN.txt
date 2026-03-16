@@ -1,0 +1,576 @@
+======================================================================================
+PRODUCTION MODULE - COMPLETE FIX IMPLEMENTATION PLAN
+From Database → Backend → Frontend
+Date: 2025-12-29
+======================================================================================
+
+CURRENT STATUS SUMMARY:
+=======================
+✅ Database: 12 tables exist, 8 BOMs, 2 production orders, 5 work centers
+✅ Backend: Basic work order routes exist
+✅ Frontend: Production.tsx with 5 tabs (Orders, Jobs, Work Centers, BOMs, Planning)
+
+ISSUES IDENTIFIED:
+==================
+1. Production order statuses use "CREATED", "RELEASED" instead of standard values
+2. No production_versions data (0 records) - needed to link materials→BOMs→routings
+3. Missing backend APIs for order lifecycle (release, confirm, complete)
+4. Frontend components exist but functionality unknown
+5. No MRP (Material Requirement Planning) logic
+
+======================================================================================
+PHASE 1: DATABASE LAYER FIXES
+======================================================================================
+
+FILE: database/migrations/2025-12-29_fix-production-module.sql
+
+TASK 1.1: Standardize Production Order Statuses
+------------------------------------------------
+UPDATE production_orders 
+SET status = CASE 
+  WHEN status = 'CREATED' THEN 'Planned'
+  WHEN status = 'RELEASED' THEN 'Released'
+  WHEN status = 'IN_PROGRESS' THEN 'In Progress'
+  WHEN status = 'COMPLETED' THEN 'Completed'
+  ELSE status
+END;
+
+-- Add constraint for valid statuses
+ALTER TABLE production_orders 
+DROP CONSTRAINT IF EXISTS chk_production_order_status;
+
+ALTER TABLE production_orders
+ADD CONSTRAINT chk_production_order_status 
+CHECK (status IN ('Planned', 'Released', 'In Progress', 'Confirmed', 'Completed', 'Closed', 'Cancelled'));
+
+
+TASK 1.2: Create Production Versions (Link Materials to BOMs)
+--------------------------------------------------------------
+-- Production versions link a material to a specific BOM and routing
+-- This is critical for MRP and production planning
+
+INSERT INTO production_versions (material_id, bom_id, routing_id, version_number, is_active, valid_from)
+SELECT 
+    bom.material_id,
+    bom.id as bom_id,
+    NULL as routing_id,  -- Will need to add routing data later
+    '001' as version_number,
+    true as is_active,
+    CURRENT_TIMESTAMP as valid_from
+FROM bill_of_materials bom
+WHERE bom.is_active = true
+  AND NOT EXISTS (
+    SELECT 1 FROM production_versions pv 
+    WHERE pv.material_id = bom.material_id 
+      AND pv.bom_id = bom.id
+  );
+
+
+TASK 1.3: Add Missing Indexes for Performance
+----------------------------------------------
+CREATE INDEX IF NOT EXISTS idx_production_orders_status ON production_orders(status);
+CREATE INDEX IF NOT EXISTS idx_production_orders_material_id ON production_orders(material_id);
+CREATE INDEX IF NOT EXISTS idx_bom_items_bom_id ON bom_items(bom_id);
+CREATE INDEX IF NOT EXISTS idx_production_versions_material_id ON production_versions(material_id);
+
+COMPLETION: This migration fixes data issues and improves query performance.
+
+
+======================================================================================
+PHASE 2: BACKEND API LAYER - CREATE PRODUCTION ROUTES
+======================================================================================
+
+FILE: server/routes/production-routes.ts (NEW FILE)
+
+TASK 2.1: Create Comprehensive Production Order APIs
+-----------------------------------------------------
+
+import { Router, Request, Response } from 'express';
+import { Pool } from 'pg';
+
+const router = Router();
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// GET /api/production/orders - List all production orders
+router.get('/orders', async (req: Request, res: Response) => {
+  try {
+    const { status, material_id, limit = 50 } = req.query;
+    
+    let query = `
+      SELECT 
+        po.*,
+        m.name as material_name,
+        m.code as material_code,
+        bom.code as bom_code,
+        bom.name as bom_name,
+        wc.name as work_center_name,
+        pv.version_number as production_version
+      FROM production_orders po
+      LEFT JOIN materials m ON po.material_id = m.id
+      LEFT JOIN bill_of_materials bom ON po.bom_id = bom.id
+      LEFT JOIN work_centers wc ON po.work_center_id = wc.id
+      LEFT JOIN production_versions pv ON po.production_version_id = pv.id
+      WHERE po.active = true
+    `;
+    
+    const params: any[] = [];
+    if (status) {
+      query += ` AND po.status = $${params.length + 1}`;
+      params.push(status);
+    }
+    if (material_id) {
+      query += ` AND po.material_id = $${params.length + 1}`;
+      params.push(material_id);
+    }
+    
+    query += ` ORDER BY po.created_at DESC LIMIT $${params.length + 1}`;
+    params.push(limit);
+    
+    const result = await pool.query(query, params);
+    res.json({ success: true, data: result.rows });
+  } catch (error: any) {
+    console.error('Error fetching production orders:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch production orders', error: error.message });
+  }
+});
+
+
+// POST /api/production/orders - Create new production order
+router.post('/orders', async (req: Request, res: Response) => {
+  try {
+    const {
+      material_id,
+      planned_quantity,
+      planned_start_date,
+      planned_end_date,
+      priority = 'NORMAL'
+    } = req.body;
+    
+    // Validation
+    if (!material_id || !planned_quantity) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'material_id and planned_quantity are required' 
+      });
+    }
+    
+    // Get active production version for this material
+    const pvResult = await pool.query(`
+      SELECT pv.*, bom.code as bom_code
+      FROM production_versions pv
+      LEFT JOIN bill_of_materials bom ON pv.bom_id = bom.id
+      WHERE pv.material_id = $1 AND pv.is_active = true
+      ORDER BY pv.created_at DESC
+      LIMIT 1
+    `, [material_id]);
+    
+    if (pvResult.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No active production version found for this material'
+      });
+    }
+    
+    const productionVersion = pvResult.rows[0];
+    
+    // Generate order number
+    const orderNumResult = await pool.query(`
+      SELECT COALESCE(MAX(CAST(SUBSTRING(order_number FROM 6) AS INTEGER)), 0) + 1 as next_num
+      FROM production_orders
+      WHERE order_number LIKE 'PROD-%'
+    `);
+    const orderNumber = `PROD-${String(orderNumResult.rows[0].next_num).padStart(8, '0')}`;
+    
+    // Create production order
+    const result = await pool.query(`
+      INSERT INTO production_orders (
+        order_number, material_id, bom_id, production_version_id,
+        planned_quantity, actual_quantity, scrap_quantity,
+        planned_start_date, planned_end_date,
+        priority, status, order_type, active, created_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, 0, 0, $6, $7, $8, 'Planned', 'Production', true, NOW(), NOW()
+      )
+      RETURNING *
+    `, [
+      orderNumber, material_id, productionVersion.bom_id, productionVersion.id,
+      planned_quantity, planned_start_date, planned_end_date, priority
+    ]);
+    
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error: any) {
+    console.error('Error creating production order:', error);
+    res.status(500).json({ success: false, message: 'Failed to create production order', error: error.message });
+  }
+});
+
+
+// POST /api/production/orders/:id/release - Release production order
+router.post('/orders/:id/release', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    
+    // Check current status
+    const orderResult = await pool.query(
+      'SELECT * FROM production_orders WHERE id = $1',
+      [id]
+    );
+    
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Production order not found' });
+    }
+    
+    const order = orderResult.rows[0];
+    
+    if (order.status !== 'Planned') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot release order with status '${order.status}'. Must be 'Planned'.`
+      });
+    }
+    
+    // Update status to Released
+    const result = await pool.query(`
+      UPDATE production_orders 
+      SET status = 'Released', 
+          release_date = NOW(),
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `, [id]);
+    
+    res.json({ success: true, data: result.rows[0], message: 'Production order released successfully' });
+  } catch (error: any) {
+    console.error('Error releasing production order:', error);
+    res.status(500).json({ success: false, message: 'Failed to release production order', error: error.message });
+  }
+});
+
+
+// POST /api/production/orders/:id/confirm - Confirm production (goods receipt)
+router.post('/orders/:id/confirm', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { confirmed_quantity, scrap_quantity = 0 } = req.body;
+    
+    if (!confirmed_quantity) {
+      return res.status(400).json({ success: false, message: 'confirmed_quantity is required' });
+    }
+    
+    const orderResult = await pool.query(
+      'SELECT * FROM production_orders WHERE id = $1',
+      [id]
+    );
+    
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Production order not found' });
+    }
+    
+    const order = orderResult.rows[0];
+    
+    if (order.status !== 'Released' && order.status !== 'In Progress') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot confirm order with status '${order.status}'.`
+      });
+    }
+    
+    // Update order
+    const newActualQty = parseFloat(order.actual_quantity || 0) + parseFloat(confirmed_quantity);
+    const newScrapQty = parseFloat(order.scrap_quantity || 0) + parseFloat(scrap_quantity);
+    
+    const newStatus = newActualQty >= parseFloat(order.planned_quantity) ? 'Confirmed' : 'In Progress';
+    
+    const result = await pool.query(`
+      UPDATE production_orders 
+      SET actual_quantity = $1,
+          scrap_quantity = $2,
+          status = $3,
+          actual_end_date = CASE WHEN $3 = 'Confirmed' THEN NOW() ELSE actual_end_date END,
+          updated_at = NOW()
+      WHERE id = $4
+      RETURNING *
+    `, [new ActualQty, newScrapQty, newStatus, id]);
+    
+    // TODO: Create goods receipt in inventory
+    // TODO: Post costs to FI
+    
+    res.json({ 
+      success: true, 
+      data: result.rows[0], 
+      message: `Confirmed ${confirmed_quantity} units. Order status: ${newStatus}` 
+    });
+  } catch (error: any) {
+    console.error('Error confirming production:', error);
+    res.status(500).json({ success: false, message: 'Failed to confirm production', error: error.message });
+  }
+});
+
+
+// GET /api/production/boms - List BOMs
+roster.get('/boms', async (req: Request, res: Response) => {
+  try {
+    const { material_id, is_active } = req.query;
+    
+    let query = `
+      SELECT 
+        bom.*,
+        m.name as material_name,
+        m.code as material_code,
+        (SELECT COUNT(*) FROM bom_items WHERE bom_id = bom.id) as component_count
+      FROM bill_of_materials bom
+      LEFT JOIN materials m ON bom.material_id = m.id
+      WHERE 1=1
+    `;
+    
+    const params: any[] = [];
+    if (material_id) {
+      query += ` AND bom.material_id = $${params.length + 1}`;
+      params.push(material_id);
+    }
+    if (is_active !== undefined) {
+      query += ` AND bom.is_active = $${params.length + 1}`;
+      params.push(is_active === 'true');
+    }
+    
+    query += ` ORDER BY bom.created_at DESC`;
+    
+    const result = await pool.query(query, params);
+    res.json({ success: true, data: result.rows });
+  } catch (error: any) {
+    console.error('Error fetching BOMs:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch BOMs', error: error.message });
+  }
+});
+
+
+// GET /api/production/boms/:id - Get BOM with items
+router.get('/boms/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    
+    // Get BOM header
+    const bomResult = await pool.query('SELECT * FROM bill_of_materials WHERE id = $1', [id]);
+    if (bomResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'BOM not found' });
+    }
+    
+    // Get BOM items
+    const itemsResult = await pool.query(`
+      SELECT 
+        bi.*,
+        m.name as component_name,
+        m.code as component_code
+      FROM bom_items bi
+      LEFT JOIN materials m ON bi.component_material_id = m.id
+      WHERE bi.bom_id = $1
+      ORDER BY bi.sequence_number, bi.id
+    `, [id]);
+    
+    res.json({
+      success: true,
+      data: {
+        ...bomResult.rows[0],
+        items: itemsResult.rows
+      }
+    });
+  } catch (error: any) {
+    console.error('Error fetching BOM:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch BOM', error: error.message });
+  }
+});
+
+
+export default router;
+
+
+TASK 2.2: Register Routes in Main Server
+-----------------------------------------
+FILE: server/routes.ts or server/index.ts
+
+Add:
+import productionRoutes from './routes/production-routes';
+app.use('/api/production', productionRoutes);
+
+
+======================================================================================
+PHASE 3: FRONTEND LAYER - UPDATE COMPONENTS
+======================================================================================
+
+TASK 3.1: Update OrdersContent Component
+-----------------------------------------
+FILE: client/src/components/production/OrdersContent.tsx
+
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { useToast } from '@/hooks/use-toast';
+
+export default function OrdersContent() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  
+  // Fetch production orders
+  const { data: orders, isLoading } = useQuery({
+    queryKey: ['/api/production/orders'],
+    queryFn: async () => {
+      const res = await fetch('/api/production/orders');
+      if (!res.ok) throw new Error('Failed to fetch orders');
+      const data = await res.json();
+      return data.data;
+    }
+  });
+  
+  // Release order mutation
+  const releaseMutation = useMutation({
+    mutationFn: async (orderId: number) => {
+      const res = await fetch(`/api/production/orders/${orderId}/release`, {
+        method: 'POST'
+      });
+      if (!res.ok) throw new Error('Failed to release order');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/production/orders'] });
+      toast({ title: 'Success', description: 'Production order released' });
+    },
+    onError: (error: any) => {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    }
+  });
+  
+  const getStatusColor = (status: string) => {
+    const colors = {
+      'Planned': 'bg-blue-100 text-blue-800',
+      'Released': 'bg-green-100 text-green-800',
+      'In Progress': 'bg-yellow-100 text-yellow-800',
+      'Confirmed': 'bg-purple-100 text-purple-800',
+      'Completed': 'bg-gray-100 text-gray-800',
+    };
+    return colors[status as keyof typeof colors] || 'bg-gray-100 text-gray-800';
+  };
+  
+  if (isLoading) return <div>Loading orders...</div>;
+  
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl font-semibold">Production Orders</h2>
+        <Button>Create Order</Button>
+      </div>
+      
+      <div className="border rounded-lg">
+        <table className="w-full">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="text-left p-3">Order Number</th>
+              <th className="text-left p-3">Material</th>
+              <th className="text-left p-3">Quantity</th>
+              <th className="text-left p-3">Status</th>
+              <th className="text-left p-3">Start Date</th>
+              <th className="text-left p-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders?.map((order: any) => (
+              <tr key={order.id} className="border-t">
+                <td className="p-3">{order.order_number}</td>
+                <td className="p-3">{order.material_name}</td>
+                <td className="p-3">{order.actual_quantity}/{order.planned_quantity}</td>
+                <td className="p-3">
+                  <Badge className={getStatusColor(order.status)}>{order.status}</Badge>
+                </td>
+                <td className="p-3">{new Date(order.planned_start_date).toLocaleDateString()}</td>
+                <td className="p-3">
+                  {order.status === 'Planned' && (
+                    <Button 
+                      size="sm"
+                      onClick={() => releaseMutation.mutate(order.id)}
+                      disabled={releaseMutation.isPending}
+                    >
+                      Release
+                    </Button>
+                  )}
+                  {(order.status === 'Released' || order.status === 'In Progress') && (
+                    <Button size="sm" variant="outline">
+                      Confirm
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+
+TASK 3.2: Update BomsContent Component
+---------------------------------------
+Similar pattern - fetch from `/api/production/boms` and display
+
+
+======================================================================================
+TIMELINE & EFFORT ESTIMATE
+======================================================================================
+
+PHASE 1 - Database (Day 1):
+  - Create migration file: 1 hour
+  - Test migration: 0.5 hours
+  - Run migration: 0.5 hours
+  TOTAL: 2 hours
+
+PHASE 2 - Backend (Days 2-3):
+  - Create production-routes.ts: 4 hours
+  - Test all APIs: 2 hours
+  - Integration with inventory/finance: 2 hours
+  TOTAL: 8 hours (1 day)
+
+PHASE 3 - Frontend (Days 4-5):
+  - Update OrdersContent: 2 hours
+  - Update BomsContent: 2 hours
+  - Add create order dialog: 2 hours
+  - Add confirm dialog: 2 hours
+  TOTAL: 8 hours (1 day)
+
+TOTAL ESTIMATE: 3 days for core functionality
+
+
+======================================================================================
+SUCCESS CRITERIA
+======================================================================================
+
+Database Layer:
+✅ Production order statuses standardized
+✅ Production versions created for all BOMs
+✅ Indexes added for performance
+
+Backend Layer:
+✅ GET /api/production/orders - works
+✅ POST /api/production/orders - creates orders
+✅ POST /api/production/orders/:id/release - releases orders
+✅ POST /api/production/orders/:id/confirm - confirms production
+✅ GET /api/production/boms - lists BOMs
+✅ GET /api/production/boms/:id - gets BOM with items
+
+Frontend Layer:
+✅ Orders list displays real data
+✅ Can create new production order
+✅ Can release order (Planned → Released)
+✅ Can confirm production (Released → Confirmed)
+✅ Status badges show correct colors
+✅ BOM list displays
+✅ Can view BOM details
+
+Integration:
+✅ No hardcoded data
+✅ All data from database
+✅ Real-time updates with React Query
+
+
+======================================================================================
+END OF IMPLEMENTATION PLAN
+======================================================================================

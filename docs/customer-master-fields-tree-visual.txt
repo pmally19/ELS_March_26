@@ -1,0 +1,229 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║              CUSTOMER MASTER - COMPLETE FIELDS TREE DIAGRAM                    ║
+║                     All Connected Fields & Relationships                       ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+CUSTOMER MASTER
+│
+├─┬─ BASIC INFORMATION TAB
+│ │
+│ ├── Core Identity
+│ │   ├─ customer_number (REQUIRED) 
+│ │   ├─ customer_name (REQUIRED)
+│ │   ├─ type
+│ │   ├─ description
+│ │   └─ language_code ──┐
+│ │                      │
+│ ├── Business Classification                         ┌───────────────────────────┐
+│ │   ├─ industry                                     │  MASTER DATA CONNECTIONS  │
+│ │   └─ segment                                      │  (Dropdown Sources)       │
+│ │                                                   └───────────────────────────┘
+│ ├── Tax ID                                          │
+│ │   └─ tax_id                                       │
+│ │                                                   │
+│ ├── Contact Info                                    │  1. Company Codes
+│ │   ├─ phone                                        │     API: /api/master-data/company-code
+│ │   ├─ alt_phone                                    │     → company_code_id
+│ │   ├─ email                                        │
+│ │   └─ website                                      │  2. Payment Terms
+│ │                                                   │     API: /api/master-data/payment-terms
+│ └── Primary Address (Legacy)                        │     → payment_terms
+│     ├─ address                                      │
+│     ├─ city                                         │  3. Reconciliation Accounts
+│     ├─ state                                        │     API: /api/master-data/reconciliation-accounts
+│     ├─ country                                      │     → reconciliation_account_code
+│     ├─ postal_code                                  │
+│     └─ region                                       │  4. Credit Limit Groups
+│                                                     │     API: /api/master-data/credit-limit-groups
+├─┬─ ADDRESSES TAB                                    │     → credit_limit_group_id
+│ │                                                   │     [AUTO-FILLS: credit_limit, currency,
+│ ├─ Sold-To Addresses (Array)                       │      payment_terms, risk_category, etc.]
+│ │   ├─ address_number (auto-gen)
+│ │   ├─ address_type: "sold_to"                     │  5. Sales Areas
+│ │   ├─ street                                       │     API: /api/master-data/sales-areas
+│ │   ├─ city                                         │     → sales_org_code, distribution_channel_code,
+│ │   ├─ state                                        │       division_code
+│ │   ├─ country                                      │     [AUTO-FILLS: sales org, dist channel, division]
+│ │   ├─ postal_code
+│ │   ├─ phone                                        │  6. Discount Groups
+│ │   ├─ email                                        │     API: /api/master-data/discount-groups
+│ │   └─ is_primary                                   │     → discount_group
+│ │
+│ ├─ Bill-To Addresses (Array)                       │  7. Tax Profiles
+│ │   └─ [Same structure]                             │     API: /api/master-data/tax-profiles
+│ │                                                   │     → tax_profile_id
+│ ├─ Ship-To Addresses (Array)
+│ │   └─ [Same structure]
+│ │
+│ ├─ Payer-To Addresses (Array)
+│ │   └─ [Same structure]
+│ │
+│ └─ Address Config
+│     ├─ default_address_setup
+│     └─ address_notes
+│
+├─┬─ COMPANY CODE DATA TAB
+│ │
+│ ├── Organizational
+│ │   └─ company_code_id ────────────────────────────► [Company Codes] (REQUIRED)
+│ │                                                     - code, name
+│ │
+│ ├── Payment Setup
+│ │   ├─ payment_terms ──────────────────────────────► [Payment Terms]
+│ │   │                                                - code, name, description
+│ │   └─ payment_method
+│ │
+│ ├── Financial Account
+│ │   └─ reconciliation_account_code ────────────────► [Reconciliation Accounts] (REQUIRED)
+│ │                                                     - code, name (AR type only)
+│ │
+│ ├── Credit Management
+│ │   └─ credit_limit_group_id ──────────────────────► [Credit Limit Groups]
+│ │                                                     - name, creditLimit, currency,
+│ │                                                       paymentTermsCode, riskCategory
+│ │                                                     ┌─────────────────────────────────┐
+│ │                                                     │ AUTO-FILLS WHEN SELECTED:       │
+│ │                                                     │ • credit_limit                  │
+│ │                                                     │ • currency                      │
+│ │                                                     │ • payment_terms                 │
+│ │                                                     │ • risk_category                 │
+│ │                                                     │ • credit_rating                 │
+│ │                                                     │ • credit_control_area           │
+│ │                                                     │ • credit_check_procedure        │
+│ │                                                     └─────────────────────────────────┘
+│ │
+│ ├── Credit Details (Can be auto-filled)
+│ │   ├─ credit_limit
+│ │   ├─ credit_limit_currency
+│ │   └─ credit_rating ───┐
+│ │                       │ [Fixed Dropdown]
+│ │                       │ - EXCELLENT (AAA)
+│ │                       │ - GOOD (AA)
+│ │                       │ - FAIR (A)
+│ │                       │ - AVERAGE (BBB)
+│ │                       │ - BELOW_AVERAGE (BB)
+│ │                       │ - POOR (B)
+│ │                       │ - VERY_POOR (CCC)
+│ │                       │ - DEFAULT (D)
+│ │
+│ ├── Credit Risk & Control
+│ │   ├─ credit_control_area
+│ │   ├─ risk_category
+│ │   ├─ credit_exposure
+│ │   └─ credit_check_procedure
+│ │
+│ ├── Dunning & Payment Controls
+│ │   ├─ dunning_procedure
+│ │   ├─ dunning_block (boolean)
+│ │   └─ payment_block (boolean)
+│ │
+│ └── Financial Controls
+│     └─ deletion_flag (boolean)
+│
+├─┬─ SALES AREA DATA TAB
+│ │
+│ ├── Sales Area Selection
+│ │   └─ sales_area (composite) ─────────────────────► [Sales Areas]
+│ │                                                     - salesOrgCode, salesOrgName
+│ │                                                     - distributionChannelCode, distributionChannelName
+│ │                                                     - divisionCode, divisionName
+│ │                                                     ┌─────────────────────────────────┐
+│ │                                                     │ AUTO-FILLS WHEN SELECTED:       │
+│ │                                                     │ • sales_org_code               │
+│ │                                                     │ • sales_org_name               │
+│ │                                                     │ • distribution_channel_code     │
+│ │                                                     │ • distribution_channel_name     │
+│ │                                                     │ • division_code                │
+│ │                                                     │ • division_name                │
+│ │                                                     └─────────────────────────────────┘
+│ │
+│ ├── Sales Organization (Read-only, Auto-filled)
+│ │   ├─ sales_org_code
+│ │   └─ sales_org_name
+│ │
+│ ├── Distribution Channel (Read-only, Auto-filled)
+│ │   ├─ distribution_channel_code
+│ │   └─ distribution_channel_name
+│ │
+│ ├── Division (Read-only, Auto-filled)
+│ │   ├─ division_code
+│ │   └─ division_name
+│ │
+│ ├── Sales Territory
+│ │   ├─ sales_district
+│ │   ├─ sales_office_code
+│ │   └─ sales_group_code
+│ │
+│ ├── Pricing & Discounts
+│ │   ├─ price_list
+│ │   └─ discount_group ─────────────────────────────► [Discount Groups]
+│ │                                                     - code, name, discountPercent
+│ │
+│ └── Shipping Configuration
+│     ├─ shipping_conditions
+│     ├─ delivery_priority
+│     ├─ incoterms
+│     ├─ shipping_method
+│     ├─ delivery_terms
+│     ├─ delivery_route
+│     └─ price_group
+│
+└─┬─ SETTINGS TAB
+  │
+  ├── Status
+  │   └─ is_active (boolean)
+  │
+  ├── Access Control
+  │   └─ authorization_group
+  │
+  ├── Tax & Compliance
+  │   ├─ tax_profile_id ─────────────────────────────► [Tax Profiles]
+  │   │                                                - profileCode, name
+  │   ├─ tax_classification_code
+  │   ├─ tax_exemption_certificate
+  │   └─ withholding_tax_code
+  │
+  └── Banking Information
+      ├─ bank_account_number
+      ├─ bank_routing_number
+      ├─ bank_name
+      └─ electronic_payment_method
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                          RELATIONSHIP SUMMARY                                  ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+REQUIRED FIELDS:
+  ✓ customer_number
+  ✓ customer_name
+  ✓ company_code_id
+  ✓ reconciliation_account_code
+
+MASTER DATA DEPENDENCIES (7 Dropdown Connections):
+  1. Company Codes          → company_code_id
+  2. Payment Terms          → payment_terms
+  3. Reconciliation Accounts → reconciliation_account_code
+  4. Credit Limit Groups    → credit_limit_group_id (auto-fills 8 fields)
+  5. Sales Areas            → sales_org_code, distribution_channel_code, division_code (auto-fills 6 fields)
+  6. Discount Groups        → discount_group
+  7. Tax Profiles           → tax_profile_id
+
+ADDRESS TYPES (4):
+  • Sold-To Addresses
+  • Bill-To Addresses
+  • Ship-To Addresses
+  • Payer-To Addresses
+
+AUTO-FILL TRIGGERS:
+  • Credit Limit Group → Fills: credit_limit, currency, payment_terms, risk_category, 
+                         credit_rating, credit_control_area, credit_check_procedure
+  • Sales Area → Fills: sales_org_code/name, distribution_channel_code/name, 
+                        division_code/name
+
+TOTAL FIELDS: 70+ fields across 5 tabs
+  • Direct Input: 40+
+  • Dropdown Connections: 7
+  • Address Arrays: 4 types × 9 fields each = 36 address fields
+  • Boolean Switches: 4
+  • Read-only Auto-filled: 6
+

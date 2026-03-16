@@ -1,0 +1,80 @@
+
+=== account_keys ===
+  BON | Bonus | Bonus discount given to customers
+  COF | Cost of Freight | Freight cost allocation
+  DSC | Discount | Customer discount expense
+  ERF | FREIGHT | FREIGHT
+
+  ERL | Revenue | Sales revenue posting
+  ERS | DISCOUNTS | DISCOUNTS
+
+  ERU | revenue reduction  | SALES DEDUCTION
+
+  FRC | Freight Revenue | Freight charges revenue
+  FRE | Freight Expense | Freight cost expense
+  MWS | Output Tax | Output VAT/Sales tax payable
+  SUR | Surcharge | Additional surcharges
+  VST | Input Tax | Input VAT/Purchase tax receivable
+
+=== account_determination (columns) ===
+  id, account_key, customer_group, material_group, gl_account, description, is_active, created_at, customer_account_group_id, material_account_group_id
+  {"id":2,"account_key":"ERU","customer_group":"01","material_group":"03","gl_account":"300100","description":"Revenue Adjustments","is_active":true,"created_at":"2025-06-06T15:37:25.446Z","customer_account_group_id":6,"material_account_group_id":9}
+  {"id":3,"account_key":"KOF","customer_group":"01","material_group":"03","gl_account":"500000","description":"Cost of Goods Sold","is_active":true,"created_at":"2025-06-06T15:37:25.446Z","customer_account_group_id":6,"material_account_group_id":9}
+  {"id":1,"account_key":"REVENUE","customer_group":"01","material_group":"03","gl_account":"300000","description":"Sales Revenue Account","is_active":true,"created_at":"2025-06-06T15:37:25.446Z","customer_account_group_id":6,"material_account_group_id":9}
+
+=== account_determination_mapping (columns) ===
+  id, account_key_code, business_scenario, gl_account_id, description, is_active, created_at, updated_at, sales_area_id, customer_assignment_group_id, material_assignment_group_id, condition_type_id
+  {"id":70,"account_key_code":"ERL","business_scenario":"sales scenario","gl_account_id":363,"description":null,"is_active":true,"created_at":"2026-02-20T19:27:30.040Z","updated_at":"2026-02-20T19:27:30.040Z","sales_area_id":null,"customer_assignment_group_id":9,"material_assignment_group_id":2,"condition_type_id":null}
+  {"id":71,"account_key_code":"ERL","business_scenario":"sales scenario","gl_account_id":363,"description":null,"is_active":true,"created_at":"2026-02-20T19:27:30.056Z","updated_at":"2026-02-20T19:27:30.056Z","sales_area_id":null,"customer_assignment_group_id":9,"material_assignment_group_id":2,"condition_type_id":null}
+  {"id":72,"account_key_code":"ERL","business_scenario":"sales scenario","gl_account_id":363,"description":null,"is_active":true,"created_at":"2026-02-20T19:27:30.070Z","updated_at":"2026-02-20T19:27:30.070Z","sales_area_id":null,"customer_assignment_group_id":9,"material_assignment_group_id":2,"condition_type_id":null}
+  {"id":73,"account_key_code":"ERL","business_scenario":"sales scenario","gl_account_id":363,"description":null,"is_active":true,"created_at":"2026-02-20T19:27:30.086Z","updated_at":"2026-02-20T19:27:30.086Z","sales_area_id":null,"customer_assignment_group_id":9,"material_assignment_group_id":2,"condition_type_id":null}
+  {"id":85,"account_key_code":"ERF","business_scenario":"sales scenario","gl_account_id":0,"description":null,"is_active":true,"created_at":"2026-02-20T19:27:30.269Z","updated_at":"2026-02-20T19:27:31.288Z","sales_area_id":16,"customer_assignment_group_id":9,"material_assignment_group_id":2,"condition_type_id":null}
+
+=== account_determination_rules ===
+  id, material_category, movement_type, valuation_class, plant, debit_account, credit_account, cost_center, profit_center, is_active, created_at, updated_at
+  {"id":2,"material_category":"RAW","movement_type":"201","valuation_class":"RAW_MATERIALS","plant":null,"debit_account":"620000","credit_account":"140000","cost_center":"PROD001","profit_center":null,"is_active":true,"created_at":"2025-06-06T23:33:12.477Z","updated_at":"2025-11-18T17:14:26.772Z"}
+  {"id":3,"material_category":"RAW","movement_type":"261","valuation_class":"RAW_MATERIALS","plant":null,"debit_account":"150000","credit_account":"140000","cost_center":null,"profit_center":null,"is_active":true,"created_at":"2025-06-06T23:33:12.477Z","updated_at":"2025-11-18T17:14:26.772Z"}
+  {"id":7,"material_category":"RAW","movement_type":"701","valuation_class":"RAW_MATERIALS","plant":null,"debit_account":"140000","credit_account":"680000","cost_center":null,"profit_center":null,"is_active":true,"created_at":"2025-06-06T23:33:12.477Z","updated_at":"2025-11-18T17:14:26.772Z"}
+  {"id":8,"material_category":"RAW","movement_type":"702","valuation_class":"RAW_MATERIALS","plant":null,"debit_account":"680000","credit_account":"140000","cost_center":null,"profit_center":null,"is_active":true,"created_at":"2025-06-06T23:33:12.477Z","updated_at":"2025-11-18T17:14:26.772Z"}
+  {"id":5,"material_category":"FERT","movement_type":"601","valuation_class":"FINISHED_GOODS","plant":null,"debit_account":"500000","credit_account":"160000","cost_center":null,"profit_center":null,"is_active":true,"created_at":"2025-06-06T23:33:12.477Z","updated_at":"2025-11-18T17:14:26.778Z"}
+  {"id":6,"material_category":"FERT","movement_type":"602","valuation_class":"FINISHED_GOODS","plant":null,"debit_account":"160000","credit_account":"500000","cost_center":null,"profit_center":null,"is_active":true,"created_at":"2025-06-06T23:33:12.477Z","updated_at":"2025-11-18T17:14:26.778Z"}
+  {"id":9,"material_category":"HAWA","movement_type":"101","valuation_class":"TRADING_GOODS","plant":null,"debit_account":"145000","credit_account":"210000","cost_center":null,"profit_center":null,"is_active":true,"created_at":"2025-06-06T23:33:12.477Z","updated_at":"2025-11-18T17:14:26.779Z"}
+  {"id":10,"material_category":"HAWA","movement_type":"601","valuation_class":"TRADING_GOODS","plant":null,"debit_account":"505000","credit_account":"145000","cost_center":null,"profit_center":null,"is_active":true,"created_at":"2025-06-06T23:33:12.477Z","updated_at":"2025-11-18T17:14:26.779Z"}
+  {"id":1,"material_category":"RAW","movement_type":"101","valuation_class":"RAW_MATERIALS","plant":null,"debit_account":"140000","credit_account":"210000","cost_center":null,"profit_center":null,"is_active":true,"created_at":"2025-06-06T23:33:12.477Z","updated_at":"2025-11-18T17:15:34.331Z"}
+  {"id":4,"material_category":"FERT","movement_type":"101","valuation_class":"FINISHED_GOODS","plant":null,"debit_account":"160000","credit_account":"210000","cost_center":null,"profit_center":null,"is_active":true,"created_at":"2025-06-06T23:33:12.477Z","updated_at":"2025-11-18T17:15:34.333Z"}
+
+=== DOCUMENT TYPE TABLES ===
+  document_types: 9 rows
+    Cols: id, document_type_code, description, document_category, number_range, reversal_allowed, account_types_allowed, entry_view, reference_required, authorization_group, company_code_id, is_active, created_at, updated_at, created_by, updated_by
+    {"id":1,"document_type_code":"SA","description":"General Ledger Document","document_category":"financial","number_range":"01","reversal_allowed":true,"account_types_allowed":"all","entry_view":"standard","reference_required":false,"authorization_group":null,"company_code_id":1,"is_active":true,"created_at":"2025-06-24T23:27:34.716Z","updated_at":"2025-06-24T23:27:34.716Z","created_by":null,"updated_by":null}
+    {"id":2,"document_type_code":"KR","description":"Vendor Invoice","document_category":"financial","number_range":"02","reversal_allowed":true,"account_types_allowed":"all","entry_view":"standard","reference_required":false,"authorization_group":null,"company_code_id":1,"is_active":true,"created_at":"2025-06-24T23:27:34.716Z","updated_at":"2025-06-24T23:27:34.716Z","created_by":null,"updated_by":null}
+    {"id":3,"document_type_code":"DZ","description":"Customer Payment","document_category":"financial","number_range":"03","reversal_allowed":true,"account_types_allowed":"all","entry_view":"standard","reference_required":false,"authorization_group":null,"company_code_id":1,"is_active":true,"created_at":"2025-06-24T23:27:34.716Z","updated_at":"2025-06-24T23:27:34.716Z","created_by":null,"updated_by":null}
+  fi_document_types: NOT FOUND
+  po_document_types: 6 rows
+    Cols: id, code, name, description, number_range_id, item_interval, field_selection_key, item_categories_allowed, account_assignment_categories, partner_determination_schema, message_schema, release_procedure_required, is_active, created_at, updated_at
+    {"id":2,"code":"FO","name":"Subcontracting Purchase Order","description":"Purchase order for subcontracting operations with components provided to vendor","number_range_id":16,"item_interval":10,"field_selection_key":"FO","item_categories_allowed":["Subcontracting"],"account_assignment_categories":["K","F"],"partner_determination_schema":"VENDOR","message_schema":"NEU","release_procedure_required":true,"is_active":true,"created_at":"2026-01-31T06:17:39.695Z","updated_at":"2026-01-31T06:17:39.695Z"}
+    {"id":3,"code":"ZN","name":"Framework Purchase Order","description":"Long-term framework agreement for recurring purchases with release orders","number_range_id":17,"item_interval":100,"field_selection_key":"ZNB","item_categories_allowed":["Standard","Service","Consignment"],"account_assignment_categories":["K","A","F","P"],"partner_determination_schema":"VENDOR","message_schema":"NEU","release_procedure_required":false,"is_active":true,"created_at":"2026-01-31T06:17:39.697Z","updated_at":"2026-01-31T06:17:39.697Z"}
+    {"id":4,"code":"KO","name":"Consignment Purchase Order","description":"Purchase order for consignment stock where payment is made upon consumption","number_range_id":18,"item_interval":10,"field_selection_key":"KO","item_categories_allowed":["Consignment"],"account_assignment_categories":["K"],"partner_determination_schema":"VENDOR","message_schema":"NEU","release_procedure_required":false,"is_active":true,"created_at":"2026-01-31T06:17:39.699Z","updated_at":"2026-01-31T06:17:39.699Z"}
+  pr_document_types: 4 rows
+    Cols: id, code, name, description, is_active, created_at, updated_at, number_range_id, item_control, processing_control
+    {"id":1,"code":"STD","name":"Standard Purchase Requisition","description":"Regular purchase request for materials or services","is_active":true,"created_at":"2026-01-26T15:25:06.732Z","updated_at":"2026-01-26T12:50:54.396Z","number_range_id":13,"item_control":"0","processing_control":"0"}
+    {"id":3,"code":"CON","name":"Consignment Request","description":"Request for consignment stock","is_active":true,"created_at":"2026-01-26T15:25:07.094Z","updated_at":"2026-01-27T05:47:13.667Z","number_range_id":13,"item_control":"0","processing_control":"0"}
+    {"id":4,"code":"SVC","name":"Service Request","description":"Request for services or labor","is_active":true,"created_at":"2026-01-26T15:25:07.167Z","updated_at":"2026-01-27T05:47:37.662Z","number_range_id":13,"item_control":"0","processing_control":"0"}
+  sd_document_types: 11 rows
+    Cols: id, code, name, category, number_range, is_active, created_at, updated_at, default_shipping_condition, sales_category_id, sales_document_category_id, document_pricing_procedure
+    {"id":1,"code":"OR","name":"Standard Order","category":"ORDER","number_range":"04","is_active":true,"created_at":"2025-06-06T17:12:32.876Z","updated_at":"2026-02-10T10:20:19.980Z","default_shipping_condition":null,"sales_category_id":null,"sales_document_category_id":"3","document_pricing_procedure":"A"}
+    {"id":3,"code":"RE","name":"Returns Order","category":"ORDER","number_range":"12","is_active":true,"created_at":"2025-06-06T17:12:32.876Z","updated_at":"2026-02-10T10:20:41.074Z","default_shipping_condition":null,"sales_category_id":null,"sales_document_category_id":"3","document_pricing_procedure":"E"}
+    {"id":5,"code":"EL","name":"Express Delivery","category":"DELIVERY","number_range":"05","is_active":true,"created_at":"2025-06-06T17:12:32.876Z","updated_at":"2025-06-06T17:12:32.876Z","default_shipping_condition":null,"sales_category_id":null,"sales_document_category_id":"11","document_pricing_procedure":"A"}
+  accounting_document_types: NOT FOUND
+
+=== accounting_documents (columns + sample) ===
+  id, document_number, company_code, fiscal_year, document_type, posting_date, document_date, period, reference, header_text, total_amount, currency, source_module, source_document_id, source_document_type, created_by, created_at, status, accountingdoctypeid
+  {"id":455,"document_number":"10102600000001","company_code":"1010","fiscal_year":2026,"document_type":"04","posting_date":"2026-02-03T18:30:00.000Z","document_date":"2026-02-03T18:30:00.000Z","period":2,"reference":"INV-2026-000001","header_text":"Invoice posting for INV-2026-000001","total_amount":"1201.20","currency":"USD","source_module":"SALES","source_document_id":194,"source_document_type":"BILLING","created_by":1,"created_at":"2026-02-04T11:30:41.383Z","status":"Posted","accountingdoctypeid":null}
+  {"id":456,"document_number":"10102600000002","company_code":"1010","fiscal_year":2026,"document_type":"04","posting_date":"2026-02-05T18:30:00.000Z","document_date":"2026-02-05T18:30:00.000Z","period":2,"reference":"INV-2026-000002","header_text":"Invoice posting for INV-2026-000002","total_amount":"120.12","currency":"USD","source_module":"SALES","source_document_id":195,"source_document_type":"BILLING","created_by":1,"created_at":"2026-02-06T08:55:37.052Z","status":"Posted","accountingdoctypeid":null}
+  {"id":457,"document_number":"GL-2026-000001","company_code":"1000","fiscal_year":2026,"document_type":"MM","posting_date":"2026-02-05T18:30:00.000Z","document_date":"2026-02-05T18:30:00.000Z","period":2,"reference":"DL2026000003","header_text":null,"total_amount":"2000.00","currency":"USD","source_module":null,"source_document_id":null,"source_document_type":null,"created_by":1,"created_at":"2026-02-06T16:02:41.108Z","status":"Posted","accountingdoctypeid":null}
+
+=== accounting_document_items (columns + sample) ===
+  id, document_id, line_item, gl_account, account_type, partner_id, debit_amount, credit_amount, currency, assignment, item_text, tax_code, due_date, created_at, profit_center, business_area, segment, cost_center, split_document_id, split_characteristic_value
+  {"id":471,"document_id":455,"line_item":1,"gl_account":"1100","account_type":"D","partner_id":45,"debit_amount":"1201.20","credit_amount":"0.00","currency":"USD","assignment":null,"item_text":"AR - INV-2026-000001","tax_code":null,"due_date":null,"created_at":"2026-02-04T11:30:41.392Z","profit_center":null,"business_area":null,"segment":null,"cost_center":null,"split_document_id":null,"split_characteristic_value":null}
+  {"id":472,"document_id":455,"line_item":2,"gl_account":"4000","account_type":"S","partner_id":null,"debit_amount":"0.00","credit_amount":"1200.00","currency":"USD","assignment":null,"item_text":"Revenue - INV-2026-000001 - 4000","tax_code":null,"due_date":null,"created_at":"2026-02-04T11:30:41.396Z","profit_center":null,"business_area":null,"segment":null,"cost_center":null,"split_document_id":null,"split_characteristic_value":null}
+  {"id":473,"document_id":455,"line_item":3,"gl_account":"2300","account_type":"S","partner_id":null,"debit_amount":"0.00","credit_amount":"1.20","currency":"USD","assignment":null,"item_text":"Tax Payable - INV-2026-000001","tax_code":null,"due_date":null,"created_at":"2026-02-04T11:30:41.397Z","profit_center":null,"business_area":null,"segment":null,"cost_center":null,"split_document_id":null,"split_characteristic_value":null}

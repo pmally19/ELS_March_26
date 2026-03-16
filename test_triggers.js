@@ -1,0 +1,1 @@
+const { Pool } = require('pg'); const pool = new Pool({ user: 'postgres', host: 'localhost', database: 'mallyerp', password: 'Mokshith@21', port: 5432 }); pool.query('SELECT tgname, pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = ''public.customer_addresses''::regclass;').then(res => { console.table(res.rows); pool.end(); }).catch(console.error);

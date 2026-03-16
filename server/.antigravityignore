@@ -1,0 +1,33 @@
+# Dependency folders (The biggest RAM hogs)
+node_modules/
+vendor/
+.venv/
+env/
+
+# Build artifacts
+dist/
+build/
+out/
+.next/
+
+# Large media/assets (AI doesn't need to 'read' these binaries)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.pdf
+assets/
+public/images/
+
+# System and logs
+.git/
+.svn/
+*.log
+.DS_Store
+Thumbs.db
+
+# Large data files
+*.json
+*.csv
+*.sql

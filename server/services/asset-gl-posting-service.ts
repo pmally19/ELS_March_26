@@ -1,0 +1,701 @@
+import { getPool } from '../database';
+import { postGLDocument, GLLineItem, GLDocumentHeader } from './gl-posting-helper.js';
+
+export interface AssetGLPostingParams {
+  assetId: number;
+  transactionType: 'CAPITALIZATION' | 'DEPRECIATION' | 'RETIREMENT' | 'SALE';
+  amount: number;
+  documentNumber: string;
+  postingDate: Date;
+  fiscalYear: number;
+  fiscalPeriod: number;
+  description?: string;
+  costCenterId?: number;
+  depreciationAreaId?: number; // For area-specific GL account determination
+  clearingAccountId?: number; // Added for Capitalization clearing
+}
+
+export class AssetGLPostingService {
+  private pool = getPool();
+
+  /**
+   * Post asset capitalization to GL
+   */
+  async postCapitalization(params: AssetGLPostingParams): Promise<string> {
+    const { assetId, amount, documentNumber, postingDate, fiscalYear, fiscalPeriod, description, costCenterId } = params;
+
+    // Get asset details with account determination
+    // Priority: 1. Company-specific account determination rules, 2. General account determination rules
+    // Query by account_category = 'ASSET_ACCOUNT' for capitalization
+    const assetResult = await this.pool.query(`
+      SELECT 
+        am.*,
+        am.company_code_id,
+        COALESCE(
+          company_ad.gl_account_id,
+          general_ad.gl_account_id
+        ) as determined_asset_account_id,
+        company_ad.gl_account_id as company_asset_account_id,
+        general_ad.gl_account_id as general_asset_account_id
+      FROM asset_master am
+      LEFT JOIN asset_account_determination company_ad 
+        ON am.asset_class_id = company_ad.asset_class_id 
+        AND company_ad.transaction_type = 'CAPITALIZATION'
+        AND company_ad.account_category = 'ASSET_ACCOUNT'
+        AND company_ad.company_code_id = am.company_code_id
+        AND company_ad.is_active = true
+      LEFT JOIN asset_account_determination general_ad 
+        ON am.asset_class_id = general_ad.asset_class_id 
+        AND general_ad.transaction_type = 'CAPITALIZATION'
+        AND general_ad.account_category = 'ASSET_ACCOUNT'
+        AND general_ad.company_code_id IS NULL
+        AND general_ad.is_active = true
+        AND company_ad.id IS NULL
+      WHERE am.id = $1
+    `, [assetId]);
+
+    if (assetResult.rows.length === 0) {
+      throw new Error(`Asset not found: ${assetId}`);
+    }
+
+    const asset = assetResult.rows[0];
+
+    const assetAccountId = asset.determined_asset_account_id;
+
+    if (!assetAccountId) {
+      const assetClassInfo = await this.pool.query(`
+        SELECT ac.code as asset_class_code, ac.name as asset_class_name,
+               cc.code as company_code, cc.name as company_name
+        FROM asset_master am
+        LEFT JOIN asset_classes ac ON am.asset_class_id = ac.id
+        LEFT JOIN company_codes cc ON am.company_code_id = cc.id
+        WHERE am.id = $1
+      `, [assetId]);
+
+      const assetInfo = assetClassInfo.rows[0] || {};
+      throw new Error(
+        `Account determination not configured for capitalization. ` +
+        `Asset ID: ${assetId}, Asset Class: ${assetInfo.asset_class_code || asset.asset_class_id} (${assetInfo.asset_class_name || 'N/A'}), ` +
+        `Company Code: ${assetInfo.company_code || asset.company_code_id || 'N/A'} (${assetInfo.company_name || 'N/A'}). ` +
+        `Missing: Asset Account. ` +
+        `Please configure account determination rules in Master Data > Asset Account Determination for transaction type 'CAPITALIZATION'.`
+      );
+    }
+
+    // Validate asset account exists and is active
+    const assetAccountCheck = await this.pool.query(`
+      SELECT id, account_number, account_name, is_active
+      FROM gl_accounts
+      WHERE id = $1
+    `, [assetAccountId]);
+
+    if (assetAccountCheck.rows.length === 0) {
+      throw new Error(
+        `Asset Account (ID: ${assetAccountId}) specified in account determination does not exist in gl_accounts table. ` +
+        `Please verify the account determination configuration for Asset ID: ${assetId}.`
+      );
+    }
+
+    const assetAccount = assetAccountCheck.rows[0];
+    if (!assetAccount.is_active) {
+      throw new Error(
+        `Asset Account ${assetAccount.account_number} (${assetAccount.account_name}) is inactive. ` +
+        `Please activate the account or update account determination configuration for Asset ID: ${assetId}.`
+      );
+    }
+
+    // For capitalization, clearing account is required for the credit entry.
+    // Check if it's passed in params
+    let clearingAccountId = params.clearingAccountId || null;
+
+    if (!clearingAccountId) {
+      // Look up clearing account in asset_account_determination
+      const clearingAdResult = await this.pool.query(`
+        SELECT COALESCE(company_ad.gl_account_id, general_ad.gl_account_id) as gl_account_id
+        FROM asset_master am
+        LEFT JOIN asset_account_determination company_ad 
+          ON am.asset_class_id = company_ad.asset_class_id 
+          AND company_ad.transaction_type = 'CAPITALIZATION'
+          AND company_ad.account_category = 'CLEARING_ACCOUNT'
+          AND company_ad.company_code_id = am.company_code_id
+          AND company_ad.is_active = true
+        LEFT JOIN asset_account_determination general_ad 
+          ON am.asset_class_id = general_ad.asset_class_id 
+          AND general_ad.transaction_type = 'CAPITALIZATION'
+          AND general_ad.account_category = 'CLEARING_ACCOUNT'
+          AND general_ad.company_code_id IS NULL
+          AND general_ad.is_active = true
+          AND company_ad.id IS NULL
+        WHERE am.id = $1
+      `, [assetId]);
+
+      if (clearingAdResult.rows.length > 0 && clearingAdResult.rows[0].gl_account_id) {
+        clearingAccountId = clearingAdResult.rows[0].gl_account_id;
+      }
+    }
+
+    if (!clearingAccountId) {
+      throw new Error(
+        `Clearing account not configured for capitalization. ` +
+        `Asset ID: ${assetId}. ` +
+        `Capitalization requires a clearing account (typically Accounts Payable) for the credit entry. ` +
+        `Please add a CLEARING_ACCOUNT mapping to asset_account_determination rules for this asset class, ` +
+        `or pass clearingAccountId in params to enable capitalization GL posting.`
+      );
+    }
+
+    // Validate clearing account exists and is active
+    const clearingAccountCheck = await this.pool.query(`
+      SELECT id, account_number, account_name, is_active
+      FROM gl_accounts
+      WHERE id = $1
+    `, [clearingAccountId]);
+
+    if (clearingAccountCheck.rows.length === 0) {
+      throw new Error(`Clearing Account (ID: ${clearingAccountId}) does not exist in gl_accounts table.`);
+    }
+
+    if (!clearingAccountCheck.rows[0].is_active) {
+      throw new Error(`Clearing Account ${clearingAccountCheck.rows[0].account_number} is inactive.`);
+    }
+
+    // Create GL entries via shared helper
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const header: GLDocumentHeader = {
+        documentNumber,
+        documentType: 'AA', // Asset posting
+        companyCodeId: asset.company_code_id,
+        postingDate,
+        fiscalYear,
+        fiscalPeriod,
+        headerText: description || `Capitalization: ${asset.name}`,
+        sourceModule: 'ASSET',
+        sourceDocumentId: assetId,
+        sourceDocumentType: 'CAPITALIZATION'
+      };
+
+      const lines: GLLineItem[] = [
+        {
+          glAccountId: assetAccountId,
+          postingKey: '70', // Debit Asset
+          debitCredit: 'D',
+          amount,
+          description: description || `Asset Capitalization: ${asset.name}`,
+          costCenterId: costCenterId || asset.cost_center_id,
+          sourceModule: 'ASSET',
+          sourceDocumentId: assetId,
+          sourceDocumentType: 'CAPITALIZATION'
+        },
+        {
+          glAccountId: clearingAccountId,
+          postingKey: '50', // Credit GL / Clearing
+          debitCredit: 'C',
+          amount,
+          description: description || `Asset Capitalization Clearing: ${asset.name}`,
+          costCenterId: costCenterId || asset.cost_center_id,
+          sourceModule: 'ASSET',
+          sourceDocumentId: assetId,
+          sourceDocumentType: 'CAPITALIZATION'
+        }
+      ];
+
+      const result = await postGLDocument(client, header, lines);
+      if (!result.success) throw new Error(result.error);
+
+      await client.query('COMMIT');
+      return documentNumber;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Post depreciation to GL
+   * Now supports depreciation_area_id for area-specific account determination
+   */
+  async postDepreciation(params: AssetGLPostingParams): Promise<string> {
+    const { assetId, amount, documentNumber, postingDate, fiscalYear, fiscalPeriod, description, costCenterId, depreciationAreaId } = params;
+
+    // Get asset details with account determination
+    // Priority: 
+    // 1. Area-specific + Company-specific rules
+    // 2. Area-specific + General rules
+    // 3. Company-specific rules (no area)
+    // 4. General rules (no area)
+    const assetResult = await this.pool.query(`
+      SELECT
+      am.*,
+        am.company_code_id,
+        am.depreciation_area_id,
+        da.posting_indicator,
+        da.ledger_group,
+        COALESCE(
+          area_company_expense_ad.gl_account_id,
+          area_general_expense_ad.gl_account_id,
+          company_expense_ad.gl_account_id,
+          general_expense_ad.gl_account_id
+        ) as determined_expense_account_id,
+        COALESCE(
+          area_company_accum_ad.gl_account_id,
+          area_general_accum_ad.gl_account_id,
+          company_accum_ad.gl_account_id,
+          general_accum_ad.gl_account_id
+        ) as determined_accumulated_account_id
+      FROM asset_master am
+      LEFT JOIN depreciation_areas da ON am.depreciation_area_id = da.id
+      --Area - specific + Company - specific Expense Account
+      LEFT JOIN asset_account_determination area_company_expense_ad 
+        ON am.asset_class_id = area_company_expense_ad.asset_class_id 
+        AND area_company_expense_ad.transaction_type = 'DEPRECIATION'
+        AND area_company_expense_ad.account_category = 'DEPRECIATION_EXPENSE_ACCOUNT'
+        AND area_company_expense_ad.company_code_id = am.company_code_id
+        AND area_company_expense_ad.depreciation_area_id = $2
+        AND area_company_expense_ad.is_active = true
+      --Area - specific + General Expense Account
+      LEFT JOIN asset_account_determination area_general_expense_ad 
+        ON am.asset_class_id = area_general_expense_ad.asset_class_id 
+        AND area_general_expense_ad.transaction_type = 'DEPRECIATION'
+        AND area_general_expense_ad.account_category = 'DEPRECIATION_EXPENSE_ACCOUNT'
+        AND area_general_expense_ad.company_code_id IS NULL
+        AND area_general_expense_ad.depreciation_area_id = $2
+        AND area_general_expense_ad.is_active = true
+        AND area_company_expense_ad.id IS NULL
+      --Company - specific Expense Account(no area)
+      LEFT JOIN asset_account_determination company_expense_ad 
+        ON am.asset_class_id = company_expense_ad.asset_class_id 
+        AND company_expense_ad.transaction_type = 'DEPRECIATION'
+        AND company_expense_ad.account_category = 'DEPRECIATION_EXPENSE_ACCOUNT'
+        AND company_expense_ad.company_code_id = am.company_code_id
+        AND company_expense_ad.depreciation_area_id IS NULL
+        AND company_expense_ad.is_active = true
+        AND area_company_expense_ad.id IS NULL
+        AND area_general_expense_ad.id IS NULL
+      --General Expense Account(no area)
+      LEFT JOIN asset_account_determination general_expense_ad 
+        ON am.asset_class_id = general_expense_ad.asset_class_id 
+        AND general_expense_ad.transaction_type = 'DEPRECIATION'
+        AND general_expense_ad.account_category = 'DEPRECIATION_EXPENSE_ACCOUNT'
+        AND general_expense_ad.company_code_id IS NULL
+        AND general_expense_ad.depreciation_area_id IS NULL
+        AND general_expense_ad.is_active = true
+        AND area_company_expense_ad.id IS NULL
+        AND area_general_expense_ad.id IS NULL
+        AND company_expense_ad.id IS NULL
+      --Area - specific + Company - specific Accumulated Account
+      LEFT JOIN asset_account_determination area_company_accum_ad 
+        ON am.asset_class_id = area_company_accum_ad.asset_class_id 
+        AND area_company_accum_ad.transaction_type = 'DEPRECIATION'
+        AND area_company_accum_ad.account_category = 'ACCUMULATED_DEPRECIATION_ACCOUNT'
+        AND area_company_accum_ad.company_code_id = am.company_code_id
+        AND area_company_accum_ad.depreciation_area_id = $2
+        AND area_company_accum_ad.is_active = true
+      --Area - specific + General Accumulated Account
+      LEFT JOIN asset_account_determination area_general_accum_ad 
+        ON am.asset_class_id = area_general_accum_ad.asset_class_id 
+        AND area_general_accum_ad.transaction_type = 'DEPRECIATION'
+        AND area_general_accum_ad.account_category = 'ACCUMULATED_DEPRECIATION_ACCOUNT'
+        AND area_general_accum_ad.company_code_id IS NULL
+        AND area_general_accum_ad.depreciation_area_id = $2
+        AND area_general_accum_ad.is_active = true
+        AND area_company_accum_ad.id IS NULL
+      --Company - specific Accumulated Account(no area)
+      LEFT JOIN asset_account_determination company_accum_ad 
+        ON am.asset_class_id = company_accum_ad.asset_class_id 
+        AND company_accum_ad.transaction_type = 'DEPRECIATION'
+        AND company_accum_ad.account_category = 'ACCUMULATED_DEPRECIATION_ACCOUNT'
+        AND company_accum_ad.company_code_id = am.company_code_id
+        AND company_accum_ad.depreciation_area_id IS NULL
+        AND company_accum_ad.is_active = true
+        AND area_company_accum_ad.id IS NULL
+        AND area_general_accum_ad.id IS NULL
+      --General Accumulated Account(no area)
+      LEFT JOIN asset_account_determination general_accum_ad 
+        ON am.asset_class_id = general_accum_ad.asset_class_id 
+        AND general_accum_ad.transaction_type = 'DEPRECIATION'
+        AND general_accum_ad.account_category = 'ACCUMULATED_DEPRECIATION_ACCOUNT'
+        AND general_accum_ad.company_code_id IS NULL
+        AND general_accum_ad.depreciation_area_id IS NULL
+        AND general_accum_ad.is_active = true
+        AND area_company_accum_ad.id IS NULL
+        AND area_general_accum_ad.id IS NULL
+        AND company_accum_ad.id IS NULL
+      WHERE am.id = $1
+        `, [assetId, depreciationAreaId || null]);
+
+    if (assetResult.rows.length === 0) {
+      throw new Error(`Asset not found: ${assetId} `);
+    }
+
+    const asset = assetResult.rows[0];
+
+    // Check posting_indicator - skip GL posting if area is configured as NONE
+    if (asset.posting_indicator === 'NONE') {
+      console.log(`Depreciation area ${asset.depreciation_area_id} has posting_indicator = NONE.Skipping GL posting.`);
+      return `SKIP - ${documentNumber} `; // Return special marker to indicate skipped posting
+    }
+
+    // Account determination is required - no fallback defaults
+    const expenseAccountId = asset.determined_expense_account_id;
+    const accumulatedAccountId = asset.determined_accumulated_account_id;
+
+    // Validate account determination exists
+    if (!expenseAccountId || !accumulatedAccountId) {
+      const assetClassInfo = await this.pool.query(`
+        SELECT ac.code as asset_class_code, ac.name as asset_class_name,
+        cc.code as company_code, cc.name as company_name
+        FROM asset_master am
+        LEFT JOIN asset_classes ac ON am.asset_class_id = ac.id
+        LEFT JOIN company_codes cc ON am.company_code_id = cc.id
+        WHERE am.id = $1
+        `, [assetId]);
+
+      const assetInfo = assetClassInfo.rows[0] || {};
+      const missingAccounts = [];
+      if (!expenseAccountId) missingAccounts.push('Depreciation Expense Account (account_category: DEPRECIATION_EXPENSE_ACCOUNT)');
+      if (!accumulatedAccountId) missingAccounts.push('Accumulated Depreciation Account (account_category: ACCUMULATED_DEPRECIATION_ACCOUNT)');
+
+      // Check if any account determination rules exist at all
+      const anyRulesCheck = await this.pool.query(`
+        SELECT COUNT(*) as count
+        FROM asset_account_determination
+        WHERE transaction_type = 'DEPRECIATION' AND is_active = true
+        `);
+
+      const hasAnyRules = parseInt(anyRulesCheck.rows[0]?.count || '0') > 0;
+
+      let errorMessage = `Account determination not configured for depreciation. ` +
+        `Asset ID: ${assetId}, Asset Number: ${asset.asset_number || 'N/A'}, ` +
+        `Asset Class: ${assetInfo.asset_class_code || asset.asset_class_id} (${assetInfo.asset_class_name || 'N/A'}), ` +
+        `Company Code: ${assetInfo.company_code || asset.company_code_id || 'N/A'} (${assetInfo.company_name || 'N/A'}).` +
+        `Missing accounts: ${missingAccounts.join(', ')}.`;
+
+      if (!hasAnyRules) {
+        errorMessage += ` No account determination rules found for DEPRECIATION transaction type. ` +
+          `Please configure account determination rules in Master Data > Asset Account Determination.`;
+      } else {
+        errorMessage += ` Please configure account determination rules for this asset class and company code` +
+          `in Master Data > Asset Account Determination for transaction type 'DEPRECIATION' with the required account categories.`;
+      }
+
+      throw new Error(errorMessage);
+    }
+
+    // Validate GL accounts exist and are active
+    const expenseAccountCheck = await this.pool.query(`
+      SELECT id, account_number, account_name, is_active
+      FROM gl_accounts
+      WHERE id = $1
+        `, [expenseAccountId]);
+
+    const accumAccountCheck = await this.pool.query(`
+      SELECT id, account_number, account_name, is_active
+      FROM gl_accounts
+      WHERE id = $1
+        `, [accumulatedAccountId]);
+
+    if (expenseAccountCheck.rows.length === 0) {
+      throw new Error(
+        `Depreciation Expense Account(ID: ${expenseAccountId}) specified in account determination does not exist in gl_accounts table. ` +
+        `Please verify the account determination configuration for Asset ID: ${assetId}.`
+      );
+    }
+
+    if (accumAccountCheck.rows.length === 0) {
+      throw new Error(
+        `Accumulated Depreciation Account(ID: ${accumulatedAccountId}) specified in account determination does not exist in gl_accounts table. ` +
+        `Please verify the account determination configuration for Asset ID: ${assetId}.`
+      );
+    }
+
+    const expenseAccount = expenseAccountCheck.rows[0];
+    const accumAccount = accumAccountCheck.rows[0];
+
+    if (!expenseAccount.is_active) {
+      throw new Error(
+        `Depreciation Expense Account ${expenseAccount.account_number} (${expenseAccount.account_name}) is inactive. ` +
+        `Please activate the account or update account determination configuration for Asset ID: ${assetId}.`
+      );
+    }
+
+    if (!accumAccount.is_active) {
+      throw new Error(
+        `Accumulated Depreciation Account ${accumAccount.account_number} (${accumAccount.account_name}) is inactive. ` +
+        `Please activate the account or update account determination configuration for Asset ID: ${assetId}.`
+      );
+    }
+
+    // Create GL entries via shared helper
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const header: GLDocumentHeader = {
+        documentNumber,
+        documentType: 'AF',
+        companyCodeId: asset.company_code_id,
+        postingDate,
+        fiscalYear,
+        fiscalPeriod,
+        headerText: `Manual Depreciation: ${asset.name} `,
+        sourceModule: 'ASSET',
+        sourceDocumentId: assetId,
+        sourceDocumentType: 'DEPRECIATION'
+      };
+
+      const lines: GLLineItem[] = [
+        {
+          glAccountId: expenseAccountId,
+          postingKey: '40',
+          debitCredit: 'D',
+          amount,
+          description: `Manual Depreciation Expense: ${asset.name} `,
+          costCenterId: params.costCenterId || asset.cost_center_id,
+          sourceModule: 'ASSET',
+          sourceDocumentId: assetId,
+          sourceDocumentType: 'DEPRECIATION'
+        },
+        {
+          glAccountId: accumulatedAccountId,
+          postingKey: '50',
+          debitCredit: 'C',
+          amount,
+          description: `Manual Accumulated Depreciation: ${asset.name} `,
+          costCenterId: params.costCenterId || asset.cost_center_id,
+          sourceModule: 'ASSET',
+          sourceDocumentId: assetId,
+          sourceDocumentType: 'DEPRECIATION'
+        }
+      ];
+
+      const result = await postGLDocument(client, header, lines);
+      if (!result.success) throw new Error(result.error);
+
+      await client.query('COMMIT');
+      return documentNumber;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Post asset retirement to GL
+   * Journal entries for retirement:
+   * - Debit: Accumulated Depreciation (to clear)
+   * - Debit: Cash/Receivable (if sold for amount > 0)
+   * - Debit/Credit: Gain or Loss on Disposal
+   * - Credit: Asset Account (to remove asset)
+   */
+  async postRetirement(params: AssetGLPostingParams & {
+    accumulatedDepreciation: number;
+    acquisitionCost: number;
+    disposalAmount: number;
+    gainLoss: number;
+  }): Promise<string> {
+    const {
+      assetId, amount, documentNumber, postingDate, fiscalYear, fiscalPeriod,
+      description, costCenterId, accumulatedDepreciation, acquisitionCost,
+      disposalAmount, gainLoss
+    } = params;
+
+    // Get asset details with account determination
+    const assetResult = await this.pool.query(`
+      SELECT
+      am.*,
+        am.company_code_id,
+        --Asset Account(for removal)
+        COALESCE(company_asset_ad.gl_account_id, general_asset_ad.gl_account_id) as asset_account_id,
+          --Accumulated Depreciation Account
+      COALESCE(company_accum_ad.gl_account_id, general_accum_ad.gl_account_id) as accum_depreciation_account_id,
+        --Gain / Loss on Disposal Account
+      COALESCE(company_gainloss_ad.gl_account_id, general_gainloss_ad.gl_account_id) as gain_loss_account_id,
+        --Cash / Bank Account(for disposal proceeds)
+        COALESCE(company_cash_ad.gl_account_id, general_cash_ad.gl_account_id) as cash_account_id
+      FROM asset_master am
+      --Asset Account
+      LEFT JOIN asset_account_determination company_asset_ad 
+        ON am.asset_class_id = company_asset_ad.asset_class_id 
+        AND company_asset_ad.transaction_type = 'RETIREMENT'
+        AND company_asset_ad.account_category = 'ASSET_ACCOUNT'
+        AND company_asset_ad.company_code_id = am.company_code_id
+        AND company_asset_ad.is_active = true
+      LEFT JOIN asset_account_determination general_asset_ad 
+        ON am.asset_class_id = general_asset_ad.asset_class_id 
+        AND general_asset_ad.transaction_type = 'RETIREMENT'
+        AND general_asset_ad.account_category = 'ASSET_ACCOUNT'
+        AND general_asset_ad.company_code_id IS NULL
+        AND general_asset_ad.is_active = true
+      --Accumulated Depreciation
+      LEFT JOIN asset_account_determination company_accum_ad 
+        ON am.asset_class_id = company_accum_ad.asset_class_id 
+        AND company_accum_ad.transaction_type = 'RETIREMENT'
+        AND company_accum_ad.account_category = 'ACCUMULATED_DEPRECIATION_ACCOUNT'
+        AND company_accum_ad.company_code_id = am.company_code_id
+        AND company_accum_ad.is_active = true
+      LEFT JOIN asset_account_determination general_accum_ad 
+        ON am.asset_class_id = general_accum_ad.asset_class_id 
+        AND general_accum_ad.transaction_type = 'RETIREMENT'
+        AND general_accum_ad.account_category = 'ACCUMULATED_DEPRECIATION_ACCOUNT'
+        AND general_accum_ad.company_code_id IS NULL
+        AND general_accum_ad.is_active = true
+      --Gain / Loss Account
+      LEFT JOIN asset_account_determination company_gainloss_ad 
+        ON am.asset_class_id = company_gainloss_ad.asset_class_id 
+        AND company_gainloss_ad.transaction_type = 'RETIREMENT'
+        AND company_gainloss_ad.account_category = 'GAIN_LOSS_ACCOUNT'
+        AND company_gainloss_ad.company_code_id = am.company_code_id
+        AND company_gainloss_ad.is_active = true
+      LEFT JOIN asset_account_determination general_gainloss_ad 
+        ON am.asset_class_id = general_gainloss_ad.asset_class_id 
+        AND general_gainloss_ad.transaction_type = 'RETIREMENT'
+        AND general_gainloss_ad.account_category = 'GAIN_LOSS_ACCOUNT'
+        AND general_gainloss_ad.company_code_id IS NULL
+        AND general_gainloss_ad.is_active = true
+      --Cash Account
+      LEFT JOIN asset_account_determination company_cash_ad 
+        ON am.asset_class_id = company_cash_ad.asset_class_id 
+        AND company_cash_ad.transaction_type = 'RETIREMENT'
+        AND company_cash_ad.account_category = 'CASH_ACCOUNT'
+        AND company_cash_ad.company_code_id = am.company_code_id
+        AND company_cash_ad.is_active = true
+      LEFT JOIN asset_account_determination general_cash_ad 
+        ON am.asset_class_id = general_cash_ad.asset_class_id 
+        AND general_cash_ad.transaction_type = 'RETIREMENT'
+        AND general_cash_ad.account_category = 'CASH_ACCOUNT'
+        AND general_cash_ad.company_code_id IS NULL
+        AND general_cash_ad.is_active = true
+      WHERE am.id = $1
+        `, [assetId]);
+
+    if (assetResult.rows.length === 0) {
+      throw new Error(`Asset not found: ${assetId} `);
+    }
+
+    const asset = assetResult.rows[0];
+
+    // Check required accounts
+    const assetAccountId = asset.asset_account_id;
+    const accumAccountId = asset.accum_depreciation_account_id;
+    const gainLossAccountId = asset.gain_loss_account_id;
+    const cashAccountId = asset.cash_account_id;
+
+    // For retirement, we need at minimum: Asset Account and Gain/Loss Account
+    // If there was depreciation, we need Accumulated Depreciation Account
+    // If there's disposal proceeds, we need Cash Account
+    if (!assetAccountId) {
+      throw new Error(
+        `Account determination not configured for retirement.Asset ID: ${assetId}.` +
+        `Missing: Asset Account(ASSET_ACCOUNT).Please configure in Master Data > Asset Account Determination.`
+      );
+    }
+
+    if (accumulatedDepreciation > 0 && !accumAccountId) {
+      throw new Error(
+        `Account determination not configured for retirement.Asset ID: ${assetId}.` +
+        `Missing: Accumulated Depreciation Account(ACCUMULATED_DEPRECIATION_ACCOUNT). ` +
+        `Required because asset has accumulated depreciation of ${accumulatedDepreciation}.`
+      );
+    }
+
+    if (gainLoss !== 0 && !gainLossAccountId) {
+      throw new Error(
+        `Account determination not configured for retirement.Asset ID: ${assetId}.` +
+        `Missing: Gain / Loss on Disposal Account(GAIN_LOSS_ACCOUNT). ` +
+        `Required because retirement results in a ${gainLoss > 0 ? 'gain' : 'loss'} of ${Math.abs(gainLoss)}.`
+      );
+    }
+
+    if (disposalAmount > 0 && !cashAccountId) {
+      throw new Error(
+        `Account determination not configured for retirement.Asset ID: ${assetId}.` +
+        `Missing: Cash / Bank Account(CASH_ACCOUNT). ` +
+        `Required because asset is being sold for ${disposalAmount}.`
+      );
+    }
+
+    // Create GL entries via shared helper
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const header: GLDocumentHeader = {
+        documentNumber,
+        documentType: 'ABGF',
+        companyCodeId: asset.company_code_id,
+        postingDate,
+        fiscalYear,
+        fiscalPeriod,
+        headerText: description || `Retirement: ${asset.name} `,
+        sourceModule: 'ASSET',
+        sourceDocumentId: assetId,
+        sourceDocumentType: 'RETIREMENT'
+      };
+
+      const lines: GLLineItem[] = [];
+
+      // 1. Dr: Accumulated Depreciation (clear)
+      if (accumulatedDepreciation > 0 && accumAccountId) {
+        lines.push({
+          glAccountId: accumAccountId, postingKey: '40', debitCredit: 'D',
+          amount: asset.accumulated_depreciation,
+          description: description || `Retirement - Clear accumulated depreciation: ${asset.name} `,
+          costCenterId: costCenterId || asset.cost_center_id,
+          sourceModule: 'ASSET', sourceDocumentId: assetId, sourceDocumentType: 'RETIREMENT'
+        });
+      }
+
+      // 2. Dr: Cash/Bank (disposal proceeds)
+      if (disposalAmount > 0 && cashAccountId) {
+        lines.push({
+          glAccountId: cashAccountId, postingKey: '10', debitCredit: 'D',
+          amount: disposalAmount,
+          description: `Retirement - Disposal proceeds: ${asset.name} `,
+          costCenterId: costCenterId || asset.cost_center_id,
+          sourceModule: 'ASSET', sourceDocumentId: assetId, sourceDocumentType: 'RETIREMENT'
+        });
+      }
+
+      // 3. Dr/Cr: Gain/Loss on disposal
+      if (gainLoss !== 0 && gainLossAccountId) {
+        const glDC: 'D' | 'C' = gainLoss < 0 ? 'D' : 'C';
+        lines.push({
+          glAccountId: gainLossAccountId, postingKey: gainLoss < 0 ? '40' : '50', debitCredit: glDC,
+          amount: Math.abs(gainLoss),
+          description: description || `Retirement - ${gainLoss > 0 ? 'Gain' : 'Loss'} on disposal: ${asset.name} `,
+          costCenterId: costCenterId || asset.cost_center_id,
+          sourceModule: 'ASSET', sourceDocumentId: assetId, sourceDocumentType: 'RETIREMENT'
+        });
+      }
+
+      // 4. Cr: Asset Account (remove asset at acquisition cost)
+      lines.push({
+        glAccountId: assetAccountId, postingKey: '50', debitCredit: 'C',
+        amount: acquisitionCost,
+        description: description || `Retirement - Remove asset: ${asset.name} `,
+        costCenterId: costCenterId || asset.cost_center_id,
+        sourceModule: 'ASSET', sourceDocumentId: assetId, sourceDocumentType: 'RETIREMENT'
+      });
+
+      const result = await postGLDocument(client, header, lines);
+      if (!result.success) throw new Error(result.error);
+
+      await client.query('COMMIT');
+      return documentNumber;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+}
+

@@ -1,0 +1,30 @@
+=== ACCOUNT DETERMINATION MAPPING (all keys) ===
+  [ERF] sales scenario → null (null)
+  [ERL] sales scenario → 15002 (Sales Revenue (Domestic))
+  [ERS] sales scenario → 15008 (Sales Discount)
+
+=== BILLING_DOCUMENTS COLUMNS ===
+id, billing_number, billing_type, sales_order_id, delivery_id, customer_id, billing_date, due_date, net_amount, tax_amount, total_amount, currency, posting_status, accounting_document_number, created_by, created_at, updated_at, paid_amount, outstanding_amount, company_code_id, reference
+billing_documents: column "status" does not exist
+
+=== INVOICES COLUMNS ===
+id, invoice_number, order_id, issue_date, due_date, amount, status, paid_date, user_id, created_at, updated_at, active
+
+=== STOCK MOVEMENTS POSTING STATUS ===
+  mvt=101 status=PENDING Dr=null Cr=null count=12
+  mvt=601 status=POSTED Dr=null Cr=null count=2
+  mvt=Goods Receipt status=PENDING Dr=null Cr=null count=3
+
+=== ACCOUNTING DOCUMENTS EXISTING ===
+{"id":455,"document_number":"10102600000001","document_type":"04","source_module":"SALES","source_document_type":"BILLING","status":"Posted","total_amount":"1201.20"}
+{"id":456,"document_number":"10102600000002","document_type":"04","source_module":"SALES","source_document_type":"BILLING","status":"Posted","total_amount":"120.12"}
+{"id":457,"document_number":"GL-2026-000001","document_type":"MM","source_module":null,"source_document_type":null,"status":"Posted","total_amount":"2000.00"}
+{"id":458,"document_number":"10102600000003","document_type":"04","source_module":"SALES","source_document_type":"BILLING","status":"Posted","total_amount":"2820.00"}
+{"id":459,"document_number":"GL-2026-000002","document_type":"MM","source_module":null,"source_document_type":null,"status":"Posted","total_amount":"2000.00"}
+{"id":460,"document_number":"10102600000004","document_type":"04","source_module":"SALES","source_document_type":"BILLING","status":"Posted","total_amount":"2820.00"}
+{"id":461,"document_number":"101026CLR000001","document_type":"CL","source_module":"SALES","source_document_type":"CLEARING","status":"Posted","total_amount":"2820.00"}
+{"id":462,"document_number":"101026000001820383","document_type":"DZ","source_module":"SALES","source_document_type":"PAYMENT","status":"Posted","total_amount":"5639.99"}
+{"id":463,"document_number":"101026CLR000002","document_type":"CL","source_module":"SALES","source_document_type":"CLEARING","status":"Posted","total_amount":"2201.20"}
+{"id":464,"document_number":"101026CLR000003","document_type":"CL","source_module":"SALES","source_document_type":"CLEARING","status":"Posted","total_amount":"120.12"}
+
+=== GL ACCOUNTS (Revenue/Expense/Liability) ===

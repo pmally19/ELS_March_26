@@ -1,0 +1,118 @@
+
+PRODUCTION ORDER DEMAND-DRIVEN FLOW - COMPLETE GAP ANALYSIS REPORT
+Generated: 2025-12-30T06:50:07.920Z
+================================================================
+
+EXECUTIVE SUMMARY
+-----------------
+Total Sales Orders: 9
+Total Planned Orders: 0
+Total Production Orders: 2
+Critical Gaps Found: 0
+High Priority Gaps: 0
+
+
+DETAILED FINDINGS
+-----------------
+
+
+
+
+REQUIRED DATABASE CHANGES
+--------------------------
+
+1. ALTER TABLE production_orders 
+   - ADD COLUMN sales_order_id INTEGER REFERENCES sales_orders(id)
+   - ADD COLUMN planned_order_id INTEGER REFERENCES planned_orders(id)
+   - ADD COLUMN demand_source VARCHAR(20) DEFAULT 'MANUAL' 
+     -- Values: 'SALES_ORDER', 'FORECAST', 'STOCK_REPLENISHMENT', 'MANUAL'
+   - ADD COLUMN source_document_number VARCHAR(50)
+
+2. ALTER TABLE planned_orders
+   - ADD COLUMN sales_order_id INTEGER REFERENCES sales_orders(id)
+   - ADD COLUMN demand_source VARCHAR(20) DEFAULT 'MRP'
+   - ADD COLUMN source_document_type VARCHAR(20)
+   - ADD COLUMN source_document_id INTEGER
+
+3. ALTER TABLE sales_orders
+   - ADD COLUMN production_status VARCHAR(20) DEFAULT 'NOT_STARTED'
+     -- Values: 'NOT_STARTED', 'PLANNED', 'IN_PRODUCTION', 'COMPLETED'
+   - ADD COLUMN planned_order_created BOOLEAN DEFAULT FALSE
+   - ADD COLUMN production_order_created BOOLEAN DEFAULT FALSE
+
+
+BACKEND API GAPS
+----------------
+
+Missing Endpoints:
+1. POST /api/sales/orders/:id/create-demand
+   - Create planned order from sales order
+   
+2. POST /api/production-planning/convert-to-production/:plannedOrderId
+   - Convert planned order to production order
+   
+3. GET /api/production/orders/:id/demand-trace
+   - Trace production order back to original demand
+   
+4. GET /api/sales/orders/:id/production-status
+   - Check production status of sales order
+
+
+FRONTEND INTEGRATION GAPS
+--------------------------
+
+Missing Features:
+1. Sales Order screen doesn't show production status
+2. No button to trigger MRP from sales order
+3. Production Order creation doesn't link to sales orders
+4. No traceability view showing: Sales Order → Planned Order → Production Order
+5. Missing demand source indicator on production orders
+
+
+SAP STANDARD FLOW vs CURRENT IMPLEMENTATION
+--------------------------------------------
+
+SAP Standard Flow:
+Customer Demand → Sales Order (VA01) → MRP Run (MD01/MD02) → 
+Planned Order (MD04) → Convert (CO40) → Production Order (CO01) → 
+Release (CO02) → Confirm (CO11N) → Goods Receipt (MIGO) → 
+Delivery (VL01N)
+
+Current Implementation:
+✅ Can create Sales Orders
+✅ Can create Production Orders  
+✅ Has Planned Orders table
+❌ No linkage between Sales → Planned → Production
+❌ No MRP integration to create planned orders from sales
+❌ No conversion process from planned to production
+❌ No demand traceability
+
+
+PRIORITY RECOMMENDATIONS
+-------------------------
+
+PHASE 1 (CRITICAL - Implement First):
+1. Add relationship columns to database
+2. Modify production order creation to accept source references
+3. Add demand_source tracking
+
+PHASE 2 (HIGH - Implement Second):
+4. Create API to generate planned orders from sales orders
+5. Create API to convert planned orders to production orders
+6. Add foreign key constraints
+
+PHASE 3 (MEDIUM - Implement Third):
+7. Build frontend UI for demand traceability
+8. Add production status to sales orders screen
+9. Implement full MRP integration
+
+
+CONCLUSION
+----------
+The current system has the basic tables (sales_orders, planned_orders, production_orders)
+but lacks the critical linkages needed for a true demand-driven production flow.
+The main gap is the absence of relationship fields and the process to link them together.
+
+Without these linkages, production orders are created in isolation and cannot be traced
+back to customer demand, which is a fundamental requirement in SAP's make-to-order and
+make-to-stock processes.

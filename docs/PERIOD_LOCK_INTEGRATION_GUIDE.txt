@@ -1,0 +1,282 @@
+# PERIOD LOCK INTEGRATION GUIDE
+**Date:** 2025-12-29
+**Purpose:** How to integrate period lock validation into posting routes
+
+═══════════════════════════════════════════════════════════════════════════
+
+## Step 1: Import the Middleware
+
+Add to the top of your posting route file:
+
+```typescript
+import { validatePeriodLock, enforcePeriodLock, checkPeriodLock } from '../../middleware/period-lock-check';
+```
+
+═══════════════════════════════════════════════════════════════════════════
+
+## Step 2: Method 1 - Use Express Middleware (Recommended)
+
+### For Accounting Document Posting
+
+```typescript
+// In order-to-cash-routes.ts or similar
+
+router.post('/accounting-documents', 
+  validatePeriodLock({
+    companyCodeIdField: 'company_code_id',
+    postingDateField: 'posting_date',
+    documentTypeField: 'document_type'
+  }),
+  async (req, res) => {
+    // Your existing posting logic
+    // Period lock already validated by middleware
+  }
+);
+```
+
+### For Invoice Posting
+
+```typescript
+router.post('/invoices',
+  validatePeriodLock({
+    companyCodeIdField: 'companyCodeId',
+    postingDateField: 'invoiceDate'
+  }),
+  async (req, res) => {
+    // Invoice creation logic
+  }
+);
+```
+
+### For Payment Posting
+
+```typescript
+router.post('/payments',
+  validatePeriodLock({
+    companyCodeIdField: 'company_code_id',
+    postingDateField: 'payment_date'
+  }),
+  async (req, res) => {
+    // Payment posting logic
+  }
+);
+```
+
+═══════════════════════════════════════════════════════════════════════════
+
+## Step 3: Method 2 - Manual Check in Route Handler
+
+For more control or complex scenarios:
+
+```typescript
+router.post('/complex-posting', async (req, res) => {
+  try {
+    const { company_code_id, posting_date, document_type } = req.body;
+    
+    // Manual period lock check
+    const periodCheck = await checkPeriodLock(
+      company_code_id,
+      posting_date,
+      document_type || 'normal'
+    );
+    
+    if (!periodCheck.allowed) {
+      return res.status(403).json({
+        error: 'Period is locked',
+        message: `Period ${periodCheck.period}/${periodCheck.fiscalYear} is ${periodCheck.postingStatus}`,
+        details: {
+          period: periodCheck.period,
+          fiscalYear: periodCheck.fiscalYear,
+          postingStatus: periodCheck.postingStatus,
+          controlReason: periodCheck.controlReason
+        }
+      });
+    }
+    
+    // Continue with posting logic
+    // ...
+    
+  } catch (error) {
+    res.status(500).json({ error: 'Posting failed' });
+  }
+});
+```
+
+═══════════════════════════════════════════════════════════════════════════
+
+## Step 4: Method 3 - Use enforcePeriodLock (Throws Error)
+
+```typescript
+router.post('/posting-with-enforcement', async (req, res) => {
+  try {
+    const { company_code_id, posting_date } = req.body;
+    
+    // This will throw PeriodLockError if period is locked
+    await enforcePeriodLock(company_code_id, posting_date);
+    
+    // Continue with posting
+    // ...
+    
+    res.json({ success: true });
+    
+  } catch (error) {
+    if (error.name === 'PeriodLockError') {
+      return res.status(403).json({
+        error: 'Period locked',
+        message: error.message,
+        period: error.period,
+        fiscalYear: error.fiscalYear,
+        postingStatus: error.periodStatus
+      });
+    }
+    
+    // Other errors
+    res.status(500).json({ error: 'Posting failed' });
+  }
+});
+```
+
+═══════════════════════════════════════════════════════════════════════════
+
+## FILES TO UPDATE
+
+### High Priority (Immediate):
+
+1. **`server/routes/order-to-cash-routes.ts`**
+   - Lines 9134-9400: Document creation
+   - Add: `validatePeriodLock()` middleware
+   
+2. **`server/routes/finance/apRoutes.ts`**
+   - Lines 2381-2450: Invoice document creation
+   - Add: `validatePeriodLock()` middleware
+
+3. **`server/routes/procure-to-pay-routes.ts`** (if exists)
+   - Purchase order posting
+   - Goods receipt with accounting
+
+4. **`server/routes/payment-routes.ts`** (if exists)
+   - Payment document posting
+
+### Medium Priority:
+
+5. **`server/routes/journal-entry-routes.ts`** (if exists)
+   - Manual journal entries
+
+6. **`server/routes/inventory-routes.ts`** (if exists)
+   - Inventory movements with accounting impact
+
+═══════════════════════════════════════════════════════════════════════════
+
+## TESTING THE INTEGRATION
+
+### Test 1: Lock a Period
+
+```sql
+-- Lock period 12/2024 for company 1
+INSERT INTO posting_period_controls (
+  company_code_id, fiscal_year, period_from, period_to, 
+  posting_status, allow_posting
+) VALUES (1, 2024, 12, 12, 'LOCKED', FALSE);
+```
+
+### Test 2: Try to Post
+
+```bash
+POST /api/accounting-documents
+{
+  "company_code_id": 1,
+  "posting_date": "2024-12-15",
+  "document_type": "normal",
+  ...
+}
+```
+
+**Expected Result:**
+```json
+{
+  "success": false,
+  "error": "Period is locked",
+  "message": "Posting not allowed for period 12/2024. Period status: LOCKED.",
+  "details": {
+    "period": 12,
+    "fiscalYear": 2024,
+    "postingStatus": "LOCKED"
+  }
+}
+```
+
+### Test 3: Post to Open Period
+
+```bash
+POST /api/accounting-documents
+{
+  "company_code_id": 1,
+  "posting_date": "2025-01-15",  // Different period
+  ...
+}
+```
+
+**Expected Result:**
+```json
+{
+  "success": true,
+  "document_id": 12345,
+  ...
+}
+```
+
+═══════════════════════════════════════════════════════════════════════════
+
+## FRONTEND ERROR HANDLING
+
+When period lock error occurs, frontend should display user-friendly message:
+
+```typescript
+// In your React component
+try {
+  await createDocument(data);
+} catch (error) {
+  if (error.response?.status === 403 && error.response?.data?.error === 'Period is locked') {
+    const details = error.response.data.details;
+    toast.error(
+      `Cannot post to period ${details.period}/${details.fiscalYear}. ` +
+      `Period is ${details.postingStatus}. ` +
+      `${details.controlReason || ''}`
+    );
+  } else {
+    toast.error('Failed to create document');
+  }
+}
+```
+
+═══════════════════════════════════════════════════════════════════════════
+
+## COMPLETE INTEGRATION CHECKLIST
+
+### Backend Routes:
+- [ ] order-to-cash-routes.ts - Invoice posting
+- [ ] apRoutes.ts - AP document posting
+- [ ] payment-routes.ts - Payment posting
+- [ ] journal-entry-routes.ts - Manual JE
+- [ ] goods-receipt-routes.ts - GR with accounting
+- [ ] inventory-routes.ts - Inventory postings
+
+### Frontend Components:
+- [ ] Document creation forms show period lock warnings
+- [ ] Error handling for 403 period lock errors
+- [ ] Display current period status in UI
+
+### Testing:
+- [ ] Lock a period and verify posting fails
+- [ ] Verify adjustment posting still works if allowed
+- [ ] Verify reversal posting still works if allowed
+- [ ] Test with open period - should succeed
+
+### Documentation:
+- [ ] Update API documentation
+- [ ] Add period lock info to user guide
+- [ ] Train users on period closing process
+
+═══════════════════════════════════════════════════════════════════════════
+END OF INTEGRATION GUIDE
+═══════════════════════════════════════════════════════════════════════════

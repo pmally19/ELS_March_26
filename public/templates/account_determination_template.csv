@@ -1,0 +1,16 @@
+Chart of Accounts,Transaction Key Code,Transaction Key Name,Valuation Grouping Code,Valuation Class Code,Valuation Class Name,General Modifier,Account Modifier,GL Account Code,GL Account Name,Debit/Credit,Is Active,Notes
+MALY,BSX,Inventory Account,1010,7920,Finished Goods,,,"110100",Inventory - Finished Goods,C,TRUE,Inventory valuation account for finished goods
+MALY,BSX,Inventory Account,1010,3000,Raw Materials,,,"110200",Inventory - Raw Materials,C,TRUE,Inventory valuation account for raw materials
+MALY,BSX,Inventory Account,1010,7900,Trading Goods,,,"110300",Inventory - Trading Goods,C,TRUE,Inventory valuation account for trading goods
+MALY,GBB,Offsetting Entry for Inventory,1010,7920,Finished Goods,,,"500000",Cost of Goods Sold,D,TRUE,COGS account for finished goods sales
+MALY,GBB,Offsetting Entry for Inventory,1010,3000,Raw Materials,,,"500100",Cost of Materials Consumed,D,TRUE,Cost account for raw material consumption
+MALY,GBB,Offsetting Entry for Inventory,1010,7900,Trading Goods,,,"500200",Cost of Trading Goods,D,TRUE,COGS for trading goods
+MALY,WRX,GR/IR Clearing Account,1010,,,,"","241000",GR/IR Clearing Account,C,TRUE,Goods Receipt/Invoice Receipt clearing
+MALY,PRD,Price Differences,1010,7920,Finished Goods,,,"510000",Price Differences - Finished Goods,D,TRUE,Price variance for finished goods
+MALY,PRD,Price Differences,1010,3000,Raw Materials,,,"510100",Price Differences - Raw Materials,D,TRUE,Price variance for raw materials
+MALY,VAX,Sales Revenue,,,,,,"400000",Sales Revenue,C,TRUE,Revenue from sales of goods
+MALY,KOF,Revenue Offset,,,,,,"400100",Sales Revenue Offset,D,TRUE,Offset account for revenue
+MALY,FR1,Freight Revenue,,,,,,"400200",Freight Revenue,C,TRUE,Revenue from freight charges
+MALY,FR2,Freight Costs,,,,,,"520000",Freight Costs,D,TRUE,Outbound freight expenses
+MALY,SKTO,Cash Discount,,,,,,"400300",Sales Discounts,D,TRUE,Cash discounts given to customers
+MALY,VPRS,Material Price,1010,7920,Finished Goods,,,"110100",Inventory - Finished Goods,C,TRUE,Material price for valuation

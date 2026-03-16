@@ -1,0 +1,150 @@
+    // Priority 2: Fallback to customer company code
+    if (!companyCode && delivery.customer_company_code_id) {
+      const customerCompanyCodeResult = await db.execute(sql`
+        SELECT code as company_code, currency as company_currency, id
+        FROM company_codes
+        WHERE id = ${delivery.customer_company_code_id}
+      `);
+
+      if (customerCompanyCodeResult.rows[0]?.company_code) {
+        companyCode = String(customerCompanyCodeResult.rows[0].company_code);
+        companyCurrency = String(customerCompanyCodeResult.rows[0].company_currency);
+        companyCodeId = parseInt(String(customerCompanyCodeResult.rows[0].id));
+        console.log(`âœ… Using company code from customer (fallback): ${companyCode}`);
+      }
+    }
+
+    if (!companyCode) {
+      throw new Error(`Company code not found. Sales order ${delivery.sales_order_id || 'N/A'} and customer ${delivery.customer_id} both missing company code. Please configure company code in sales order or customer master data.`);
+    }
+
+    // Get billing type from delivery, sales order, or system configuration (no hardcoded F2)
+    let billingType = delivery.billing_type;
+
+    if (!billingType) {
+      const soBillingTypeResult = await db.execute(sql`
+        SELECT document_type FROM sales_orders WHERE id = ${delivery.sales_order_id} LIMIT 1
+      `);
+      billingType = soBillingTypeResult.rows[0]?.document_type;
+    }
+
+    if (!billingType) {
+      // Get default billing type from system configuration or document types
+      const defaultBillingTypeResult = await db.execute(sql`
+        SELECT dt.code 
+        FROM sd_document_types dt
+        WHERE dt.category = 'BILLING' 
+          AND dt.is_active = true
+          AND dt.code = (SELECT config_value FROM system_configuration 
+                         WHERE config_key = 'default_billing_type' AND active = true LIMIT 1)
+        LIMIT 1
+      `);
+
+      if (defaultBillingTypeResult.rows.length > 0) {
+        billingType = defaultBillingTypeResult.rows[0].code;
+      } else {
+        // Try to get first active billing type as fallback
+        const firstBillingTypeResult = await db.execute(sql`
+          SELECT code FROM sd_document_types 
+          WHERE category = 'BILLING' AND is_active = true 
+          ORDER BY id LIMIT 1
+        `);
+
+        if (firstBillingTypeResult.rows.length > 0) {
+          billingType = firstBillingTypeResult.rows[0].code;
+        } else {
+          // Only use schema default as absolute last resort
+          // This should never happen if system is properly configured
+          throw new Error('No billing type configured. Please configure billing document types in sd_document_types table.');
+        }
+      }
+    }
+
+    // Import service if not already imported
+    const { transactionalApplicationsService } = await import("../services/transactional-applications-service");
+
+    // Generate accounting document number NOW (not later during posting)
+    const accountingDocNumber = await transactionalApplicationsService.generateEarlyAccountingDocumentNumber(
+      companyCode,
+      String(billingType) // Pass billing type, function will map to document type
+    );
+
+    console.log(`ðŸ“„ Generated accounting document number: ${accountingDocNumber}`);
+
+    // Step 10: Create billing document header WITH accounting_document_number
+    // Get currency from company code or sales order (no hardcoded USD)
+    let currency = companyCurrency || delivery.currency;
+
+    if (!currency) {
+      const soCurrencyResult = await db.execute(sql`
+        SELECT currency FROM sales_orders WHERE id = ${delivery.sales_order_id} LIMIT 1
+      `);
+      currency = soCurrencyResult.rows[0]?.currency;
+    }
+
+    if (!currency) {
+      const ccCurrencyResult = await db.execute(sql`
+        SELECT currency FROM company_codes WHERE code = ${companyCode} AND is_active = true LIMIT 1
+      `);
+      currency = ccCurrencyResult.rows[0]?.currency;
+    }
+
+    if (!currency) {
+      throw new Error(`Currency not configured for company code ${companyCode}. Please configure company master data.`);
+    }
+
+    // Get created_by from request or auth context (no hardcoded values)
+    // Try multiple sources in order of preference
+    let createdBy: number | null = null;
+
+    // 1. Try from authentication context
+    if ((req as any).user?.id) {
+      createdBy = parseInt(String((req as any).user.id));
+    }
+
+    // 2. Try from request body
+    if (!createdBy && req.body.created_by) {
+      createdBy = parseInt(String(req.body.created_by));
+    }
+
+    // 3. Try from system configuration
+    if (!createdBy) {
+      const configResult = await db.execute(sql`
+        SELECT config_value FROM system_configuration 
+        WHERE config_key = 'default_user_id' AND active = true LIMIT 1
+      `);
+      if (configResult.rows.length > 0 && configResult.rows[0].config_value) {
+        createdBy = parseInt(String(configResult.rows[0].config_value));
+      }
+    }
+
+    // 4. Try to find a system user (role = 'system' or 'admin')
+    if (!createdBy) {
+      const systemUserResult = await db.execute(sql`
+        SELECT id FROM users 
+        WHERE (role = 'system' OR role = 'admin') 
+          AND active = true 
+        ORDER BY id LIMIT 1
+      `);
+      if (systemUserResult.rows.length > 0 && systemUserResult.rows[0].id) {
+        createdBy = parseInt(String(systemUserResult.rows[0].id));
+      }
+    }
+
+    // 5. Last resort: Get first active user
+    if (!createdBy) {
+      const activeUserResult = await db.execute(sql`
+        SELECT id FROM users 
+        WHERE active = true 
+        ORDER BY id LIMIT 1
+      `);
+      if (activeUserResult.rows.length > 0 && activeUserResult.rows[0].id) {
+        createdBy = parseInt(String(activeUserResult.rows[0].id));
+      }
+    }
+
+    if (!createdBy) {
+      throw new Error('User ID not available. Please ensure authentication context is set or configure a default user in system configuration.');
+    }
+
+    const billingDocResult = await db.execute(sql`
